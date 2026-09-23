@@ -95,6 +95,69 @@ a {
   transform: translateY(0);
 }
 
+/* Shared layout and buttons (landing, auth and app pages) */
+.wrap {
+  width: min(1160px, 100% - 64px);
+  margin-inline: auto;
+}
+
+/* buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 46px;
+  padding: 0 24px;
+  border-radius: 999px;
+  background: var(--rasp-btn);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 15px;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.14), 0 14px 28px -14px rgb(184 36 90 / 0.9);
+  transition: background 0.2s, transform 0.2s;
+}
+
+.btn:hover {
+  background: var(--rasp-press);
+  transform: translateY(-2px);
+}
+
+.btn-lg {
+  height: 58px;
+  padding: 0 32px;
+  font-size: 16.5px;
+}
+
+.btn-ghost {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.btn-ghost:hover {
+  background: var(--surface-2);
+}
+
+button.btn {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+  transform: none;
+}
+
+@media (max-width: 900px) {
+  .wrap {
+    width: calc(100% - 32px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

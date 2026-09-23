@@ -4,50 +4,6 @@
   background: radial-gradient(640px 560px at 72% 400px, rgb(255 214 196 / 0.07), transparent 70%) no-repeat;
 }
 
-.wrap {
-  width: min(1160px, 100% - 64px);
-  margin-inline: auto;
-}
-
-/* buttons */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 46px;
-  padding: 0 24px;
-  border-radius: 999px;
-  background: var(--rasp-btn);
-  color: #fff;
-  text-decoration: none;
-  font-weight: 700;
-  font-size: 15px;
-  white-space: nowrap;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.14), 0 14px 28px -14px rgb(184 36 90 / 0.9);
-  transition: background 0.2s, transform 0.2s;
-}
-
-.btn:hover {
-  background: var(--rasp-press);
-  transform: translateY(-2px);
-}
-
-.btn-lg {
-  height: 58px;
-  padding: 0 32px;
-  font-size: 16.5px;
-}
-
-.btn-ghost {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: none;
-}
-
-.btn-ghost:hover {
-  background: var(--surface-2);
-}
-
 /* nav */
 .nav {
   display: flex;
@@ -758,10 +714,6 @@
 @media (max-width: 900px) {
   .landing {
     background: radial-gradient(420px 420px at 50% 1000px, rgb(255 214 196 / 0.07), transparent 70%) no-repeat;
-  }
-
-  .wrap {
-    width: calc(100% - 32px);
   }
 
   .nav-link {
