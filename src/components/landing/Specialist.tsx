@@ -11,14 +11,15 @@ export function Specialist() {
     <section className="wrap section" aria-labelledby="specialist-title">
       <div className="statement">
         <div>
-          <p className="eyebrow">For every new specialist</p>
-          <h2 id="specialist-title">Stop being the fax machine.</h2>
+          <p className="eyebrow">Planned for specialist visits</p>
+          <h2 id="specialist-title">A better handoff is the goal.</h2>
           <p>
-            Share a clean summary of your whole history, instead of re-telling
-            it from the top at every first appointment.
+            We want to help you prepare a clean summary of the history you
+            choose, instead of re-telling it from the top at every first
+            appointment.
           </p>
         </div>
-        <ul className="summary" aria-label="What a summary includes">
+        <ul className="summary" aria-label="What a future summary could include">
           {SUMMARY.map(({ item, detail }) => (
             <li key={item}>
               {item}

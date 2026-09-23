@@ -348,6 +348,12 @@
   margin-inline: auto;
 }
 
+.privacy-status {
+  max-width: 62ch;
+  margin: 18px auto 0;
+  color: var(--text-2);
+}
+
 /* how it works */
 .chain {
   list-style: none;
@@ -739,6 +745,16 @@
   text-align: right;
 }
 
+.footer-legal a {
+  color: var(--rasp-text);
+}
+
+.email-safety {
+  max-width: 42ch;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 @media (max-width: 900px) {
   .landing {
     background: radial-gradient(420px 420px at 50% 1000px, rgb(255 214 196 / 0.07), transparent 70%) no-repeat;
@@ -813,5 +829,20 @@
 
   .footer-legal {
     text-align: left;
+  }
+}
+
+@media (max-width: 400px) {
+  .brand-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .nav .btn {
+    padding-inline: 14px;
   }
 }

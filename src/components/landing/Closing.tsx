@@ -10,12 +10,15 @@ export function Closing() {
         </span>
         <h2 id="closing-title">Say hello.</h2>
         <p>
-          We’re opening early access to a small group of patients who see more
-          than one doctor. We’d love to hear from you.
+          We’re speaking with patients who see more than one doctor while we
+          shape this product. We’d love to hear what would help.
         </p>
         <a className="btn btn-lg" href={CONTACT_HREF}>
-          Contact us
+          Share your interest
         </a>
+        <p className="email-safety">
+          Please don’t email medical records or private health information.
+        </p>
         <span className="moon-address">{CONTACT_EMAIL}</span>
       </div>
     </section>

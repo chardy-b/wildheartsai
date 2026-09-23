@@ -1,8 +1,13 @@
+import Link from "next/link";
+
 export function Footer() {
   return (
     <footer className="wrap footer">
       <p>© {new Date().getFullYear()} Wild Hearts Health</p>
       <div className="footer-legal">
+        <p>
+          <Link href="/privacy">Pre-launch privacy notice</Link>
+        </p>
         <p>
           Wild Hearts Health is not a medical provider and does not give medical
           advice.

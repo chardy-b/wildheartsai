@@ -7,10 +7,10 @@ export function Understanding() {
         <p className="eyebrow">Understanding</p>
         <h2 id="understanding-title">Ask your record, not the internet.</h2>
         <p className="body">
-          Ask about a result, a trend or a medication. Wild Hearts answers from
-          your own record across every clinic, shows where each answer came
-          from, and helps you get ready for your next visit. It won’t diagnose
-          you.
+          We’re exploring a way to ask about a result, trend or medication. A
+          future version would answer from the records you connect, cite its
+          sources and help you prepare questions for your care team. It would
+          not diagnose you.
         </p>
       </div>
       <figure className="chat">
@@ -46,7 +46,7 @@ export function Understanding() {
           </div>
         </div>
         <figcaption className="note">
-          Illustrative example. Not medical advice.
+          Concept mockup — not a working feature or medical advice.
         </figcaption>
       </figure>
     </section>

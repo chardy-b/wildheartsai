@@ -7,14 +7,15 @@ export function Hero() {
       <div>
         <p className="pill">
           <span className="pill-dot" aria-hidden="true" />
-          Early access for patients
+          Product concept · patient research
         </p>
         <h1 id="hero-title">
           Every clinic, <em>gently</em> gathered into you.
         </h1>
         <p className="lede">
-          Wild Hearts Health pulls your records from every MyChart you use into
-          one calm timeline that belongs to you, and helps you make sense of it.
+          Wild Hearts Health is in development. We’re designing it to bring
+          records from the clinics you choose into one calm timeline and help
+          you prepare for conversations with your care team.
         </p>
         <div className="actions">
           <a className="btn btn-lg" href={CONTACT_HREF}>
@@ -26,16 +27,16 @@ export function Hero() {
         </div>
         <dl className="proof">
           <div>
-            <dt>1</dt>
-            <dd>record, in order</dd>
+            <dt>The vision</dt>
+            <dd>a patient-controlled record</dd>
           </div>
           <div>
-            <dt>0</dt>
-            <dd>clipboards to refill</dd>
+            <dt>Designed for</dt>
+            <dd>care across clinics</dd>
           </div>
           <div>
-            <dt>Any hour</dt>
-            <dd>ask your own record</dd>
+            <dt>Status</dt>
+            <dd>not yet connected to records</dd>
           </div>
         </dl>
       </div>

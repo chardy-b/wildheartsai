@@ -1,20 +1,21 @@
-const PROMISES = [
+const PRINCIPLES = [
   {
     kicker: "SMART on FHIR",
-    title: "You open every door",
+    title: "You would open every door",
     detail:
-      "You sign in on your health system’s own page. We never see your MyChart password.",
+      "The planned flow keeps sign-in on your health system’s page so Wild Hearts would not receive your MyChart password.",
   },
   {
     kicker: "Least access",
-    title: "Only what’s needed",
-    detail: "We ask only for what a feature uses, and tell you what that is.",
+    title: "Only what a feature needs",
+    detail:
+      "We intend to request the minimum access for each feature and explain it before you connect.",
   },
   {
     kicker: "Your call",
-    title: "Leave anytime",
+    title: "Revocable by design",
     detail:
-      "Disconnect any health system whenever you like. Your data isn’t for sale.",
+      "We’re designing for disconnect controls and a business model that does not sell patient health data.",
   },
 ];
 
@@ -26,9 +27,13 @@ export function Privacy() {
       aria-labelledby="privacy-title"
     >
       <p className="eyebrow">Privacy</p>
-      <h2 id="privacy-title">Gentle with your data, by design.</h2>
+      <h2 id="privacy-title">The standards we’re building toward.</h2>
+      <p className="body privacy-status">
+        These are design commitments for a product in development, not
+        descriptions of a live record connection.
+      </p>
       <ol className="cards">
-        {PROMISES.map((promise, i) => (
+        {PRINCIPLES.map((promise, i) => (
           <li className="card" key={promise.title}>
             <span className="card-number" aria-hidden="true">
               {i + 1}

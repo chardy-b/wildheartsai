@@ -20,10 +20,10 @@ export const metadata: Metadata = {
   metadataBase,
   title: "Wild Hearts Health | Every clinic, gathered into you",
   description:
-    "Wild Hearts Health gathers your records from every MyChart you use into one calm timeline that belongs to you, and helps you make sense of it.",
+    "A product in development to help patients gather records from the clinics they choose and prepare for conversations with their care team.",
   openGraph: {
     title: "Wild Hearts Health",
-    description: "Every clinic, gently gathered into you.",
+    description: "A patient-controlled health record concept in development.",
     type: "website",
   },
 };

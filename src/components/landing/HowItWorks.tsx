@@ -1,17 +1,18 @@
 const STEPS = [
   {
     title: "Connect",
-    detail: "Sign in to each MyChart on its own page. You choose what to share.",
+    detail:
+      "The planned flow sends you to each health system’s own sign-in page. You would choose what to connect.",
   },
   {
     title: "Gather",
     detail:
-      "Visits, labs, medications and notes land on one timeline, in order, without duplicates.",
+      "With your permission, supported records would be organized into one timeline.",
   },
   {
     title: "Understand",
     detail:
-      "Ask anything. Answers come from your own record and show where they came from.",
+      "The goal is to answer from your connected record and show the source behind each response.",
   },
 ];
 
@@ -22,7 +23,7 @@ export function HowItWorks() {
       id="how-it-works"
       aria-labelledby="how-title"
     >
-      <p className="eyebrow">How it works</p>
+      <p className="eyebrow">How we plan for it to work</p>
       <h2 id="how-title">Three rings, one&nbsp;you.</h2>
       <ol className="chain">
         {STEPS.map((step, i) => (
