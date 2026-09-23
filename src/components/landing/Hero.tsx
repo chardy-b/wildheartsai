@@ -13,9 +13,9 @@ export function Hero() {
           Your care is scattered. Your <em>story</em> shouldn’t be.
         </h1>
         <p className="lede">
-          Wild Hearts Health is in development. We’re designing it to bring
-          records from the clinics you choose into one calm timeline and help
-          you prepare for conversations with your care team.
+          Wild Hearts Health is in development. We’re building toward one clear
+          timeline from the records you choose—so you can see the whole story
+          and prepare for every appointment.
         </p>
         <div className="actions">
           <a className="btn btn-lg" href={CONTACT_HREF}>
