@@ -15,6 +15,13 @@
       "when": 1790188240472,
       "tag": "0001_good_mister_fear",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790188842474,
+      "tag": "0002_lowly_shen",
+      "breakpoints": true
     }
   ]
 }
