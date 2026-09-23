@@ -7,6 +7,9 @@ import { SignUpForm } from "./SignUpForm";
 
 export const metadata: Metadata = { title: "Create an account | Wild Hearts Health" };
 
+// SIGNUPS_ENABLED is read per request so flipping it in Vercel takes effect without a rebuild.
+export const dynamic = "force-dynamic";
+
 export default function SignUpPage() {
   if (!env().SIGNUPS_ENABLED) {
     return (

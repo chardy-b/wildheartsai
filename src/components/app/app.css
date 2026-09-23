@@ -1,0 +1,80 @@
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 80px;
+  border-bottom: 2px dotted var(--line);
+}
+
+.app-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 15px;
+}
+
+.app-nav-links a {
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  color: var(--text-2);
+}
+
+.app-nav-links a:hover,
+.app-nav-links a[aria-current="page"] {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.app-brand svg {
+  width: 21px;
+  height: 21px;
+}
+
+.app-main {
+  padding: clamp(32px, 5vw, 64px) 0 96px;
+}
+
+.app-page h1 {
+  margin: 0;
+  font-size: clamp(32px, 4vw, 48px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.app-page .lede {
+  color: var(--text-2);
+  max-width: 44ch;
+  margin: 14px 0 0;
+}
+
+.app-footer {
+  padding: 24px 0 32px;
+  font-size: 13px;
+  color: var(--muted);
+  border-top: 2px dotted var(--line);
+}
+
+@media (max-width: 700px) {
+  .app-nav-links a {
+    padding: 8px 10px;
+  }
+}
