@@ -1,26 +1,33 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { M_PLUS_Rounded_1c } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const rounded = M_PLUS_Rounded_1c({
+  variable: "--font-rounded",
+  weight: ["400", "500", "700", "800"],
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Wild Hearts AI | Your health records, with you",
+  title: "Wild Hearts Health | Every clinic, gathered into you",
   description:
-    "A patient-first way to connect to Epic health records through standards-based FHIR authorization.",
+    "Wild Hearts Health gathers your records from every MyChart you use into one calm timeline that belongs to you, and helps you make sense of it.",
+  openGraph: {
+    title: "Wild Hearts Health",
+    description: "Every clinic, gently gathered into you.",
+    type: "website",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#1b1619",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="en" className={rounded.variable}>
       <body>{children}</body>
     </html>
   );
