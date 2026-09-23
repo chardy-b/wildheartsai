@@ -1,0 +1,71 @@
+.onboarding {
+  display: grid;
+  justify-items: center;
+  gap: 28px;
+}
+
+.ob-steps {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-steps li {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 14px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.ob-steps li[aria-current="step"] {
+  background: var(--rasp-soft);
+  color: var(--rasp-text);
+}
+
+.ob-steps li.ob-done {
+  background: var(--rasp-btn);
+  color: #fff;
+}
+
+.ack-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ack {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 12px;
+  align-items: start;
+  background: #fff;
+  border-radius: 18px;
+  padding: 14px 16px;
+  font-size: 15.5px;
+  line-height: 1.55;
+}
+
+.ack input {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--rasp-btn);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
