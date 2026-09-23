@@ -9,7 +9,15 @@ const rounded = M_PLUS_Rounded_1c({
   display: "swap",
 });
 
+const metadataBase = new URL(
+  process.env.NEXT_PUBLIC_SITE_URL ??
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : "http://localhost:3000"),
+);
+
 export const metadata: Metadata = {
+  metadataBase,
   title: "Wild Hearts Health | Every clinic, gathered into you",
   description:
     "Wild Hearts Health gathers your records from every MyChart you use into one calm timeline that belongs to you, and helps you make sense of it.",
