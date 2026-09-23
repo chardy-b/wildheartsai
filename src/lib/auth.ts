@@ -1,0 +1,33 @@
+import { drizzleAdapter } from "@better-auth/drizzle-adapter";
+import { betterAuth } from "better-auth";
+import { nextCookies } from "better-auth/next-js";
+import { db } from "@/lib/db";
+import { sendEmail } from "@/lib/email";
+import { passwordResetEmail, verificationEmail } from "@/lib/email-templates";
+import { appUrl, env } from "@/lib/env";
+
+const DAY = 60 * 60 * 24;
+
+export const auth = betterAuth({
+  baseURL: appUrl(),
+  secret: env().BETTER_AUTH_SECRET,
+  database: drizzleAdapter(db, { provider: "pg" }),
+  emailAndPassword: {
+    enabled: true,
+    disableSignUp: !env().SIGNUPS_ENABLED,
+    requireEmailVerification: true,
+    minPasswordLength: 12,
+    sendResetPassword: async ({ user, url }) => {
+      await sendEmail(passwordResetEmail({ to: user.email, url }));
+    },
+  },
+  emailVerification: {
+    sendOnSignUp: true,
+    autoSignInAfterVerification: true,
+    sendVerificationEmail: async ({ user, url }) => {
+      await sendEmail(verificationEmail({ to: user.email, url }));
+    },
+  },
+  session: { expiresIn: 7 * DAY, updateAge: DAY },
+  plugins: [nextCookies()],
+});
