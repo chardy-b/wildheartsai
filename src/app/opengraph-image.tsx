@@ -1,10 +1,10 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "Wild Hearts Health: every clinic, gently gathered into you.";
+export const alt = "Wild Hearts Health: your care is scattered. Your story shouldn’t be.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const HEADLINE = "Every clinic, gently gathered into you.";
+const HEADLINE = "Your care is scattered. Your story shouldn’t be.";
 const BRAND = "Wild Hearts Health";
 
 const orb =

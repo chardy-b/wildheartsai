@@ -24,7 +24,7 @@ The page is written for one person: someone who sees more than one doctor and is
 | Lead promise | One record, finally: every MyChart they use, gathered into one timeline they own |
 | Supporting promises | Understand it (plain answers with sources) and carry it (a clean summary for any new specialist) |
 | Mechanism | SMART on FHIR connections to Epic MyChart, explained in the privacy section and never used as a headline |
-| Stage | Early access. The only CTA is Contact us, which opens an email to teo@wildheartsai.com |
+| Stage | Product concept and patient research. The CTA opens an email to teo@wildheartsai.com |
 
 Voice rules, taken from Baymax's temperament:
 
@@ -36,15 +36,15 @@ Voice rules, taken from Baymax's temperament:
 
 | Slot | Copy |
 | --- | --- |
-| Eyebrow pill | Early access for patients |
-| Hero headline | Every clinic, gently gathered into you. |
-| Hero lede | Wild Hearts Health pulls your records from every MyChart you use into one calm timeline that belongs to you, and helps you make sense of it. |
+| Eyebrow pill | Product concept · patient research |
+| Hero headline | Your care is scattered. Your story shouldn’t be. |
+| Hero lede | Wild Hearts Health is in development. We’re designing it to bring records from the clinics you choose into one calm timeline and help you prepare for conversations with your care team. |
 | How it works | Three rings, one you. |
 | Understanding | Ask your record, not the internet. |
-| Specialist | Stop being the fax machine. |
-| Privacy | Gentle with your data, by design. |
+| Specialist | A better handoff is the goal. |
+| Privacy | The standards we’re building toward. |
 | Closing | Say hello. |
-| CTA label | Contact us (email subject: "Wild Hearts Health early access") |
+| CTA label | Share your interest (email subject: "Wild Hearts Health early access") |
 
 ## Color system
 
@@ -98,7 +98,7 @@ One family does everything: **M PLUS Rounded 1c** (Google Fonts, weights 400, 50
 Rules:
 
 - **No second typeface.** No serif accent words and no italics. An italic serif word inside a sans headline is one of the clearest AI-template tells.
-- **One colored word, at most.** A headline may set one word in `rasp` ("gently"). Everything else stays `text`.
+- **One colored word, at most.** A headline may set one word in `rasp` ("story"). Everything else stays `text`.
 - **Sentence case** for every headline, button and eyebrow source string. Eyebrows are uppercased with CSS only.
 - **Measure.** Body copy caps at 34 to 38ch, ledes at 34ch, headlines at 17ch.
 - **Load with `next/font/google`** so the font is self-hosted with no layout shift.
