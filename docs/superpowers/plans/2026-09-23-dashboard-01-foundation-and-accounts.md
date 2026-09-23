@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Before writing Next.js code, read the relevant guide in `node_modules/next/dist/docs/` (`AGENTS.md` rule). Middleware is called **Proxy** in Next 16 (`src/proxy.ts`).
-- Run `npm run lint`, `npm run typecheck` and `npm run build` before every PR. `typecheck` needs one `build` first on a fresh clone because `LayoutProps` / `PageProps` are generated into `.next/types`.
+- Run `npm run lint`, `npm run typecheck` and `npm run build` before every PR. `typecheck` runs `next typegen` first, which generates the global `LayoutProps` / `PageProps` route types.
 - Do not import `server-only` in `src/lib/env.ts`, `src/lib/db/*` or `src/lib/auth.ts`; the Better Auth CLI loads them outside Next.
 - Never log or put in a URL: tokens, passwords, email addresses, patient data.
 - UI copy follows the voice rules in `docs/creative-direction.md` (patient, literal, no exclamation marks). Colors come only from the tokens in `src/app/globals.css`.
@@ -652,6 +652,9 @@ Expected: `null` (no session), HTTP 200.
 Replace the file with:
 
 ```bash
+# Public canonical URL for local metadata previews. Vercel supplies its production URL automatically.
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
 # Server-only configuration. Real values live in Vercel; pull them with `npx vercel env pull .env.local`.
 
 # Neon Postgres (provisioned through the Vercel Marketplace)
