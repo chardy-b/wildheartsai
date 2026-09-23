@@ -4,6 +4,10 @@ A Vercel-ready web application intended to help patients connect to Epic health 
 
 > **Status:** foundation only. No Epic connection, patient authentication, or health-data storage is implemented yet. This software is not medical advice and makes no compliance claim.
 
+## Landing page
+
+The public page at `/` follows the Nightlight creative direction in [`docs/creative-direction.md`](docs/creative-direction.md): palette, typography, motifs, motion and the claims the page may and may not make. Components live in `src/components/landing/`.
+
 ## Stack
 
 - Next.js App Router
