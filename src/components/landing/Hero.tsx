@@ -10,7 +10,7 @@ export function Hero() {
           Product concept · patient research
         </p>
         <h1 id="hero-title">
-          Every clinic, <em>gently</em> gathered into you.
+          Your care is scattered. Your <em>story</em> shouldn’t be.
         </h1>
         <p className="lede">
           Wild Hearts Health is in development. We’re designing it to bring

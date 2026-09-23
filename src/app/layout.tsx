@@ -18,7 +18,7 @@ const metadataBase = new URL(
 
 export const metadata: Metadata = {
   metadataBase,
-  title: "Wild Hearts Health | Every clinic, gathered into you",
+  title: "Wild Hearts Health | Your care is scattered. Your story shouldn’t be.",
   description:
     "A product in development to help patients gather records from the clinics they choose and prepare for conversations with their care team.",
   openGraph: {
