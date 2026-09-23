@@ -13,12 +13,14 @@
     "db:local": "pglite-server --db=.pglite --port=5433 --max-connections=10",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "auth:schema": "npx auth@1.7.5 generate --config src/lib/auth.ts --output src/lib/db/auth-schema.ts"
+    "auth:schema": "npx auth@1.7.5 generate --config src/lib/auth.ts --output src/lib/db/auth-schema.ts",
+    "epic:key": "node scripts/generate-epic-key.mjs"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.7.5",
     "better-auth": "^1.7.5",
     "drizzle-orm": "^0.45.3",
+    "jose": "^6.2.12",
     "next": "16.3.6",
     "pg": "^8.23.0",
     "react": "19.2.8",
