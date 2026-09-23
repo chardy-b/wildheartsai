@@ -5,7 +5,7 @@ export function Understanding() {
     <section className="wrap section split" aria-labelledby="understanding-title">
       <div>
         <p className="eyebrow">Understanding</p>
-        <h2 id="understanding-title">Ask your record, not the internet.</h2>
+        <h2 id="understanding-title">Ask your records, not the internet.</h2>
         <p className="body">
           We’re exploring a way to ask about a result, trend or medication. A
           future version would answer from the records you connect, cite its

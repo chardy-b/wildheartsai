@@ -38,9 +38,9 @@ Voice rules, taken from Baymax's temperament:
 | --- | --- |
 | Eyebrow pill | Product concept · patient research |
 | Hero headline | Your care is scattered. Your story shouldn’t be. |
-| Hero lede | Wild Hearts Health is in development. We’re designing it to bring records from the clinics you choose into one calm timeline and help you prepare for conversations with your care team. |
-| How it works | Three rings, one you. |
-| Understanding | Ask your record, not the internet. |
+| Hero lede | Wild Hearts Health is in development. We’re building toward one clear timeline from the records you choose—so you can see the whole story and prepare for every appointment. |
+| How it works | One story, three steps. |
+| Understanding | Ask your records, not the internet. |
 | Specialist | A better handoff is the goal. |
 | Privacy | The standards we’re building toward. |
 | Closing | Say hello. |

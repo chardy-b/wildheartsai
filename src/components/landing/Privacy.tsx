@@ -1,7 +1,7 @@
 const PRINCIPLES = [
   {
     kicker: "SMART on FHIR",
-    title: "You would open every door",
+    title: "You would sign in through each health system",
     detail:
       "The planned flow keeps sign-in on your health system’s page so Wild Hearts would not receive your MyChart password.",
   },

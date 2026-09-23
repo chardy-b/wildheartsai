@@ -24,7 +24,7 @@ export function HowItWorks() {
       aria-labelledby="how-title"
     >
       <p className="eyebrow">How we plan for it to work</p>
-      <h2 id="how-title">Three rings, one&nbsp;you.</h2>
+      <h2 id="how-title">One story, three&nbsp;steps.</h2>
       <ol className="chain">
         {STEPS.map((step, i) => (
           <li className="link" key={step.title}>

@@ -14,9 +14,9 @@ export function Specialist() {
           <p className="eyebrow">Planned for specialist visits</p>
           <h2 id="specialist-title">A better handoff is the goal.</h2>
           <p>
-            We want to help you prepare a clean summary of the history you
-            choose, instead of re-telling it from the top at every first
-            appointment.
+            We want to help you prepare a clean summary of the parts of your
+            history you choose to share, so you don’t have to retell it from
+            the top at every first appointment.
           </p>
         </div>
         <ul className="summary" aria-label="What a future summary could include">
