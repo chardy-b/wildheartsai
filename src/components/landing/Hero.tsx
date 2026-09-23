@@ -19,7 +19,7 @@ export function Hero() {
         </p>
         <div className="actions">
           <a className="btn btn-lg" href={CONTACT_HREF}>
-            Contact us
+            Share your interest
           </a>
           <a className="btn btn-lg btn-ghost" href="#how-it-works">
             How it works
