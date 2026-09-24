@@ -23,12 +23,15 @@ const fixture = {
     endpoint("Alder Valley Clinics", "https://ehr.alder.example/FHIR/api/FHIR/R4"),
     endpoint("Northwind Health (duplicate)", "https://fhir.northwind.example/api/FHIR/R4"),
     endpoint("Insecure Hospital", "http://insecure.example/api/FHIR/R4"),
+    endpoint("Credential URL", "https://user:password@credential.example/api/FHIR/R4"),
+    endpoint("Encoded traversal", "https://traversal.example/api/FHIR/R4%2f%2e%2e%2foauth"),
+    endpoint("Query URL", "https://query.example/api/FHIR/R4?redirect=elsewhere"),
     endpoint("Retired Clinic", "https://retired.example/api/FHIR/R4", "off"),
   ],
 };
 
 describe("parseEndpoints", () => {
-  it("normalizes, de-duplicates, drops inactive and non-https and sorts by name", () => {
+  it("normalizes, de-duplicates, rejects unsafe URLs and sorts by name", () => {
     expect(parseEndpoints(fixture)).toEqual([
       { name: "Alder Valley Clinics", fhirBaseUrl: "https://ehr.alder.example/FHIR/api/FHIR/R4" },
       { name: "Northwind Health", fhirBaseUrl: "https://fhir.northwind.example/api/FHIR/R4" },

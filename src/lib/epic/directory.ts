@@ -29,14 +29,34 @@ function normalize(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
+function safeEndpointBase(value: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    /%(?:2e|2f|5c|25)/i.test(parsed.pathname)
+  ) {
+    return undefined;
+  }
+  return normalize(parsed.toString());
+}
+
 export function parseEndpoints(json: unknown): Organization[] {
   const seen = new Set<string>();
   const orgs: Organization[] = [];
   for (const { resource } of bundleSchema.parse(json).entry) {
     if (resource.resourceType !== "Endpoint" || resource.status !== "active") continue;
     if (!resource.name?.trim() || !resource.address) continue;
-    const fhirBaseUrl = normalize(resource.address);
-    if (!fhirBaseUrl.startsWith("https://") || seen.has(fhirBaseUrl)) continue;
+    const fhirBaseUrl = safeEndpointBase(resource.address);
+    if (!fhirBaseUrl || seen.has(fhirBaseUrl)) continue;
     seen.add(fhirBaseUrl);
     orgs.push({ name: resource.name.trim(), fhirBaseUrl });
   }
