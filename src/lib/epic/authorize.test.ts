@@ -26,11 +26,12 @@ describe("buildAuthorizeUrl", () => {
     });
   });
 
-  it("requests patient launch, refresh and only read scopes", () => {
+  it("requests patient launch, refresh and only SMART v2 read-and-search scopes", () => {
     expect(EPIC_SCOPES).toContain("launch/patient");
     expect(EPIC_SCOPES).toContain("offline_access");
     const resourceScopes = EPIC_SCOPES.filter((s) => s.startsWith("patient/"));
-    expect(resourceScopes.every((s) => s.endsWith(".read"))).toBe(true);
+    expect(resourceScopes.length).toBeGreaterThan(0);
+    expect(resourceScopes.every((s) => /^patient\/[A-Za-z]+\.rs$/.test(s))).toBe(true);
   });
 
   it("has a plain-language label for every resource scope", () => {

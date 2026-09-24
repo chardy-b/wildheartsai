@@ -1,26 +1,27 @@
+// SMART v2 scopes: the Epic app is registered for SMART v2, where ".rs" means read and search.
 export const EPIC_SCOPES = [
   "openid",
   "fhirUser",
   "launch/patient",
   "offline_access",
-  "patient/Patient.read",
-  "patient/Condition.read",
-  "patient/MedicationRequest.read",
-  "patient/AllergyIntolerance.read",
-  "patient/Observation.read",
-  "patient/Immunization.read",
-  "patient/Encounter.read",
+  "patient/Patient.rs",
+  "patient/Condition.rs",
+  "patient/MedicationRequest.rs",
+  "patient/AllergyIntolerance.rs",
+  "patient/Observation.rs",
+  "patient/Immunization.rs",
+  "patient/Encounter.rs",
 ] as const;
 
 // Shown on the connections page: "what we ask for", in plain language.
 export const SCOPE_LABELS: { scope: string; label: string }[] = [
-  { scope: "patient/Patient.read", label: "Your name and date of birth, to match your record" },
-  { scope: "patient/Condition.read", label: "Conditions on your problem list" },
-  { scope: "patient/MedicationRequest.read", label: "Medications you've been prescribed" },
-  { scope: "patient/AllergyIntolerance.read", label: "Allergies" },
-  { scope: "patient/Observation.read", label: "Lab results" },
-  { scope: "patient/Immunization.read", label: "Immunizations" },
-  { scope: "patient/Encounter.read", label: "Visits" },
+  { scope: "patient/Patient.rs", label: "Your name and date of birth, to match your record" },
+  { scope: "patient/Condition.rs", label: "Conditions on your problem list" },
+  { scope: "patient/MedicationRequest.rs", label: "Medications you've been prescribed" },
+  { scope: "patient/AllergyIntolerance.rs", label: "Allergies" },
+  { scope: "patient/Observation.rs", label: "Lab results" },
+  { scope: "patient/Immunization.rs", label: "Immunizations" },
+  { scope: "patient/Encounter.rs", label: "Visits" },
   { scope: "offline_access", label: "Staying connected, so you don't sign in to MyChart every time" },
 ];
 
