@@ -126,3 +126,9 @@
   padding: 0 10px;
   font-size: 12.5px;
 }
+
+.connection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
