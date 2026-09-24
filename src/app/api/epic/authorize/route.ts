@@ -1,21 +1,24 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { buildAuthorizeUrl } from "@/lib/epic/authorize";
-import { findOrganization, loadDirectory } from "@/lib/epic/directory";
+import { findOrganization, loadConnectable } from "@/lib/epic/directory";
 import { encodeFlow, FLOW_COOKIE, FLOW_TTL_SECONDS } from "@/lib/epic/flow";
 import { createPkcePair, createState } from "@/lib/epic/pkce";
-import { tokenKey } from "@/lib/epic/server";
+import { credentialsForOrganization, tokenKey } from "@/lib/epic/server";
 import { discoverSmartConfiguration } from "@/lib/epic/smart";
-import { env } from "@/lib/env";
+import { enabledEpicEnvironment, env } from "@/lib/env";
 
 export async function GET(request: NextRequest) {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return NextResponse.redirect(new URL("/sign-in", request.url));
 
-  const { EPIC_ENVIRONMENT, EPIC_CLIENT_ID, EPIC_REDIRECT_URI } = env();
+  const config = env();
+  const { EPIC_REDIRECT_URI } = config;
+  const environment = enabledEpicEnvironment(config);
   const iss = request.nextUrl.searchParams.get("iss") ?? "";
-  const organization = findOrganization(await loadDirectory(EPIC_ENVIRONMENT), iss);
-  if (!organization) return NextResponse.json({ error: "unknown_organization" }, { status: 400 });
+  const organization = findOrganization(await loadConnectable(environment), iss);
+  const credentials = organization && credentialsForOrganization(organization.fhirBaseUrl);
+  if (!organization || !credentials) return NextResponse.json({ error: "unknown_organization" }, { status: 400 });
 
   let smart;
   try {
@@ -30,7 +33,7 @@ export async function GET(request: NextRequest) {
   const response = NextResponse.redirect(
     buildAuthorizeUrl({
       authorizationEndpoint: smart.authorizationEndpoint,
-      clientId: EPIC_CLIENT_ID,
+      clientId: credentials.clientId,
       redirectUri: EPIC_REDIRECT_URI,
       state,
       codeChallenge: challenge,

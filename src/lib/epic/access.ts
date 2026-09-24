@@ -4,6 +4,10 @@ import type { TokenSet } from "./tokens";
 
 const EARLY_EXPIRY_MS = 60_000;
 
+export function hasFreshAccessToken(connection: ConnectionSecrets, now: Date): boolean {
+  return connection.accessTokenExpiresAt.getTime() - now.getTime() > EARLY_EXPIRY_MS;
+}
+
 export async function freshAccessToken(
   connection: ConnectionSecrets,
   deps: {
@@ -12,7 +16,7 @@ export async function freshAccessToken(
     persist: (id: string, tokens: TokenSet) => Promise<void>;
   },
 ): Promise<string> {
-  if (connection.accessTokenExpiresAt.getTime() - deps.now.getTime() > EARLY_EXPIRY_MS) {
+  if (hasFreshAccessToken(connection, deps.now)) {
     return connection.accessToken;
   }
   if (!connection.refreshToken) throw new ReconnectRequiredError();

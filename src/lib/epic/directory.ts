@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasUnsafePathSyntax } from "@/lib/url-security";
 
 export type Organization = { name: string; fhirBaseUrl: string };
 
@@ -29,14 +30,36 @@ function normalize(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
+function safeEndpointBase(value: string): string | undefined {
+  const candidate = value.trim();
+  if (!/^https:\/\//i.test(candidate) || hasUnsafePathSyntax(candidate)) return undefined;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return undefined;
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    return undefined;
+  }
+  return normalize(parsed.toString());
+}
+
 export function parseEndpoints(json: unknown): Organization[] {
   const seen = new Set<string>();
   const orgs: Organization[] = [];
   for (const { resource } of bundleSchema.parse(json).entry) {
     if (resource.resourceType !== "Endpoint" || resource.status !== "active") continue;
     if (!resource.name?.trim() || !resource.address) continue;
-    const fhirBaseUrl = normalize(resource.address);
-    if (!fhirBaseUrl.startsWith("https://") || seen.has(fhirBaseUrl)) continue;
+    const fhirBaseUrl = safeEndpointBase(resource.address);
+    if (!fhirBaseUrl || seen.has(fhirBaseUrl)) continue;
     seen.add(fhirBaseUrl);
     orgs.push({ name: resource.name.trim(), fhirBaseUrl });
   }
@@ -54,6 +77,38 @@ export async function loadDirectory(
   });
   if (!response.ok) throw new Error(`Epic endpoint list responded ${response.status}`);
   return parseEndpoints(await response.json());
+}
+
+// Every organization a person may start a connection with. In production that is
+// the real health systems plus Epic's sandbox, which is offered as sample data.
+export async function loadConnectable(
+  environment: "sandbox" | "production",
+  fetchImpl: typeof fetch = fetch,
+): Promise<Organization[]> {
+  if (environment === "sandbox") return [EPIC_SANDBOX];
+  return [EPIC_SANDBOX, ...(await loadDirectory("production", fetchImpl))];
+}
+
+export function isSampleData(org: { fhirBaseUrl: string }): boolean {
+  return normalize(org.fhirBaseUrl) === EPIC_SANDBOX.fhirBaseUrl;
+}
+
+// What the connect screens offer. Production: search results among real health
+// systems (only once there is a query), plus the sandbox as a separate sample-data
+// option. Sandbox mode: just the sandbox. Anything already connected is left out.
+export function organizationChoices(
+  environment: "sandbox" | "production",
+  connectable: Organization[],
+  connectedUrls: Set<string>,
+  query: string,
+): { results: Organization[]; sample: Organization | null } {
+  const available = connectable.filter((org) => !connectedUrls.has(org.fhirBaseUrl));
+  if (environment === "sandbox") return { results: searchOrganizations(available, query), sample: null };
+  const real = available.filter((org) => !isSampleData(org));
+  return {
+    results: query.trim() ? searchOrganizations(real, query) : [],
+    sample: available.find(isSampleData) ?? null,
+  };
 }
 
 export function searchOrganizations(orgs: Organization[], query: string, limit = 20): Organization[] {

@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { CONTACT_HREF } from "./contact";
 import { HeartMark } from "./marks";
 
 export function Nav() {
@@ -17,10 +16,12 @@ export function Nav() {
         <Link className="nav-link" href="/privacy">
           Privacy
         </Link>
-        {/* Sign in goes here as a nav-link once login ships; Contact us stays primary. */}
-        <a className="btn" href={CONTACT_HREF}>
-          Share interest
-        </a>
+        <Link className="nav-link" href="/sign-in">
+          Sign in
+        </Link>
+        <Link className="btn" href="/sign-up">
+          Get started
+        </Link>
       </nav>
     </header>
   );

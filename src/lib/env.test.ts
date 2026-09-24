@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEnv, resolveAppUrl } from "./env";
+import { enabledEpicEnvironment, parseEnv, resolveAppUrl } from "./env";
 
 const valid = {
   DATABASE_URL: "postgresql://user:pass@ep-example.neon.tech/neondb?sslmode=require",
@@ -17,6 +17,7 @@ describe("parseEnv", () => {
     const env = parseEnv(valid);
     expect(env.DATABASE_URL).toBe(valid.DATABASE_URL);
     expect(env.SIGNUPS_ENABLED).toBe(false);
+    expect(env.EPIC_PRODUCTION_ACCESS_ENABLED).toBe(false);
     expect(env.SMTP_PASS).toBeUndefined();
   });
 
@@ -39,6 +40,29 @@ describe("parseEnv", () => {
     const env = parseEnv({ ...valid, SMTP_PASS: "", EPIC_RETIRING_PUBLIC_JWK: "" });
     expect(env.SMTP_PASS).toBeUndefined();
     expect(env.EPIC_RETIRING_PUBLIC_JWK).toBeUndefined();
+  });
+
+  it("requires production Epic credentials only when EPIC_ENVIRONMENT is production", () => {
+    expect(parseEnv(valid).EPIC_PRODUCTION_CLIENT_ID).toBeUndefined();
+    expect(() => parseEnv({ ...valid, EPIC_ENVIRONMENT: "production" })).toThrow(/EPIC_PRODUCTION_CLIENT_ID/);
+    expect(() => parseEnv({ ...valid, EPIC_ENVIRONMENT: "production", EPIC_PRODUCTION_CLIENT_ID: "prod-1" })).toThrow(
+      /EPIC_PRODUCTION_PRIVATE_JWK/,
+    );
+    const production = parseEnv({
+      ...valid,
+      EPIC_ENVIRONMENT: "production",
+      EPIC_PRODUCTION_CLIENT_ID: "prod-1",
+      EPIC_PRODUCTION_PRIVATE_JWK: '{"kty":"RSA"}',
+    });
+    expect(production.EPIC_PRODUCTION_CLIENT_ID).toBe("prod-1");
+    expect(enabledEpicEnvironment(production)).toBe("sandbox");
+    expect(enabledEpicEnvironment({ ...production, EPIC_PRODUCTION_ACCESS_ENABLED: true })).toBe("production");
+  });
+
+  it("reads an optional sign-up invite code, treating blank as none", () => {
+    expect(parseEnv(valid).SIGNUP_INVITE_CODE).toBeUndefined();
+    expect(parseEnv({ ...valid, SIGNUP_INVITE_CODE: "" }).SIGNUP_INVITE_CODE).toBeUndefined();
+    expect(parseEnv({ ...valid, SIGNUP_INVITE_CODE: "garden-party" }).SIGNUP_INVITE_CODE).toBe("garden-party");
   });
 
   it("rejects a missing database URL", () => {

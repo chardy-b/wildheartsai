@@ -6,7 +6,7 @@ export function Footer() {
       <p>© {new Date().getFullYear()} Wild Hearts Health</p>
       <div className="footer-legal">
         <p>
-          <Link href="/privacy">Pre-launch privacy notice</Link>
+          <Link href="/privacy">Privacy notice</Link>
         </p>
         <p>
           Wild Hearts Health is not a medical provider and does not give medical

@@ -31,7 +31,12 @@ describe("completeAuthorization", () => {
   it("exchanges the code with the stored verifier and saves the connection", async () => {
     const d = deps();
     expect(await completeAuthorization(d)).toEqual({ ok: true });
-    expect(d.exchange).toHaveBeenCalledWith({ tokenEndpoint: flow.tokenEndpoint, code: "code-1", codeVerifier: "verifier-1" });
+    expect(d.exchange).toHaveBeenCalledWith({
+      fhirBaseUrl: flow.fhirBaseUrl,
+      tokenEndpoint: flow.tokenEndpoint,
+      code: "code-1",
+      codeVerifier: "verifier-1",
+    });
     expect(d.save).toHaveBeenCalledWith(flow, tokens);
   });
 

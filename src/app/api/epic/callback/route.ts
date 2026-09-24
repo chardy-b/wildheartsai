@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { completeAuthorization } from "@/lib/epic/callback";
 import { saveConnection } from "@/lib/epic/connections";
 import { FLOW_COOKIE } from "@/lib/epic/flow";
-import { clientAssertionFor, tokenKey } from "@/lib/epic/server";
+import { clientAssertionFor, credentialsForOrganization, tokenKey } from "@/lib/epic/server";
 import { exchangeCode } from "@/lib/epic/tokens";
 import { env } from "@/lib/env";
 import { onboardingStep } from "@/lib/onboarding";
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 
   const userId = session.user.id;
   const key = tokenKey();
-  const { EPIC_CLIENT_ID, EPIC_REDIRECT_URI } = env();
+  const { EPIC_REDIRECT_URI } = env();
   const params = request.nextUrl.searchParams;
   const inOnboarding = onboardingStep(await getProfile(db, userId)) === "connect";
 
@@ -25,15 +25,18 @@ export async function GET(request: NextRequest) {
     flowCookie: request.cookies.get(FLOW_COOKIE)?.value,
     key,
     now: new Date(),
-    exchange: async ({ tokenEndpoint, code, codeVerifier }) =>
-      exchangeCode({
+    exchange: async ({ fhirBaseUrl, tokenEndpoint, code, codeVerifier }) => {
+      const credentials = credentialsForOrganization(fhirBaseUrl);
+      if (!credentials) throw new Error("No Epic credentials for this health system");
+      return exchangeCode({
         tokenEndpoint,
         code,
         codeVerifier,
         redirectUri: EPIC_REDIRECT_URI,
-        clientId: EPIC_CLIENT_ID,
-        clientAssertion: await clientAssertionFor(tokenEndpoint),
-      }),
+        clientId: credentials.clientId,
+        clientAssertion: await clientAssertionFor(tokenEndpoint, credentials),
+      });
+    },
     save: (flow, tokens) =>
       saveConnection(
         db,

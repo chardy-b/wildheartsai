@@ -310,6 +310,14 @@
   color: var(--text-2);
 }
 
+.privacy-status a {
+  color: var(--rasp-text);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
 /* how it works */
 .chain {
   list-style: none;

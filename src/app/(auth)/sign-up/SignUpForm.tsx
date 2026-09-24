@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 import { authClient } from "@/lib/auth-client";
 import { authErrorMessage } from "@/lib/auth-errors";
 
-export function SignUpForm() {
+export function SignUpForm({ inviteRequired }: { inviteRequired: boolean }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -20,6 +20,7 @@ export function SignUpForm() {
       email: String(form.get("email")),
       password: String(form.get("password")),
       callbackURL: "/app",
+      ...(inviteRequired ? { inviteCode: String(form.get("inviteCode")) } : {}),
     });
     setPending(false);
     if (error) {
@@ -31,6 +32,12 @@ export function SignUpForm() {
 
   return (
     <form className="auth-form" onSubmit={onSubmit}>
+      {inviteRequired ? (
+        <label className="field">
+          Invite code
+          <input name="inviteCode" type="text" autoComplete="off" autoCapitalize="none" spellCheck={false} required />
+        </label>
+      ) : null}
       <label className="field">
         What should we call you?
         <input name="name" type="text" autoComplete="given-name" maxLength={60} required />

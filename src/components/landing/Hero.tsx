@@ -1,4 +1,5 @@
-import { CONTACT_HREF } from "./contact";
+import Link from "next/link";
+
 import { FigureEight } from "./FigureEight";
 
 export function Hero() {
@@ -7,27 +8,27 @@ export function Hero() {
       <div>
         <p className="pill">
           <span className="pill-dot" aria-hidden="true" />
-          Product concept · patient research
+          Early access · by invitation
         </p>
         <h1 id="hero-title">
           Your care is scattered. Your <em>story</em> shouldn’t be.
         </h1>
         <p className="lede">
-          Wild Hearts Health is in development. We’re building toward one clear
-          timeline from the records you choose—so you can see the whole story
-          and prepare for every appointment.
+          Wild Hearts Health gathers the records you choose into one clear
+          timeline—so you can see the whole story and prepare for every
+          appointment.
         </p>
         <div className="actions">
-          <a className="btn btn-lg" href={CONTACT_HREF}>
-            Share your interest
-          </a>
+          <Link className="btn btn-lg" href="/sign-up">
+            Get started
+          </Link>
           <a className="btn btn-lg btn-ghost" href="#how-it-works">
             How it works
           </a>
         </div>
         <dl className="proof">
           <div>
-            <dt>The vision</dt>
+            <dt>What it is</dt>
             <dd>a patient-controlled record</dd>
           </div>
           <div>
@@ -36,7 +37,7 @@ export function Hero() {
           </div>
           <div>
             <dt>Status</dt>
-            <dd>not yet connected to records</dd>
+            <dd>early access, by invitation</dd>
           </div>
         </dl>
       </div>

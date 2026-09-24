@@ -7,6 +7,7 @@ describe("authErrorMessage", () => {
     [{ code: "USER_ALREADY_EXISTS", status: 422 }, "An account with this email already exists. Try signing in instead."],
     [{ code: "INVALID_EMAIL_OR_PASSWORD", status: 401 }, "That email and password don't match. Try again or reset your password."],
     [{ code: "PASSWORD_TOO_SHORT", status: 400 }, "Use at least 12 characters for your password."],
+    [{ code: "INVITE_CODE_INVALID", status: 403 }, "That invite code isn't right. Check it and try again."],
     [{ status: 429 }, "Too many attempts. Wait a minute, then try again."],
     [{ status: 500 }, "Something went wrong on our side. Please try again."],
   ])("maps %o to calm copy", (error, message) => {

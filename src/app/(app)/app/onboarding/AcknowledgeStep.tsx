@@ -9,11 +9,21 @@ export function AcknowledgeStep() {
   return (
     <form className="auth-form" action={action}>
       <fieldset className="ack-list">
-        <legend className="visually-hidden">Early access acknowledgements</legend>
+        <legend className="visually-hidden">Before you connect</legend>
         {ACKNOWLEDGEMENTS.map((item) => (
           <label className="ack" key={item.id}>
             <input type="checkbox" name={item.id} required />
-            <span>{item.text}</span>
+            <span>
+              {item.text}
+              {item.link ? (
+                <>
+                  {" "}
+                  <a href={item.link.href} target="_blank" rel="noreferrer">
+                    {item.link.label}
+                  </a>
+                </>
+              ) : null}
+            </span>
           </label>
         ))}
       </fieldset>

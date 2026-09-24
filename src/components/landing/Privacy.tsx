@@ -1,21 +1,23 @@
+import Link from "next/link";
+
 const PRINCIPLES = [
   {
     kicker: "SMART on FHIR",
-    title: "You would sign in through each health system",
+    title: "You sign in through each health system",
     detail:
-      "The planned flow keeps sign-in on your health system’s page so Wild Hearts would not receive your MyChart password.",
+      "Sign-in happens on your health system’s own page, so Wild Hearts never receives your MyChart password.",
   },
   {
     kicker: "Least access",
-    title: "Only what a feature needs",
+    title: "Only what we show you",
     detail:
-      "We intend to request the minimum access for each feature and explain it before you connect.",
+      "We only request the parts of your record that Wild Hearts shows you, and we don’t store your records.",
   },
   {
     kicker: "Your call",
-    title: "Revocable by design",
+    title: "Revocable any time",
     detail:
-      "We’re designing for disconnect controls and a business model that does not sell patient health data.",
+      "Disconnect a health system whenever you like and we delete the access we stored. We don’t sell patient health data.",
   },
 ];
 
@@ -27,10 +29,9 @@ export function Privacy() {
       aria-labelledby="privacy-title"
     >
       <p className="eyebrow">Privacy</p>
-      <h2 id="privacy-title">The standards we’re building toward.</h2>
+      <h2 id="privacy-title">The standards we hold to.</h2>
       <p className="body privacy-status">
-        These are design commitments for a product in development, not
-        descriptions of a live record connection.
+        The details are in our <Link href="/privacy">privacy notice</Link>.
       </p>
       <ol className="cards">
         {PRINCIPLES.map((promise, i) => (

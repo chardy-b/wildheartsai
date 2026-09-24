@@ -2,6 +2,8 @@ export type AuthError = { status?: number; code?: string; message?: string };
 
 export function authErrorMessage(error: AuthError): string {
   switch (error.code) {
+    case "INVITE_CODE_INVALID":
+      return "That invite code isn't right. Check it and try again.";
     case "PASSWORD_TOO_SHORT":
       return "Use at least 12 characters for your password.";
     case "EMAIL_NOT_VERIFIED":
