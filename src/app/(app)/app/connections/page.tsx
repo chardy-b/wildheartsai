@@ -58,12 +58,18 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                     {isSampleData(connection) ? <span className="tag">Sample data, not your records</span> : null}
                   </p>
                 </div>
-                <form action={disconnectAction}>
-                  <input type="hidden" name="connectionId" value={connection.id} />
-                  <button className="btn btn-ghost" type="submit">
-                    Disconnect
-                  </button>
-                </form>
+                <div className="connection-actions">
+                  {/* Signing in again replaces the stored access for this health system. */}
+                  <a className="btn btn-ghost" href={`/api/epic/authorize?iss=${encodeURIComponent(connection.fhirBaseUrl)}`}>
+                    Reconnect
+                  </a>
+                  <form action={disconnectAction}>
+                    <input type="hidden" name="connectionId" value={connection.id} />
+                    <button className="btn btn-ghost" type="submit">
+                      Disconnect
+                    </button>
+                  </form>
+                </div>
               </li>
             ))}
           </ul>
