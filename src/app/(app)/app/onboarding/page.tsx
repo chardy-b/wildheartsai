@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { db } from "@/lib/db";
+import { connectErrorMessage } from "@/lib/epic/messages";
 import { onboardingStep, type OnboardingStep } from "@/lib/onboarding";
 import { getProfile } from "@/lib/profile";
 import { requireSession } from "@/lib/session";
@@ -15,11 +16,12 @@ export const metadata: Metadata = { title: "Getting started | Wild Hearts Health
 
 const ORDER: OnboardingStep[] = ["name", "acknowledge", "connect"];
 
-export default async function OnboardingPage() {
+export default async function OnboardingPage({ searchParams }: PageProps<"/app/onboarding">) {
   const session = await requireSession();
   const step = onboardingStep(await getProfile(db, session.user.id));
   if (step === "done") redirect("/app");
   const current = ORDER.indexOf(step);
+  const { q, error } = await searchParams;
 
   return (
     <div className="onboarding">
@@ -49,7 +51,7 @@ export default async function OnboardingPage() {
           title="Connect your first health system."
           lede="You'll sign in on your health system's own MyChart page. We never see your MyChart password."
         >
-          <ConnectStep />
+          <ConnectStep query={typeof q === "string" ? q : ""} error={connectErrorMessage(error)} />
         </AuthCard>
       ) : null}
     </div>

@@ -2,7 +2,10 @@ import { AppNav } from "@/components/app/AppNav";
 import { requireSession } from "@/lib/session";
 import "@/components/app/app.css";
 
-const LINKS = [{ href: "/app", label: "Your record" }];
+const LINKS = [
+  { href: "/app", label: "Your record" },
+  { href: "/app/connections", label: "Connections" },
+];
 
 export default async function AppLayout({ children }: LayoutProps<"/app">) {
   await requireSession();
