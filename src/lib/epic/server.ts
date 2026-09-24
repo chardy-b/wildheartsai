@@ -1,9 +1,10 @@
 import "server-only";
+import type { JWK } from "jose";
 import { keyFromBase64 } from "@/lib/crypto/seal";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { freshAccessToken } from "./access";
-import { createClientAssertion, parsePrivateJwk, type PrivateJwk } from "./client-assertion";
+import { createClientAssertion, jwksFor, parsePrivateJwk, type EpicEnvironment, type PrivateJwk } from "./client-assertion";
 import { updateTokens, type ConnectionSecrets } from "./connections";
 import { ReconnectRequiredError } from "./errors";
 import { refreshAccessToken } from "./tokens";
@@ -14,6 +15,14 @@ export function tokenKey(): Buffer {
 
 export function epicPrivateJwk(): PrivateJwk {
   return parsePrivateJwk(env().EPIC_PRIVATE_JWK);
+}
+
+export function jwksResponse(target: EpicEnvironment): Response {
+  const { EPIC_ENVIRONMENT, EPIC_RETIRING_PUBLIC_JWK } = env();
+  const retiring = EPIC_RETIRING_PUBLIC_JWK ? (JSON.parse(EPIC_RETIRING_PUBLIC_JWK) as JWK) : undefined;
+  return Response.json(jwksFor(target, { environment: EPIC_ENVIRONMENT, current: epicPrivateJwk(), retiring }), {
+    headers: { "Cache-Control": "public, max-age=3600" },
+  });
 }
 
 export function clientAssertionFor(tokenEndpoint: string): Promise<string> {

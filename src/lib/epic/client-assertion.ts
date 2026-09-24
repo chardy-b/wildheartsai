@@ -46,3 +46,15 @@ function toPublic({ kty, n, e, kid }: JWK): JWK {
 export function publicJwks(current: JWK, retiring?: JWK): { keys: JWK[] } {
   return { keys: retiring ? [toPublic(current), toPublic(retiring)] : [toPublic(current)] };
 }
+
+export type EpicEnvironment = "sandbox" | "production";
+
+// Epic registers a different JWK Set URL for non-production and production.
+// A deployment publishes its key only at the URL for its own environment, so
+// a sandbox key is never accepted by a production Epic system, or the reverse.
+export function jwksFor(
+  target: EpicEnvironment,
+  deployment: { environment: EpicEnvironment; current: JWK; retiring?: JWK },
+): { keys: JWK[] } {
+  return target === deployment.environment ? publicJwks(deployment.current, deployment.retiring) : { keys: [] };
+}
