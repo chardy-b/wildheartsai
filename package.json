@@ -13,7 +13,7 @@
     "db:local": "pglite-server --db=.pglite --port=5433 --max-connections=10",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "auth:schema": "npx auth@1.7.5 generate --config src/lib/auth.ts --output src/lib/db/auth-schema.ts"
+    "auth:schema": "npx auth@1.7.5 generate --config src/lib/auth-cli.ts --output src/lib/db/auth-schema.ts"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.7.5",
