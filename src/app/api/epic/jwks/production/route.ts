@@ -2,7 +2,7 @@ import { jwksResponse } from "@/lib/epic/server";
 
 export const dynamic = "force-dynamic";
 
-// Epic's Non-Production JWK Set URL.
+// Epic's Production JWK Set URL.
 export function GET() {
-  return jwksResponse("sandbox");
+  return jwksResponse("production");
 }

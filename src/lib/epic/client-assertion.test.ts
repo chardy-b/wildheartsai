@@ -1,6 +1,6 @@
 import { createLocalJWKSet, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createClientAssertion, parsePrivateJwk, publicJwks, type PrivateJwk } from "./client-assertion";
+import { createClientAssertion, jwksFor, parsePrivateJwk, publicJwks, type PrivateJwk } from "./client-assertion";
 
 let privateJwk: PrivateJwk;
 
@@ -40,6 +40,15 @@ describe("publicJwks", () => {
     expect(jwks.keys.map((k) => k.kid)).toEqual(["key-1", "key-0"]);
     expect(jwks.keys[0]).not.toHaveProperty("d");
     expect(jwks.keys[0]).toMatchObject({ alg: "RS384", use: "sig" });
+  });
+});
+
+describe("jwksFor", () => {
+  it("publishes the key only at the JWK Set URL for the deployment's Epic environment", () => {
+    expect(jwksFor("sandbox", { environment: "sandbox", current: privateJwk }).keys.map((k) => k.kid)).toEqual(["key-1"]);
+    expect(jwksFor("production", { environment: "sandbox", current: privateJwk })).toEqual({ keys: [] });
+    expect(jwksFor("production", { environment: "production", current: privateJwk }).keys.map((k) => k.kid)).toEqual(["key-1"]);
+    expect(jwksFor("sandbox", { environment: "production", current: privateJwk })).toEqual({ keys: [] });
   });
 });
 
