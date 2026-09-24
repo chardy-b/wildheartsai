@@ -34,6 +34,32 @@ export const RECORD_QUERIES: Query[] = [
 export type RecordProblem = { organizationName: string; kind: "reconnect" | "unavailable" };
 export type RecordsResult = { items: RecordItem[]; problems: RecordProblem[] };
 
+const MAX_CONNECTIONS = 5;
+const MAX_CONCURRENT_CONNECTIONS = 2;
+const MAX_CONCURRENT_SEARCHES = 3;
+
+async function allSettledWithLimit<T, R>(
+  values: T[],
+  limit: number,
+  work: (value: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R>>(values.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, async () => {
+      while (next < values.length) {
+        const index = next++;
+        try {
+          results[index] = { status: "fulfilled", value: await work(values[index]) };
+        } catch (reason) {
+          results[index] = { status: "rejected", reason };
+        }
+      }
+    }),
+  );
+  return results;
+}
+
 type Deps = {
   accessToken: (connection: ConnectionSecrets) => Promise<string>;
   search: (input: { baseUrl: string; path: string; resourceType: string; accessToken: string }) => Promise<Resource[]>;
@@ -49,8 +75,7 @@ async function fromConnection(connection: ConnectionSecrets, deps: Deps): Promis
     return { items: [], problems: [{ organizationName: source, kind }] };
   }
 
-  const settled = await Promise.allSettled(
-    RECORD_QUERIES.map(async (query) => {
+  const settled = await allSettledWithLimit(RECORD_QUERIES, MAX_CONCURRENT_SEARCHES, async (query) => {
       const resources = await deps.search({
         baseUrl: connection.fhirBaseUrl,
         path: query.path(connection.patientId),
@@ -58,8 +83,7 @@ async function fromConnection(connection: ConnectionSecrets, deps: Deps): Promis
         accessToken,
       });
       return resources.map((resource) => query.normalize(resource as never, source));
-    }),
-  );
+    });
 
   const items: RecordItem[] = [];
   let kind: RecordProblem["kind"] | null = null;
@@ -82,9 +106,16 @@ function timeOf(item: RecordItem): number {
 }
 
 export async function gatherRecords(connections: ConnectionSecrets[], deps: Deps): Promise<RecordsResult> {
-  const results = await Promise.all(connections.map((connection) => fromConnection(connection, deps)));
+  const selected = connections.slice(0, MAX_CONNECTIONS);
+  const settled = await allSettledWithLimit(selected, MAX_CONCURRENT_CONNECTIONS, (connection) => fromConnection(connection, deps));
+  const results = settled.map((result, index): RecordsResult =>
+    result.status === "fulfilled"
+      ? result.value
+      : { items: [], problems: [{ organizationName: selected[index].organizationName, kind: "unavailable" }] },
+  );
   const items = results.flatMap((r) => r.items).sort((a, b) => timeOf(b) - timeOf(a) || a.title.localeCompare(b.title));
-  return { items, problems: results.flatMap((r) => r.problems) };
+  const skipped = connections.slice(MAX_CONNECTIONS).map(({ organizationName }) => ({ organizationName, kind: "unavailable" as const }));
+  return { items, problems: [...results.flatMap((r) => r.problems), ...skipped] };
 }
 
 export function countByCategory(items: RecordItem[]): Record<RecordCategory, number> {

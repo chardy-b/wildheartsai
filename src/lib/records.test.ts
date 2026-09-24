@@ -92,6 +92,38 @@ describe("gatherRecords", () => {
     const result = await gatherRecords([north], { accessToken: async () => "at", search });
     expect(result.items.map((i) => i.title)).toEqual(["A", "B"]);
   });
+
+  it("bounds concurrent FHIR searches per connection", async () => {
+    let active = 0;
+    let highest = 0;
+    const search = vi.fn(async () => {
+      active += 1;
+      highest = Math.max(highest, active);
+      await Promise.resolve();
+      active -= 1;
+      return [];
+    });
+    await gatherRecords([north], { accessToken: async () => "at", search });
+    expect(search).toHaveBeenCalledTimes(RECORD_QUERIES.length);
+    expect(highest).toBe(3);
+  });
+
+  it("bounds connection fan-out and reports connections beyond the launch cap", async () => {
+    const connections = Array.from({ length: 6 }, (_, index) => connection(`Clinic ${index + 1}`, `https://clinic-${index + 1}.example/R4`));
+    let active = 0;
+    let highest = 0;
+    const accessToken = vi.fn(async () => {
+      active += 1;
+      highest = Math.max(highest, active);
+      await Promise.resolve();
+      active -= 1;
+      return "at";
+    });
+    const result = await gatherRecords(connections, { accessToken, search: fakeSearch({}) });
+    expect(accessToken).toHaveBeenCalledTimes(5);
+    expect(highest).toBe(2);
+    expect(result.problems).toContainEqual({ organizationName: "Clinic 6", kind: "unavailable" });
+  });
 });
 
 describe("countByCategory", () => {

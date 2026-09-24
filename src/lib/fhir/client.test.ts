@@ -36,6 +36,45 @@ describe("fhirSearch", () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
+  it("ignores same-origin next links outside the configured FHIR base path", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(bundle(["a"], "https://fhir.example.org/oauth/introspect"));
+    const results = await fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl });
+    expect(results).toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an initial search path outside the configured FHIR base", async () => {
+    const fetchImpl = vi.fn();
+    await expect(
+      fhirSearch({ baseUrl: base, path: "/oauth/introspect", resourceType: "Condition", accessToken: "at", fetchImpl }),
+    ).rejects.toMatchObject({ stage: "fhir", code: "invalid_path" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("follows relative next links only within the configured FHIR base path", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(bundle(["a"], "Condition?page=2"))
+      .mockResolvedValueOnce(bundle(["b"]));
+    const results = await fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl });
+    expect(results.map((resource) => resource.id)).toEqual(["a", "b"]);
+    expect(fetchImpl.mock.calls[1][0]).toBe(`${base}/Condition?page=2`);
+  });
+
+  it("rejects oversized response bodies before retaining them", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(bundle(["a"]));
+    await expect(
+      fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl, maxPageBytes: 8 }),
+    ).rejects.toMatchObject({ stage: "fhir", code: "response_too_large" });
+  });
+
+  it("rejects searches that exceed the resource cap", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(bundle(["a", "b"]));
+    await expect(
+      fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl, maxResources: 1 }),
+    ).rejects.toMatchObject({ stage: "fhir", code: "resource_limit" });
+  });
+
   it("stops after maxPages", async () => {
     const fetchImpl = vi.fn().mockImplementation(async () => bundle(["x"], `${base}/Condition?page=next`));
     await fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl, maxPages: 3 });
