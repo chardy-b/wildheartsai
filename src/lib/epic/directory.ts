@@ -70,6 +70,24 @@ export function isSampleData(org: { fhirBaseUrl: string }): boolean {
   return normalize(org.fhirBaseUrl) === EPIC_SANDBOX.fhirBaseUrl;
 }
 
+// What the connect screens offer. Production: search results among real health
+// systems (only once there is a query), plus the sandbox as a separate sample-data
+// option. Sandbox mode: just the sandbox. Anything already connected is left out.
+export function organizationChoices(
+  environment: "sandbox" | "production",
+  connectable: Organization[],
+  connectedUrls: Set<string>,
+  query: string,
+): { results: Organization[]; sample: Organization | null } {
+  const available = connectable.filter((org) => !connectedUrls.has(org.fhirBaseUrl));
+  if (environment === "sandbox") return { results: searchOrganizations(available, query), sample: null };
+  const real = available.filter((org) => !isSampleData(org));
+  return {
+    results: query.trim() ? searchOrganizations(real, query) : [],
+    sample: available.find(isSampleData) ?? null,
+  };
+}
+
 export function searchOrganizations(orgs: Organization[], query: string, limit = 20): Organization[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   return orgs.filter((org) => words.every((word) => org.name.toLowerCase().includes(word))).slice(0, limit);

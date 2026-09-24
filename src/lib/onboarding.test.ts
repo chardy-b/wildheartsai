@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acknowledgeSchema, CONSENT_VERSION, nameSchema, onboardingStep } from "./onboarding";
+import { acknowledgeSchema, ACKNOWLEDGEMENTS, CONSENT_VERSION, nameSchema, onboardingStep } from "./onboarding";
 import type { Profile } from "./profile";
 
 const base: Profile = {
@@ -43,9 +43,18 @@ describe("nameSchema", () => {
   });
 });
 
+describe("ACKNOWLEDGEMENTS", () => {
+  it("covers the privacy notice now that real records can be connected", () => {
+    expect(CONSENT_VERSION).toBe("2026-09-launch-1");
+    expect(ACKNOWLEDGEMENTS.map((item) => item.id)).toEqual(["not-medical-advice", "privacy-notice"]);
+    expect(ACKNOWLEDGEMENTS.find((item) => item.id === "privacy-notice")?.link).toEqual({ href: "/privacy", label: "Read the privacy notice" });
+  });
+});
+
 describe("acknowledgeSchema", () => {
   it("requires both statements to be checked", () => {
-    expect(acknowledgeSchema.safeParse({ "not-medical-advice": "on", "test-environment": "on" }).success).toBe(true);
+    expect(acknowledgeSchema.safeParse({ "not-medical-advice": "on", "privacy-notice": "on" }).success).toBe(true);
+    expect(acknowledgeSchema.safeParse({ "not-medical-advice": "on", "test-environment": "on" }).success).toBe(false);
     const missing = acknowledgeSchema.safeParse({ "not-medical-advice": "on" });
     expect(missing.success).toBe(false);
     expect(missing.error?.issues[0]?.message).toBe("Please confirm both statements to continue.");

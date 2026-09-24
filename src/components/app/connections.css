@@ -104,3 +104,25 @@
   background: var(--rasp-soft);
   color: var(--text);
 }
+
+.org-sample {
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 18px;
+  border-top: 1px solid color-mix(in srgb, var(--cream-ink) 18%, transparent);
+}
+
+.org-note code {
+  font-size: 0.95em;
+  font-weight: 700;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}

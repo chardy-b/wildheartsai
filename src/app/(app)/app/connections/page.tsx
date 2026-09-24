@@ -3,7 +3,7 @@ import { OrgSearch } from "@/components/app/OrgSearch";
 import { db } from "@/lib/db";
 import { SCOPE_LABELS } from "@/lib/epic/authorize";
 import { listConnections } from "@/lib/epic/connections";
-import { loadDirectory, searchOrganizations } from "@/lib/epic/directory";
+import { isSampleData, loadConnectable, organizationChoices } from "@/lib/epic/directory";
 import { connectErrorMessage } from "@/lib/epic/messages";
 import { env } from "@/lib/env";
 import { requireOnboarded } from "@/lib/onboarding-guard";
@@ -21,14 +21,13 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
   const query = typeof q === "string" ? q : "";
   const environment = env().EPIC_ENVIRONMENT;
 
-  const [connections, directory] = await Promise.all([
+  const [connections, connectable] = await Promise.all([
     listConnections(db, session.user.id),
-    loadDirectory(environment).catch(() => null),
+    loadConnectable(environment).catch(() => null),
   ]);
   const connectedUrls = new Set(connections.map((c) => c.fhirBaseUrl));
-  const available = (directory ?? []).filter((org) => !connectedUrls.has(org.fhirBaseUrl));
-  const results = environment === "sandbox" || query ? searchOrganizations(available, query) : [];
-  const errorMessage = connectErrorMessage(error) ?? (directory ? undefined : connectErrorMessage("unavailable"));
+  const { results, sample } = organizationChoices(environment, connectable ?? [], connectedUrls, query);
+  const errorMessage = connectErrorMessage(error) ?? (connectable ? undefined : connectErrorMessage("unavailable"));
 
   return (
     <section className="app-page connections">
@@ -54,7 +53,10 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
               <li className="connection" key={connection.id}>
                 <div>
                   <h3>{connection.organizationName}</h3>
-                  <p>Connected {dateFormat.format(connection.connectedAt)}</p>
+                  <p>
+                    Connected {dateFormat.format(connection.connectedAt)}
+                    {isSampleData(connection) ? <span className="tag">Sample data, not your records</span> : null}
+                  </p>
                 </div>
                 <form action={disconnectAction}>
                   <input type="hidden" name="connectionId" value={connection.id} />
@@ -70,7 +72,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
 
       <div className="panel-light">
         <h2>Add a health system</h2>
-        <OrgSearch environment={environment} query={query} results={results} formAction="/app/connections" />
+        <OrgSearch environment={environment} query={query} results={results} sample={sample} formAction="/app/connections" />
       </div>
 
       <div>

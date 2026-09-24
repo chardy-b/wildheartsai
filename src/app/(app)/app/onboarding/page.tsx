@@ -42,7 +42,7 @@ export default async function OnboardingPage({ searchParams }: PageProps<"/app/o
         </AuthCard>
       ) : null}
       {step === "acknowledge" ? (
-        <AuthCard title="Before we start." lede="Two things to know about early access.">
+        <AuthCard title="Before we start." lede="Two things to know before you connect.">
           <AcknowledgeStep />
         </AuthCard>
       ) : null}

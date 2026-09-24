@@ -2,18 +2,21 @@ import { z } from "zod";
 import type { Profile } from "./profile";
 
 // Bump this whenever ACKNOWLEDGEMENTS change; everyone re-acknowledges on their next visit.
-export const CONSENT_VERSION = "2026-09-early-access-1";
+export const CONSENT_VERSION = "2026-09-launch-1";
 
-export const ACKNOWLEDGEMENTS = [
+type Acknowledgement = { id: string; text: string; link?: { href: string; label: string } };
+
+export const ACKNOWLEDGEMENTS: readonly Acknowledgement[] = [
   {
     id: "not-medical-advice",
     text: "Wild Hearts Health is not a medical provider and does not give medical advice. I'll bring questions about my health to my care team.",
   },
   {
-    id: "test-environment",
-    text: "During early access, connections use Epic's test environment and sample patients, not my real records.",
+    id: "privacy-notice",
+    text: "Wild Hearts keeps the access my health systems grant, encrypted, and uses it only to show my records to me. I've read the privacy notice.",
+    link: { href: "/privacy", label: "Read the privacy notice" },
   },
-] as const;
+];
 
 export const nameSchema = z.object({
   preferredName: z
@@ -27,7 +30,7 @@ const confirmed = z.literal("on", { error: "Please confirm both statements to co
 
 export const acknowledgeSchema = z.object({
   "not-medical-advice": confirmed,
-  "test-environment": confirmed,
+  "privacy-notice": confirmed,
 });
 
 export type OnboardingStep = "name" | "acknowledge" | "connect" | "done";

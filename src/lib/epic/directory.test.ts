@@ -5,6 +5,7 @@ import {
   findOrganization,
   loadConnectable,
   loadDirectory,
+  organizationChoices,
   parseEndpoints,
   searchOrganizations,
 } from "./directory";
@@ -90,5 +91,28 @@ describe("loadConnectable", () => {
 
   it("accepts only the sandbox in sandbox mode", async () => {
     expect(await loadConnectable("sandbox", vi.fn())).toEqual([EPIC_SANDBOX]);
+  });
+});
+
+describe("organizationChoices", () => {
+  const real = [
+    { name: "Northwind Health", fhirBaseUrl: "https://fhir.northwind.example/api/FHIR/R4" },
+    { name: "Southgate Clinic", fhirBaseUrl: "https://fhir.southgate.example/api/FHIR/R4" },
+  ];
+
+  it("in production, searches real health systems and offers the sandbox separately as sample data", () => {
+    const connectable = [EPIC_SANDBOX, ...real];
+    expect(organizationChoices("production", connectable, new Set(), "")).toEqual({ results: [], sample: EPIC_SANDBOX });
+    expect(organizationChoices("production", connectable, new Set(), "north")).toEqual({ results: [real[0]], sample: EPIC_SANDBOX });
+    expect(organizationChoices("production", connectable, new Set(), "epic").results).toEqual([]);
+  });
+
+  it("leaves out what is already connected", () => {
+    const connected = new Set([EPIC_SANDBOX.fhirBaseUrl, real[0].fhirBaseUrl]);
+    expect(organizationChoices("production", [EPIC_SANDBOX, ...real], connected, "health")).toEqual({ results: [], sample: null });
+  });
+
+  it("in sandbox mode, lists the sandbox without a search and no separate sample", () => {
+    expect(organizationChoices("sandbox", [EPIC_SANDBOX], new Set(), "")).toEqual({ results: [EPIC_SANDBOX], sample: null });
   });
 });
