@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasUnsafePathSyntax } from "@/lib/url-security";
 
 export type Organization = { name: string; fhirBaseUrl: string };
 
@@ -30,9 +31,12 @@ function normalize(url: string): string {
 }
 
 function safeEndpointBase(value: string): string | undefined {
+  const candidate = value.trim();
+  if (!/^https:\/\//i.test(candidate) || hasUnsafePathSyntax(candidate)) return undefined;
+
   let parsed: URL;
   try {
-    parsed = new URL(value);
+    parsed = new URL(candidate);
   } catch {
     return undefined;
   }
@@ -41,8 +45,7 @@ function safeEndpointBase(value: string): string | undefined {
     parsed.username !== "" ||
     parsed.password !== "" ||
     parsed.search !== "" ||
-    parsed.hash !== "" ||
-    /%(?:2e|2f|5c|25)/i.test(parsed.pathname)
+    parsed.hash !== ""
   ) {
     return undefined;
   }
