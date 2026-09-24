@@ -1,4 +1,5 @@
 import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
+import { hasUnsafePathSyntax } from "@/lib/url-security";
 import type { Bundle, Resource } from "./types";
 
 const DEFAULT_MAX_PAGES = 5;
@@ -9,22 +10,13 @@ function fhirFailure(code: string): EpicError {
   return new EpicError("fhir", undefined, code);
 }
 
-function hasUnsafePathEncoding(pathname: string): boolean {
-  // Reject encoded dot segments, path separators and nested percent-encoding.
-  // Different proxies/frameworks decode these a different number of times.
-  if (/%(?:2e|2f|5c|25)/i.test(pathname)) return true;
-  try {
-    const decoded = decodeURIComponent(pathname);
-    return decoded.includes("\\") || decoded.split("/").some((segment) => segment === "." || segment === "..");
-  } catch {
-    return true;
-  }
-}
-
 function configuredRoot(baseUrl: string): URL {
+  const candidate = baseUrl.trim();
+  if (!/^https:\/\//i.test(candidate) || hasUnsafePathSyntax(candidate)) throw fhirFailure("invalid_base");
+
   let root: URL;
   try {
-    root = new URL(baseUrl);
+    root = new URL(candidate);
   } catch {
     throw fhirFailure("invalid_base");
   }
@@ -33,8 +25,7 @@ function configuredRoot(baseUrl: string): URL {
     root.username !== "" ||
     root.password !== "" ||
     root.search !== "" ||
-    root.hash !== "" ||
-    hasUnsafePathEncoding(root.pathname)
+    root.hash !== ""
   ) {
     throw fhirFailure("invalid_base");
   }
@@ -79,13 +70,17 @@ async function jsonWithinLimit(response: Response, maxBytes: number): Promise<un
 }
 
 function isAllowedNext(next: string, current: string, root: URL): string | undefined {
+  const raw = next.trim();
+  const explicitScheme = /^[a-z][a-z\d+.-]*:/i.test(raw);
+  if (hasUnsafePathSyntax(raw) || (explicitScheme && !/^[a-z][a-z\d+.-]*:\/\//i.test(raw))) return undefined;
+
   let candidate: URL;
   try {
-    candidate = new URL(next, current);
+    candidate = new URL(raw, current);
   } catch {
     return undefined;
   }
-  if (candidate.username !== "" || candidate.password !== "" || candidate.hash !== "" || hasUnsafePathEncoding(candidate.pathname)) {
+  if (candidate.username !== "" || candidate.password !== "" || candidate.hash !== "") {
     return undefined;
   }
   const rootPath = root.pathname.replace(/\/+$/, "");
@@ -136,5 +131,6 @@ export async function fhirSearch<T extends Resource>({
     const next = bundle.link?.find((link) => link.relation === "next")?.url;
     url = next ? isAllowedNext(next, url, root) : undefined;
   }
+  if (url) throw fhirFailure("page_limit");
   return results;
 }

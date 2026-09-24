@@ -46,6 +46,9 @@ describe("fhirSearch", () => {
   it.each([
     `${base}%2f%2e%2e%2foauth/introspect`,
     `${base}%252f%252e%252e%252foauth/introspect`,
+    `${base}/Condition/../Patient?page=2`,
+    `${base}/Condition/%2e%2e/Patient?page=2`,
+    `${base}/Condition\\..\\Patient?page=2`,
     "https://user:password@fhir.example.org/api/FHIR/R4/Condition?page=2",
   ])("ignores unsafe pagination links: %s", async (next) => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(bundle(["a"], next));
@@ -108,9 +111,11 @@ describe("fhirSearch", () => {
     ).rejects.toMatchObject({ stage: "fhir", code: "resource_limit" });
   });
 
-  it("stops after maxPages", async () => {
+  it("reports an error instead of returning partial results after maxPages", async () => {
     const fetchImpl = vi.fn().mockImplementation(async () => bundle(["x"], `${base}/Condition?page=next`));
-    await fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl, maxPages: 3 });
+    await expect(
+      fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl, maxPages: 3 }),
+    ).rejects.toMatchObject({ stage: "fhir", code: "page_limit" });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
