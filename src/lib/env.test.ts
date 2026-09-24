@@ -6,6 +6,10 @@ const valid = {
   BETTER_AUTH_SECRET: "x".repeat(32),
   BETTER_AUTH_URL: "http://localhost:3000",
   EMAIL_FROM: "Wild Hearts Health <hello@example.com>",
+  EPIC_CLIENT_ID: "client-123",
+  EPIC_REDIRECT_URI: "http://localhost:3000/api/epic/callback",
+  EPIC_PRIVATE_JWK: '{"kty":"RSA"}',
+  TOKEN_ENCRYPTION_KEY: Buffer.alloc(32).toString("base64"),
 };
 
 describe("parseEnv", () => {
@@ -13,7 +17,7 @@ describe("parseEnv", () => {
     const env = parseEnv(valid);
     expect(env.DATABASE_URL).toBe(valid.DATABASE_URL);
     expect(env.SIGNUPS_ENABLED).toBe(false);
-    expect(env.RESEND_API_KEY).toBeUndefined();
+    expect(env.SMTP_PASS).toBeUndefined();
   });
 
   it("turns SIGNUPS_ENABLED=true into a boolean", () => {
@@ -22,6 +26,19 @@ describe("parseEnv", () => {
 
   it("rejects a short auth secret", () => {
     expect(() => parseEnv({ ...valid, BETTER_AUTH_SECRET: "short" })).toThrow(/BETTER_AUTH_SECRET/);
+  });
+
+  it("defaults to the Epic sandbox and rejects a short encryption key", () => {
+    expect(parseEnv(valid).EPIC_ENVIRONMENT).toBe("sandbox");
+    expect(() => parseEnv({ ...valid, TOKEN_ENCRYPTION_KEY: Buffer.alloc(16).toString("base64") })).toThrow(
+      /TOKEN_ENCRYPTION_KEY/,
+    );
+  });
+
+  it("treats blank values, as copied from .env.example, as unset", () => {
+    const env = parseEnv({ ...valid, SMTP_PASS: "", EPIC_RETIRING_PUBLIC_JWK: "" });
+    expect(env.SMTP_PASS).toBeUndefined();
+    expect(env.EPIC_RETIRING_PUBLIC_JWK).toBeUndefined();
   });
 
   it("rejects a missing database URL", () => {

@@ -6,17 +6,29 @@ const schema = z.object({
   BETTER_AUTH_URL: z.url().optional(),
   VERCEL_URL: z.string().optional(),
   EMAIL_FROM: z.string().min(3),
-  RESEND_API_KEY: z.string().min(1).optional(),
+  // Google Workspace mailbox that sends verification and reset emails (see src/lib/email.ts).
+  SMTP_USER: z.email().optional(),
+  SMTP_PASS: z.string().min(1).optional(),
   SIGNUPS_ENABLED: z
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
+  EPIC_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
+  EPIC_CLIENT_ID: z.string().min(1),
+  EPIC_REDIRECT_URI: z.url(),
+  EPIC_PRIVATE_JWK: z.string().min(2),
+  EPIC_RETIRING_PUBLIC_JWK: z.string().min(2).optional(),
+  TOKEN_ENCRYPTION_KEY: z
+    .string()
+    .refine((value) => Buffer.from(value, "base64").length === 32, "TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded"),
 });
 
 export type ServerEnv = z.infer<typeof schema>;
 
 export function parseEnv(source: Record<string, string | undefined>): ServerEnv {
-  return schema.parse(source);
+  // `KEY=` lines (as in .env.example) load as "", which should mean "not set".
+  const cleaned = Object.fromEntries(Object.entries(source).map(([key, value]) => [key, value === "" ? undefined : value]));
+  return schema.parse(cleaned);
 }
 
 let cached: ServerEnv | undefined;
