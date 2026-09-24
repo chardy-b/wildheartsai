@@ -6,15 +6,17 @@ import { encodeFlow, FLOW_COOKIE, FLOW_TTL_SECONDS } from "@/lib/epic/flow";
 import { createPkcePair, createState } from "@/lib/epic/pkce";
 import { credentialsForOrganization, tokenKey } from "@/lib/epic/server";
 import { discoverSmartConfiguration } from "@/lib/epic/smart";
-import { env } from "@/lib/env";
+import { enabledEpicEnvironment, env } from "@/lib/env";
 
 export async function GET(request: NextRequest) {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return NextResponse.redirect(new URL("/sign-in", request.url));
 
-  const { EPIC_ENVIRONMENT, EPIC_REDIRECT_URI } = env();
+  const config = env();
+  const { EPIC_REDIRECT_URI } = config;
+  const environment = enabledEpicEnvironment(config);
   const iss = request.nextUrl.searchParams.get("iss") ?? "";
-  const organization = findOrganization(await loadConnectable(EPIC_ENVIRONMENT), iss);
+  const organization = findOrganization(await loadConnectable(environment), iss);
   const credentials = organization && credentialsForOrganization(organization.fhirBaseUrl);
   if (!organization || !credentials) return NextResponse.json({ error: "unknown_organization" }, { status: 400 });
 
