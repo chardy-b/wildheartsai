@@ -9,6 +9,39 @@ function fhirFailure(code: string): EpicError {
   return new EpicError("fhir", undefined, code);
 }
 
+function hasUnsafePathEncoding(pathname: string): boolean {
+  // Reject encoded dot segments, path separators and nested percent-encoding.
+  // Different proxies/frameworks decode these a different number of times.
+  if (/%(?:2e|2f|5c|25)/i.test(pathname)) return true;
+  try {
+    const decoded = decodeURIComponent(pathname);
+    return decoded.includes("\\") || decoded.split("/").some((segment) => segment === "." || segment === "..");
+  } catch {
+    return true;
+  }
+}
+
+function configuredRoot(baseUrl: string): URL {
+  let root: URL;
+  try {
+    root = new URL(baseUrl);
+  } catch {
+    throw fhirFailure("invalid_base");
+  }
+  if (
+    root.protocol !== "https:" ||
+    root.username !== "" ||
+    root.password !== "" ||
+    root.search !== "" ||
+    root.hash !== "" ||
+    hasUnsafePathEncoding(root.pathname)
+  ) {
+    throw fhirFailure("invalid_base");
+  }
+  root.pathname = `${root.pathname.replace(/\/+$/, "")}/`;
+  return root;
+}
+
 async function jsonWithinLimit(response: Response, maxBytes: number): Promise<unknown> {
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > maxBytes) throw fhirFailure("response_too_large");
@@ -52,6 +85,9 @@ function isAllowedNext(next: string, current: string, root: URL): string | undef
   } catch {
     return undefined;
   }
+  if (candidate.username !== "" || candidate.password !== "" || candidate.hash !== "" || hasUnsafePathEncoding(candidate.pathname)) {
+    return undefined;
+  }
   const rootPath = root.pathname.replace(/\/+$/, "");
   const withinPath = candidate.pathname === rootPath || candidate.pathname.startsWith(`${rootPath}/`);
   return candidate.origin === root.origin && withinPath ? candidate.toString() : undefined;
@@ -76,7 +112,7 @@ export async function fhirSearch<T extends Resource>({
   maxResources?: number;
   maxPageBytes?: number;
 }): Promise<T[]> {
-  const root = new URL(`${baseUrl.replace(/\/+$/, "")}/`);
+  const root = configuredRoot(baseUrl);
   const results: T[] = [];
   const initial = isAllowedNext(path, root.toString(), root);
   if (!initial) throw fhirFailure("invalid_path");

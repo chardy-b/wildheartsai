@@ -43,11 +43,44 @@ describe("fhirSearch", () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    `${base}%2f%2e%2e%2foauth/introspect`,
+    `${base}%252f%252e%252e%252foauth/introspect`,
+    "https://user:password@fhir.example.org/api/FHIR/R4/Condition?page=2",
+  ])("ignores unsafe pagination links: %s", async (next) => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(bundle(["a"], next));
+    const results = await fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl });
+    expect(results).toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it("rejects an initial search path outside the configured FHIR base", async () => {
     const fetchImpl = vi.fn();
     await expect(
       fhirSearch({ baseUrl: base, path: "/oauth/introspect", resourceType: "Condition", accessToken: "at", fetchImpl }),
     ).rejects.toMatchObject({ stage: "fhir", code: "invalid_path" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects encoded traversal in an initial search path", async () => {
+    const fetchImpl = vi.fn();
+    await expect(
+      fhirSearch({ baseUrl: base, path: "Condition%2f%2e%2e%2foauth", resourceType: "Condition", accessToken: "at", fetchImpl }),
+    ).rejects.toMatchObject({ stage: "fhir", code: "invalid_path" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects credentialed configured FHIR base URLs", async () => {
+    const fetchImpl = vi.fn();
+    await expect(
+      fhirSearch({
+        baseUrl: "https://user:password@fhir.example.org/api/FHIR/R4",
+        path: "Condition",
+        resourceType: "Condition",
+        accessToken: "at",
+        fetchImpl,
+      }),
+    ).rejects.toMatchObject({ stage: "fhir", code: "invalid_base" });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
