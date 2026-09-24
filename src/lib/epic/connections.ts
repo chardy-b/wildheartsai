@@ -21,6 +21,21 @@ export type ConnectionSecrets = ConnectionSummary & {
   accessTokenExpiresAt: Date;
 };
 
+function connectionSecretsOf(row: typeof epicConnection.$inferSelect, key: Buffer): ConnectionSecrets {
+  return {
+    id: row.id,
+    organizationName: row.organizationName,
+    fhirBaseUrl: row.fhirBaseUrl,
+    scope: row.scope,
+    connectedAt: row.createdAt,
+    tokenEndpoint: row.tokenEndpoint,
+    patientId: unseal(row.sealedPatientId, key),
+    accessToken: unseal(row.sealedAccessToken, key),
+    refreshToken: row.sealedRefreshToken ? unseal(row.sealedRefreshToken, key) : null,
+    accessTokenExpiresAt: row.accessTokenExpiresAt,
+  };
+}
+
 export async function saveConnection(
   db: Db,
   key: Buffer,
@@ -64,18 +79,14 @@ export async function getConnectionSecrets(db: Db, key: Buffer, userId: string):
     .from(epicConnection)
     .where(eq(epicConnection.userId, userId))
     .orderBy(asc(epicConnection.createdAt));
-  return rows.map((row) => ({
-    id: row.id,
-    organizationName: row.organizationName,
-    fhirBaseUrl: row.fhirBaseUrl,
-    scope: row.scope,
-    connectedAt: row.createdAt,
-    tokenEndpoint: row.tokenEndpoint,
-    patientId: unseal(row.sealedPatientId, key),
-    accessToken: unseal(row.sealedAccessToken, key),
-    refreshToken: row.sealedRefreshToken ? unseal(row.sealedRefreshToken, key) : null,
-    accessTokenExpiresAt: row.accessTokenExpiresAt,
-  }));
+  return rows.map((row) => connectionSecretsOf(row, key));
+}
+
+// Call only inside a transaction. The row lock serializes rotating refresh tokens
+// across concurrent requests and server instances.
+export async function getConnectionSecretForUpdate(db: Db, key: Buffer, id: string): Promise<ConnectionSecrets | undefined> {
+  const [row] = await db.select().from(epicConnection).where(eq(epicConnection.id, id)).limit(1).for("update");
+  return row ? connectionSecretsOf(row, key) : undefined;
 }
 
 export async function updateTokens(db: Db, key: Buffer, id: string, tokens: TokenSet, now: Date): Promise<void> {

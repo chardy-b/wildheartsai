@@ -5,7 +5,7 @@ import { SCOPE_LABELS } from "@/lib/epic/authorize";
 import { listConnections } from "@/lib/epic/connections";
 import { isSampleData, loadConnectable, organizationChoices } from "@/lib/epic/directory";
 import { connectErrorMessage } from "@/lib/epic/messages";
-import { env } from "@/lib/env";
+import { enabledEpicEnvironment, env } from "@/lib/env";
 import { requireOnboarded } from "@/lib/onboarding-guard";
 import { disconnectAction } from "./actions";
 import "@/components/auth/auth.css";
@@ -19,7 +19,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
   const { session } = await requireOnboarded();
   const { q, connected, error } = await searchParams;
   const query = typeof q === "string" ? q : "";
-  const environment = env().EPIC_ENVIRONMENT;
+  const environment = enabledEpicEnvironment(env());
 
   const [connections, connectable] = await Promise.all([
     listConnections(db, session.user.id),

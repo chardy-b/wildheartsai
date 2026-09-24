@@ -57,7 +57,7 @@ export function OrgSearch({
         <div className="org-sample">
           <p className="org-note">
             <strong>Just looking?</strong> Try a sample patient from Epic&apos;s test system instead. Its records are made
-            up. Sign in to the test MyChart as <code>fhircamila</code>, password <code>epicepic1</code>.
+            up. Epic provides the current sample-patient sign-in details on its test MyChart page.
           </p>
           <ConnectList organizations={[sample]} label="Try sample data" />
         </div>

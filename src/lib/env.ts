@@ -18,6 +18,11 @@ const schema = z
       .transform((value) => value === "true"),
     // sandbox: only Epic's sandbox is offered. production: real health systems, plus the sandbox as sample data.
     EPIC_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
+    // Separate fail-closed rollout switch. Production endpoints remain unavailable until readiness review is complete.
+    EPIC_PRODUCTION_ACCESS_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
     // Non-production client (Epic's sandbox), published at /api/epic/jwks.
     EPIC_CLIENT_ID: z.string().min(1),
     EPIC_REDIRECT_URI: z.url(),
@@ -44,6 +49,12 @@ export function parseEnv(source: Record<string, string | undefined>): ServerEnv 
   // `KEY=` lines (as in .env.example) load as "", which should mean "not set".
   const cleaned = Object.fromEntries(Object.entries(source).map(([key, value]) => [key, value === "" ? undefined : value]));
   return schema.parse(cleaned);
+}
+
+export function enabledEpicEnvironment(
+  value: Pick<ServerEnv, "EPIC_ENVIRONMENT" | "EPIC_PRODUCTION_ACCESS_ENABLED">,
+): "sandbox" | "production" {
+  return value.EPIC_ENVIRONMENT === "production" && value.EPIC_PRODUCTION_ACCESS_ENABLED ? "production" : "sandbox";
 }
 
 let cached: ServerEnv | undefined;
