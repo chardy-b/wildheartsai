@@ -13,8 +13,8 @@ export const ACKNOWLEDGEMENTS: readonly Acknowledgement[] = [
   },
   {
     id: "privacy-notice",
-    text: "Wild Hearts keeps the access my health systems grant, encrypted, and uses it only to show my records to me. I've read the privacy notice.",
-    link: { href: "/privacy", label: "Read the privacy notice" },
+    text: "Wild Hearts keeps the access my health systems grant, encrypted, and uses it only to show my records to me.",
+    link: { href: "/privacy", label: "I've read the privacy notice." },
   },
 ];
 

@@ -8,13 +8,14 @@ export function Closing() {
         <span className="avatar">
           <FaceMark />
         </span>
-        <h2 id="closing-title">Say hello.</h2>
+        <h2 id="closing-title">Want an invite?</h2>
         <p>
-          We’re speaking with patients who see more than one doctor while we
-          shape this product. We’d love to hear what would help.
+          Early access is by invitation while we work closely with our first
+          patients, especially people who see more than one doctor. Say hello
+          and we’ll send you a code.
         </p>
         <a className="btn btn-lg" href={CONTACT_HREF}>
-          Share your interest
+          Ask for an invite
         </a>
         <p className="email-safety">
           Please don’t email medical records or private health information.

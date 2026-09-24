@@ -1,89 +1,150 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 export const metadata: Metadata = {
-  title: "Pre-launch privacy notice | Wild Hearts Health",
-  description:
-    "What the current Wild Hearts Health concept site does and does not collect.",
+  title: "Privacy notice | Wild Hearts Health",
+  description: "What Wild Hearts Health stores, what it doesn't, and the choices you have.",
 };
+
+const linkClass = "font-bold text-rasp-text underline decoration-2 underline-offset-4";
+
+function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3" aria-labelledby={id}>
+      <h2 id={id} className="text-3xl font-bold">
+        {title}
+      </h2>
+      <div className="space-y-3 text-text-2">{children}</div>
+    </section>
+  );
+}
 
 export default function PrivacyPage() {
   return (
     <main className="mx-auto min-h-screen w-[min(720px,calc(100%-32px))] py-12 sm:py-20">
-      <Link
-        className="font-bold text-rasp-text underline decoration-2 underline-offset-4"
-        href="/"
-      >
+      <Link className={linkClass} href="/">
         ← Wild Hearts Health
       </Link>
 
       <div className="mt-12 space-y-12">
         <header className="space-y-5">
-          <p className="text-sm font-bold uppercase tracking-[0.18em] text-rasp-text">
-            Pre-launch privacy notice
-          </p>
-          <h1 className="max-w-[14ch] text-5xl font-extrabold leading-tight sm:text-6xl">
-            This is a concept site, not a health-record service.
+          <p className="text-sm font-bold uppercase tracking-[0.18em] text-rasp-text">Privacy notice</p>
+          <h1 className="max-w-[16ch] text-5xl font-extrabold leading-tight sm:text-6xl">
+            What we keep, and what we don&apos;t.
           </h1>
           <p className="max-w-[62ch] text-xl text-text-2">
-            Wild Hearts Health is still in development. The current site does
-            not offer accounts, connect to MyChart or Epic, or accept medical
-            records.
+            Wild Hearts Health gathers the records you choose from your health systems so you can see them in one
+            place. This notice explains what that involves. Last updated September 24, 2026.
           </p>
         </header>
 
-        <section className="space-y-3" aria-labelledby="current-site">
-          <h2 id="current-site" className="text-3xl font-bold">
-            The current site
-          </h2>
-          <p className="text-text-2">
-            This repository does not configure analytics, advertising trackers,
-            patient accounts, health-record connections or health-data storage.
-            Like most hosted websites, the hosting provider may process basic
-            request information needed to serve and protect the site.
-          </p>
-        </section>
+        <Section id="what-we-store" title="What we store">
+          <ul className="list-disc space-y-2 pl-6">
+            <li>
+              <strong>Your account:</strong> the name you give us, your email address, and your password, stored as
+              a one-way hash we can&apos;t read.
+            </li>
+            <li>
+              <strong>Your sign-ins:</strong> when each session started and ends, and the IP address and browser
+              details sent when you signed in. We use these to keep you signed in and to spot misuse.
+            </li>
+            <li>
+              <strong>Your setup:</strong> what you&apos;d like us to call you, and when you confirmed the notices
+              during setup.
+            </li>
+            <li>
+              <strong>Your connections:</strong> for each health system you connect, its name and address, the
+              access it grants us (a list of permissions, plus the access and refresh tokens that carry them), and
+              your patient ID there. The tokens and patient ID are encrypted before they&apos;re saved.
+            </li>
+          </ul>
+        </Section>
 
-        <section className="space-y-3" aria-labelledby="email-contact">
-          <h2 id="email-contact" className="text-3xl font-bold">
-            Email contact
-          </h2>
-          <p className="text-text-2">
-            The “Share your interest” links open your email application. Please
-            do not send medical records, account credentials or other private
-            health information. Email is for general product feedback and
-            research interest only.
+        <Section id="health-records" title="Your health records">
+          <p>
+            When you view your record, we request it from your health systems at that moment and show it to you. We
+            don&apos;t save your health records in our database, and we don&apos;t write them to our logs.
           </p>
-        </section>
-
-        <section className="space-y-3" aria-labelledby="future-product">
-          <h2 id="future-product" className="text-3xl font-bold">
-            Before any record connection
-          </h2>
-          <p className="text-text-2">
-            A future product would need a reviewed privacy policy, clear consent
-            and revocation controls, a defined retention schedule, appropriate
-            security safeguards and an evidence-backed legal and compliance
-            assessment. The design principles on the homepage describe that
-            intended direction, not a live service.
+          <p>
+            When you connect through MyChart, Epic grants access to more of your record than Wild Hearts shows today,
+            including clinical notes, insurance and care team details. We only request the parts of your record that
+            Wild Hearts shows you.
           </p>
-        </section>
+          <p>
+            Wild Hearts Health is not a medical provider and does not give medical advice. Records appear as your
+            health systems recorded them.
+          </p>
+        </Section>
 
-        <section className="space-y-3" aria-labelledby="contact">
-          <h2 id="contact" className="text-3xl font-bold">
-            Questions
-          </h2>
-          <p className="text-text-2">
-            For non-sensitive questions, email{" "}
-            <a
-              className="font-bold text-rasp-text underline decoration-2 underline-offset-4"
-              href="mailto:teo@wildheartsai.com?subject=Wild%20Hearts%20Health%20privacy"
-            >
+        <Section id="what-we-dont-do" title="What we don't do">
+          <p>
+            We don&apos;t sell your information, show ads, or use analytics or advertising trackers. We don&apos;t
+            share your information with anyone except the services below, which we use to run Wild Hearts.
+          </p>
+        </Section>
+
+        <Section id="services" title="Services we use">
+          <ul className="list-disc space-y-2 pl-6">
+            <li>
+              <strong>Vercel</strong> hosts the site and keeps short-lived request logs.
+            </li>
+            <li>
+              <strong>Neon</strong> hosts our database.
+            </li>
+            <li>
+              <strong>Google Workspace</strong> sends our emails, such as confirming your address or resetting your
+              password.
+            </li>
+            <li>
+              <strong>Epic and your health systems</strong> provide your records when you ask to see them, using the
+              access you approved in MyChart.
+            </li>
+          </ul>
+        </Section>
+
+        <Section id="cookies" title="Cookies">
+          <p>
+            We use one cookie to keep you signed in, and a second that lasts 10 minutes while you connect a health
+            system. We don&apos;t use tracking cookies.
+          </p>
+        </Section>
+
+        <Section id="security" title="Security">
+          <p>
+            Everything travels over encrypted connections. Health-system tokens and patient IDs are encrypted in our
+            database, passwords are stored only as hashes, and new accounts confirm their email address before they
+            can sign in.
+          </p>
+        </Section>
+
+        <Section id="choices" title="Your choices">
+          <p>
+            You can disconnect a health system at any time from Connections. That deletes the tokens and patient ID
+            we stored for it. You can also remove Wild Hearts from the list of apps in your MyChart account.
+          </p>
+          <p>
+            To delete your account, email us from the address on your account and we&apos;ll delete it along with
+            your setup and connections.
+          </p>
+        </Section>
+
+        <Section id="changes" title="Changes">
+          <p>
+            If we change what we collect or how we use it, we&apos;ll update this page and ask you to confirm again
+            before you continue.
+          </p>
+        </Section>
+
+        <Section id="contact" title="Questions">
+          <p>
+            Email{" "}
+            <a className={linkClass} href="mailto:teo@wildheartsai.com?subject=Wild%20Hearts%20Health%20privacy">
               teo@wildheartsai.com
             </a>
-            .
+            . Please don&apos;t email medical records or other private health information.
           </p>
-        </section>
+        </Section>
       </div>
     </main>
   );
