@@ -1,0 +1,147 @@
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: radial-gradient(520px 520px at 50% 45%, rgb(255 214 196 / 0.07), transparent 70%) no-repeat;
+}
+
+.auth-top {
+  display: flex;
+  align-items: center;
+  height: 88px;
+}
+
+.auth-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 17.5px;
+  text-decoration: none;
+}
+
+.auth-brand svg {
+  width: 21px;
+  height: 21px;
+}
+
+.auth-main {
+  display: grid;
+  place-items: center;
+  padding: 24px 0 96px;
+}
+
+.auth-card {
+  width: min(460px, 100%);
+  background: var(--vinyl);
+  color: var(--cream-ink);
+  border-radius: 40px;
+  padding: 44px clamp(24px, 6vw, 44px) 36px;
+  box-shadow: 0 0 140px 10px rgb(255 214 196 / 0.07), var(--drop);
+}
+
+.auth-card .avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  margin-bottom: 20px;
+  box-shadow: 0 6px 16px -6px rgb(60 40 48 / 0.4);
+}
+
+.auth-card .avatar svg {
+  width: 28px;
+}
+
+.auth-card .face-eyes {
+  fill: var(--cream-ink);
+}
+
+.auth-card h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.auth-lede {
+  margin: 10px 0 26px;
+  color: var(--cream-ink-2);
+}
+
+.auth-form {
+  display: grid;
+  gap: 16px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.field input {
+  height: 50px;
+  border-radius: 16px;
+  border: 1px solid #d9cec8;
+  background: #fff;
+  color: var(--cream-ink);
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 500;
+}
+
+.field input:focus-visible {
+  outline: 3px solid var(--rasp-btn);
+  outline-offset: 1px;
+  border-radius: 16px;
+}
+
+.field-hint {
+  font-weight: 400;
+  font-size: 13.5px;
+  color: var(--cream-ink-2);
+}
+
+.form-error,
+.form-notice {
+  margin: 0;
+  border-radius: 16px;
+  padding: 12px 16px;
+  font-size: 15px;
+}
+
+.form-error {
+  background: #fbe3eb;
+  color: var(--rasp-btn);
+}
+
+.form-notice {
+  background: #ffffff;
+  color: var(--cream-ink);
+}
+
+.auth-form .btn,
+.auth-card > .btn {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 22px 0 0;
+  font-size: 14.5px;
+  color: var(--cream-ink-2);
+}
+
+.auth-links a {
+  color: var(--rasp-btn);
+  font-weight: 700;
+}
