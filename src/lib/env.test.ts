@@ -17,7 +17,7 @@ describe("parseEnv", () => {
     const env = parseEnv(valid);
     expect(env.DATABASE_URL).toBe(valid.DATABASE_URL);
     expect(env.SIGNUPS_ENABLED).toBe(false);
-    expect(env.RESEND_API_KEY).toBeUndefined();
+    expect(env.SMTP_PASS).toBeUndefined();
   });
 
   it("turns SIGNUPS_ENABLED=true into a boolean", () => {
@@ -36,8 +36,8 @@ describe("parseEnv", () => {
   });
 
   it("treats blank values, as copied from .env.example, as unset", () => {
-    const env = parseEnv({ ...valid, RESEND_API_KEY: "", EPIC_RETIRING_PUBLIC_JWK: "" });
-    expect(env.RESEND_API_KEY).toBeUndefined();
+    const env = parseEnv({ ...valid, SMTP_PASS: "", EPIC_RETIRING_PUBLIC_JWK: "" });
+    expect(env.SMTP_PASS).toBeUndefined();
     expect(env.EPIC_RETIRING_PUBLIC_JWK).toBeUndefined();
   });
 

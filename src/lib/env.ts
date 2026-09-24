@@ -6,7 +6,9 @@ const schema = z.object({
   BETTER_AUTH_URL: z.url().optional(),
   VERCEL_URL: z.string().optional(),
   EMAIL_FROM: z.string().min(3),
-  RESEND_API_KEY: z.string().min(1).optional(),
+  // Google Workspace mailbox that sends verification and reset emails (see src/lib/email.ts).
+  SMTP_USER: z.email().optional(),
+  SMTP_PASS: z.string().min(1).optional(),
   SIGNUPS_ENABLED: z
     .enum(["true", "false"])
     .default("false")
