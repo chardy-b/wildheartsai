@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { passwordResetEmail, verificationEmail } from "@/lib/email-templates";
 import { appUrl, env } from "@/lib/env";
+import { inviteGate } from "@/lib/invite";
 import { lazy } from "@/lib/lazy";
 
 const DAY = 60 * 60 * 24;
@@ -31,6 +32,7 @@ export function createAuth() {
       },
     },
     session: { expiresIn: 7 * DAY, updateAge: DAY },
+    hooks: { before: inviteGate(env().SIGNUP_INVITE_CODE) },
     plugins: [nextCookies()],
   });
 }

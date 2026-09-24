@@ -27,11 +27,20 @@ export default function SignUpPage() {
     );
   }
 
+  const inviteRequired = Boolean(env().SIGNUP_INVITE_CODE);
   return (
-    <AuthCard title="Create your account." lede="You'll confirm your email, then connect your first health system.">
-      <SignUpForm />
+    <AuthCard
+      title="Create your account."
+      lede={
+        inviteRequired
+          ? "Early access is by invitation. Enter your invite code, confirm your email, then connect your first health system."
+          : "You'll confirm your email, then connect your first health system."
+      }
+    >
+      <SignUpForm inviteRequired={inviteRequired} />
       <p className="auth-links">
         <Link href="/sign-in">Already have an account? Sign in</Link>
+        {inviteRequired ? <a href={CONTACT_HREF}>Need an invite? Ask us</a> : null}
       </p>
     </AuthCard>
   );
