@@ -14,7 +14,7 @@ export function tokenKey(): Buffer {
 }
 
 // The sandbox or production client, depending on which Epic system the health system is on.
-// Undefined for a production health system while production credentials aren't configured.
+// Undefined for a production health system while production access is disabled or credentials aren't configured.
 export function credentialsForOrganization(fhirBaseUrl: string): EpicCredentials | undefined {
   const environment = epicEnvironmentOf(fhirBaseUrl);
   const config = env();
@@ -23,7 +23,11 @@ export function credentialsForOrganization(fhirBaseUrl: string): EpicCredentials
 }
 
 export function jwksResponse(environment: EpicEnvironment): Response {
-  return Response.json(publishedJwks(credentialsFor(environment, env())), {
+  const config = env();
+  if (environment === "production" && !config.EPIC_PRODUCTION_ACCESS_ENABLED) {
+    return Response.json({ keys: [] }, { status: 404, headers: { "Cache-Control": "no-store" } });
+  }
+  return Response.json(publishedJwks(credentialsFor(environment, config)), {
     headers: { "Cache-Control": "public, max-age=3600" },
   });
 }
