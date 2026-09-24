@@ -3,6 +3,7 @@ import {
   EPIC_ENDPOINTS_URL,
   EPIC_SANDBOX,
   findOrganization,
+  loadConnectable,
   loadDirectory,
   parseEndpoints,
   searchOrganizations,
@@ -76,5 +77,18 @@ describe("loadDirectory", () => {
   it("throws when the list is unavailable", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response("down", { status: 503 }));
     await expect(loadDirectory("production", fetchImpl)).rejects.toThrow(/503/);
+  });
+});
+
+describe("loadConnectable", () => {
+  it("accepts the sandbox as sample data alongside real health systems in production", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json(fixture));
+    const orgs = await loadConnectable("production", fetchImpl);
+    expect(orgs[0]).toEqual(EPIC_SANDBOX);
+    expect(orgs).toHaveLength(3);
+  });
+
+  it("accepts only the sandbox in sandbox mode", async () => {
+    expect(await loadConnectable("sandbox", vi.fn())).toEqual([EPIC_SANDBOX]);
   });
 });

@@ -41,6 +41,27 @@ describe("parseEnv", () => {
     expect(env.EPIC_RETIRING_PUBLIC_JWK).toBeUndefined();
   });
 
+  it("requires production Epic credentials only when EPIC_ENVIRONMENT is production", () => {
+    expect(parseEnv(valid).EPIC_PRODUCTION_CLIENT_ID).toBeUndefined();
+    expect(() => parseEnv({ ...valid, EPIC_ENVIRONMENT: "production" })).toThrow(/EPIC_PRODUCTION_CLIENT_ID/);
+    expect(() => parseEnv({ ...valid, EPIC_ENVIRONMENT: "production", EPIC_PRODUCTION_CLIENT_ID: "prod-1" })).toThrow(
+      /EPIC_PRODUCTION_PRIVATE_JWK/,
+    );
+    const production = parseEnv({
+      ...valid,
+      EPIC_ENVIRONMENT: "production",
+      EPIC_PRODUCTION_CLIENT_ID: "prod-1",
+      EPIC_PRODUCTION_PRIVATE_JWK: '{"kty":"RSA"}',
+    });
+    expect(production.EPIC_PRODUCTION_CLIENT_ID).toBe("prod-1");
+  });
+
+  it("reads an optional sign-up invite code, treating blank as none", () => {
+    expect(parseEnv(valid).SIGNUP_INVITE_CODE).toBeUndefined();
+    expect(parseEnv({ ...valid, SIGNUP_INVITE_CODE: "" }).SIGNUP_INVITE_CODE).toBeUndefined();
+    expect(parseEnv({ ...valid, SIGNUP_INVITE_CODE: "garden-party" }).SIGNUP_INVITE_CODE).toBe("garden-party");
+  });
+
   it("rejects a missing database URL", () => {
     const { DATABASE_URL: _omit, ...rest } = valid;
     void _omit;

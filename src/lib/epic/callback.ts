@@ -9,7 +9,7 @@ export async function completeAuthorization(deps: {
   flowCookie: string | undefined;
   key: Buffer;
   now: Date;
-  exchange: (input: { tokenEndpoint: string; code: string; codeVerifier: string }) => Promise<InitialTokenSet>;
+  exchange: (input: { fhirBaseUrl: string; tokenEndpoint: string; code: string; codeVerifier: string }) => Promise<InitialTokenSet>;
   save: (flow: Flow, tokens: InitialTokenSet) => Promise<void>;
 }): Promise<{ ok: true } | { ok: false; reason: CallbackFailure }> {
   const { params } = deps;
@@ -23,7 +23,12 @@ export async function completeAuthorization(deps: {
 
   let tokens: InitialTokenSet;
   try {
-    tokens = await deps.exchange({ tokenEndpoint: flow.tokenEndpoint, code: params.code, codeVerifier: flow.verifier });
+    tokens = await deps.exchange({
+      fhirBaseUrl: flow.fhirBaseUrl,
+      tokenEndpoint: flow.tokenEndpoint,
+      code: params.code,
+      codeVerifier: flow.verifier,
+    });
   } catch (error) {
     console.error("[epic] token exchange failed", error instanceof Error ? error.message : "unknown");
     return { ok: false, reason: "token_failed" };

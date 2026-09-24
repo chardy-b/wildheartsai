@@ -56,6 +56,20 @@ export async function loadDirectory(
   return parseEndpoints(await response.json());
 }
 
+// Every organization a person may start a connection with. In production that is
+// the real health systems plus Epic's sandbox, which is offered as sample data.
+export async function loadConnectable(
+  environment: "sandbox" | "production",
+  fetchImpl: typeof fetch = fetch,
+): Promise<Organization[]> {
+  if (environment === "sandbox") return [EPIC_SANDBOX];
+  return [EPIC_SANDBOX, ...(await loadDirectory("production", fetchImpl))];
+}
+
+export function isSampleData(org: { fhirBaseUrl: string }): boolean {
+  return normalize(org.fhirBaseUrl) === EPIC_SANDBOX.fhirBaseUrl;
+}
+
 export function searchOrganizations(orgs: Organization[], query: string, limit = 20): Organization[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   return orgs.filter((org) => words.every((word) => org.name.toLowerCase().includes(word))).slice(0, limit);
