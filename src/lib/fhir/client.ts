@@ -134,3 +134,33 @@ export async function fhirSearch<T extends Resource>({
   if (url) throw fhirFailure("page_limit");
   return results;
 }
+
+// Reads one resource (for example a note's Binary) at an address inside the
+// connection's FHIR base, with the same address checks and size limit as searches.
+export async function fhirRead<T extends Resource = Resource>({
+  baseUrl,
+  path,
+  accessToken,
+  fetchImpl = fetch,
+  maxBytes = DEFAULT_MAX_PAGE_BYTES,
+}: {
+  baseUrl: string;
+  path: string;
+  accessToken: string;
+  fetchImpl?: typeof fetch;
+  maxBytes?: number;
+}): Promise<T> {
+  const root = configuredRoot(baseUrl);
+  const url = isAllowedNext(path, root.toString(), root);
+  if (!url) throw fhirFailure("invalid_path");
+
+  const response = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/fhir+json" },
+    cache: "no-store",
+  });
+  if (response.status === 401) throw new ReconnectRequiredError();
+  if (!response.ok) throw new EpicError("fhir", response.status);
+  const resource = (await jsonWithinLimit(response, maxBytes)) as T;
+  if (typeof resource?.resourceType !== "string") throw fhirFailure("invalid_resource");
+  return resource;
+}

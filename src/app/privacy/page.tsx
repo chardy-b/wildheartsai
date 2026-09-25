@@ -67,9 +67,11 @@ export default function PrivacyPage() {
             don&apos;t save your health records in our database, and we don&apos;t write them to our logs.
           </p>
           <p>
-            When you connect through MyChart, Epic grants access to more of your record than Wild Hearts shows today,
-            including clinical notes, insurance and care team details. We only request the parts of your record that
-            Wild Hearts shows you.
+            Wild Hearts shows the parts of your record your health systems share through MyChart: conditions,
+            medications and pharmacy fills, allergies, lab results and reports (including imaging reports), vital
+            signs, immunizations, visits and their notes, procedures, orders, your care team, care plans, goals,
+            social history, implanted devices and insurance. We only request those. A note&apos;s text is fetched when
+            you open it.
           </p>
           <p>
             Wild Hearts Health is not a medical provider and does not give medical advice. Records appear as your

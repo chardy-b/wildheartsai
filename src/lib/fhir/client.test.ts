@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
-import { fhirSearch } from "./client";
+import { fhirRead, fhirSearch } from "./client";
 
 const base = "https://fhir.example.org/api/FHIR/R4";
 
@@ -129,5 +129,32 @@ describe("fhirSearch", () => {
     await expect(
       fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl: broken }),
     ).rejects.toMatchObject({ stage: "fhir", status: 500 } satisfies Partial<EpicError>);
+  });
+});
+
+describe("fhirRead", () => {
+  const base = "https://fhir.example.org/api/FHIR/R4";
+
+  it("reads one resource by a relative or absolute address within the connection's base", async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => Response.json({ resourceType: "Binary", id: "b1", contentType: "text/plain", data: "SGk=" }));
+    expect(await fhirRead({ baseUrl: base, path: "Binary/b1", accessToken: "at", fetchImpl })).toMatchObject({ resourceType: "Binary", id: "b1" });
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${base}/Binary/b1`);
+    expect(fetchImpl.mock.calls[0][1].headers).toMatchObject({ Authorization: "Bearer at" });
+    await fhirRead({ baseUrl: base, path: `${base}/Binary/b1`, accessToken: "at", fetchImpl });
+    expect(fetchImpl.mock.calls[1][0]).toBe(`${base}/Binary/b1`);
+  });
+
+  it("refuses addresses outside the connection's base without sending the token", async () => {
+    const fetchImpl = vi.fn();
+    for (const path of ["https://evil.example/Binary/b1", "../../oauth2/token", "https://fhir.example.org/other/Binary/b1"]) {
+      await expect(fhirRead({ baseUrl: base, path, accessToken: "at", fetchImpl })).rejects.toMatchObject({ stage: "fhir", code: "invalid_path" });
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("asks for a reconnect on 401 and enforces the size limit", async () => {
+    await expect(fhirRead({ baseUrl: base, path: "Binary/b1", accessToken: "at", fetchImpl: vi.fn().mockResolvedValue(new Response("", { status: 401 })) })).rejects.toBeInstanceOf(ReconnectRequiredError);
+    const big = vi.fn().mockResolvedValue(new Response(JSON.stringify({ resourceType: "Binary", data: "x".repeat(2000) })));
+    await expect(fhirRead({ baseUrl: base, path: "Binary/b1", accessToken: "at", fetchImpl: big, maxBytes: 100 })).rejects.toMatchObject({ code: "response_too_large" });
   });
 });

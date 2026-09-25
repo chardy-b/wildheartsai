@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RECORD_QUERIES } from "@/lib/records";
 import { buildAuthorizeUrl, EPIC_SCOPES, SCOPE_LABELS } from "./authorize";
 
 describe("buildAuthorizeUrl", () => {
@@ -37,5 +38,14 @@ describe("buildAuthorizeUrl", () => {
   it("has a plain-language label for every resource scope", () => {
     const labelled = SCOPE_LABELS.map((item) => item.scope);
     for (const scope of EPIC_SCOPES.filter((s) => s.startsWith("patient/"))) expect(labelled).toContain(scope);
+  });
+});
+
+describe("EPIC_SCOPES and the record queries", () => {
+  it("requests a read-and-search scope for every resource type the dashboard reads, plus Binary for note text", () => {
+    const requested = new Set(EPIC_SCOPES.filter((s) => s.startsWith("patient/")).map((s) => s.slice("patient/".length, -".rs".length)));
+    for (const query of RECORD_QUERIES) expect(requested).toContain(query.resourceType);
+    expect(requested).toContain("Binary");
+    expect(requested).toContain("Patient");
   });
 });

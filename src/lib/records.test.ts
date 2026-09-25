@@ -36,6 +36,18 @@ describe("RECORD_QUERIES", () => {
       "Observation?patient=p%201&category=laboratory",
       "Immunization?patient=p%201",
       "Encounter?patient=p%201",
+      "DiagnosticReport?patient=p%201",
+      "DocumentReference?patient=p%201&category=clinical-note",
+      "Procedure?patient=p%201",
+      "Observation?patient=p%201&category=vital-signs",
+      "Observation?patient=p%201&category=social-history",
+      "CareTeam?patient=p%201",
+      "CarePlan?patient=p%201&category=38717003",
+      "Goal?patient=p%201",
+      "ServiceRequest?patient=p%201",
+      "MedicationDispense?patient=p%201",
+      "Device?patient=p%201",
+      "Coverage?patient=p%201",
     ]);
   });
 });
@@ -132,17 +144,32 @@ describe("countByCategory", () => {
       [north.fhirBaseUrl]: { Condition: [{ resourceType: "Condition", id: "c1" } as Resource, { resourceType: "Condition", id: "c2" } as Resource] },
     });
     const { items } = await gatherRecords([north], { accessToken: async () => "at", search });
-    expect(countByCategory(items)).toEqual({ condition: 2, medication: 0, allergy: 0, lab: 0, immunization: 0, visit: 0 });
+    const counts = countByCategory(items);
+    expect(counts.condition).toBe(2);
+    expect(Object.keys(counts)).toHaveLength(18);
+    expect(Object.entries(counts).filter(([category]) => category !== "condition").every(([, n]) => n === 0)).toBe(true);
   });
 });
 
 // Epic grants far more than the dashboard shows (issue #11). Only these types may be read.
 describe("resource allowlist", () => {
-  it("searches only the six resource types the dashboard displays", async () => {
+  it("searches only the resource types the dashboard displays", async () => {
     const search = fakeSearch({});
     await gatherRecords([north, south], { accessToken: async () => "at", search });
     const requested = new Set(search.mock.calls.map(([input]) => input.resourceType));
-    expect([...requested].sort()).toEqual(["AllergyIntolerance", "Condition", "Encounter", "Immunization", "MedicationRequest", "Observation"]);
+    expect([...requested].sort()).toEqual([
+      "AllergyIntolerance", "CarePlan", "CareTeam", "Condition", "Coverage", "Device", "DiagnosticReport", "DocumentReference",
+      "Encounter", "Goal", "Immunization", "MedicationDispense", "MedicationRequest", "Observation", "Procedure", "ServiceRequest",
+    ]);
     for (const [input] of search.mock.calls) expect(input.path.startsWith(`${input.resourceType}?`)).toBe(true);
+  });
+});
+
+describe("record items", () => {
+  it("carry the resource they came from and the connection that fetched it, for the detail view", async () => {
+    const resource = { resourceType: "Condition", id: "c1", code: { text: "Asthma" } } as Resource;
+    const search = fakeSearch({ [north.fhirBaseUrl]: { Condition: [resource] } });
+    const { items } = await gatherRecords([north], { accessToken: async () => "at", search });
+    expect(items[0]).toMatchObject({ title: "Asthma", resource, connectionId: north.id });
   });
 });

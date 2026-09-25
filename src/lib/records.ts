@@ -1,14 +1,28 @@
 import type { ConnectionSecrets } from "@/lib/epic/connections";
 import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
+import { CATEGORIES } from "@/lib/fhir/categories";
 import {
   normalizeAllergy,
+  normalizeCarePlan,
+  normalizeCareTeam,
   normalizeCondition,
+  normalizeCoverage,
+  normalizeDevice,
+  normalizeFill,
+  normalizeGoal,
   normalizeImmunization,
   normalizeLab,
   normalizeMedication,
+  normalizeNote,
+  normalizeOrder,
+  normalizeProcedure,
+  normalizeReport,
+  normalizeSocial,
   normalizeVisit,
+  normalizeVital,
   type RecordCategory,
   type RecordItem,
+  type RecordSummary,
 } from "@/lib/fhir/normalize";
 import type { Resource } from "@/lib/fhir/types";
 
@@ -16,12 +30,13 @@ type Query = {
   category: RecordCategory;
   resourceType: string;
   path: (patientId: string) => string;
-  normalize: (resource: never, source: string) => RecordItem;
+  normalize: (resource: never, source: string) => RecordSummary;
 };
 
 const patient = (id: string) => `patient=${encodeURIComponent(id)}`;
 
-// Epic requires a category on Condition and Observation searches.
+// Every resource type the dashboard displays, and nothing else (issue #11).
+// Epic requires a category on Condition, Observation, DocumentReference and CarePlan searches.
 export const RECORD_QUERIES: Query[] = [
   { category: "condition", resourceType: "Condition", path: (p) => `Condition?${patient(p)}&category=problem-list-item`, normalize: normalizeCondition },
   { category: "medication", resourceType: "MedicationRequest", path: (p) => `MedicationRequest?${patient(p)}`, normalize: normalizeMedication },
@@ -29,6 +44,19 @@ export const RECORD_QUERIES: Query[] = [
   { category: "lab", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=laboratory`, normalize: normalizeLab },
   { category: "immunization", resourceType: "Immunization", path: (p) => `Immunization?${patient(p)}`, normalize: normalizeImmunization },
   { category: "visit", resourceType: "Encounter", path: (p) => `Encounter?${patient(p)}`, normalize: normalizeVisit },
+  { category: "report", resourceType: "DiagnosticReport", path: (p) => `DiagnosticReport?${patient(p)}`, normalize: normalizeReport },
+  { category: "note", resourceType: "DocumentReference", path: (p) => `DocumentReference?${patient(p)}&category=clinical-note`, normalize: normalizeNote },
+  { category: "procedure", resourceType: "Procedure", path: (p) => `Procedure?${patient(p)}`, normalize: normalizeProcedure },
+  { category: "vital", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=vital-signs`, normalize: normalizeVital },
+  { category: "social", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=social-history`, normalize: normalizeSocial },
+  { category: "careTeam", resourceType: "CareTeam", path: (p) => `CareTeam?${patient(p)}`, normalize: normalizeCareTeam },
+  // 38717003: SNOMED "Longitudinal care plan", the category Epic supports for patients.
+  { category: "carePlan", resourceType: "CarePlan", path: (p) => `CarePlan?${patient(p)}&category=38717003`, normalize: normalizeCarePlan },
+  { category: "goal", resourceType: "Goal", path: (p) => `Goal?${patient(p)}`, normalize: normalizeGoal },
+  { category: "order", resourceType: "ServiceRequest", path: (p) => `ServiceRequest?${patient(p)}`, normalize: normalizeOrder },
+  { category: "fill", resourceType: "MedicationDispense", path: (p) => `MedicationDispense?${patient(p)}`, normalize: normalizeFill },
+  { category: "device", resourceType: "Device", path: (p) => `Device?${patient(p)}`, normalize: normalizeDevice },
+  { category: "coverage", resourceType: "Coverage", path: (p) => `Coverage?${patient(p)}`, normalize: normalizeCoverage },
 ];
 
 export type RecordProblem = { organizationName: string; kind: "reconnect" | "unavailable" };
@@ -82,7 +110,11 @@ async function fromConnection(connection: ConnectionSecrets, deps: Deps): Promis
         resourceType: query.resourceType,
         accessToken,
       });
-      return resources.map((resource) => query.normalize(resource as never, source));
+      return resources.map((resource): RecordItem => ({
+        ...query.normalize(resource as never, source),
+        resource,
+        connectionId: connection.id,
+      }));
     });
 
   const items: RecordItem[] = [];
@@ -119,7 +151,7 @@ export async function gatherRecords(connections: ConnectionSecrets[], deps: Deps
 }
 
 export function countByCategory(items: RecordItem[]): Record<RecordCategory, number> {
-  const counts: Record<RecordCategory, number> = { condition: 0, medication: 0, allergy: 0, lab: 0, immunization: 0, visit: 0 };
+  const counts = Object.fromEntries(CATEGORIES.map(({ category }) => [category, 0])) as Record<RecordCategory, number>;
   for (const item of items) counts[item.category] += 1;
   return counts;
 }
