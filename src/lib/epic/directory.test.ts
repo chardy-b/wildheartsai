@@ -37,8 +37,21 @@ describe("parseEndpoints", () => {
   it("normalizes, de-duplicates, rejects unsafe URLs and sorts by name", () => {
     expect(parseEndpoints(fixture)).toEqual([
       { name: "Alder Valley Clinics", fhirBaseUrl: "https://ehr.alder.example/FHIR/api/FHIR/R4" },
-      { name: "Northwind Health", fhirBaseUrl: "https://fhir.northwind.example/api/FHIR/R4" },
+      {
+        name: "Northwind Health",
+        fhirBaseUrl: "https://fhir.northwind.example/api/FHIR/R4",
+        otherNames: ["Northwind Health (duplicate)"],
+      },
     ]);
+  });
+
+  it("keeps every name listed for a shared FHIR address, showing the shortest", () => {
+    const shared = "https://fhir.ucsf.example/api/FHIR/R4";
+    const orgs = parseEndpoints({
+      resourceType: "Bundle",
+      entry: [endpoint("UCSF Benioff Children's Hospital", shared), endpoint("UCSF Health", shared)],
+    });
+    expect(orgs).toEqual([{ name: "UCSF Health", fhirBaseUrl: shared, otherNames: ["UCSF Benioff Children's Hospital"] }]);
   });
 
   it("throws on an unexpected shape", () => {
@@ -52,6 +65,27 @@ describe("searchOrganizations", () => {
   it("matches every word, ignoring case", () => {
     expect(searchOrganizations(orgs, "north HEALTH").map((o) => o.name)).toEqual(["Northwind Health"]);
     expect(searchOrganizations(orgs, "valley north")).toEqual([]);
+  });
+
+  it("matches the start of words, so short words don't match inside longer ones", () => {
+    const listed = [
+      { name: "NYU Langone Medical Center", fhirBaseUrl: "https://nyu.example/R4" },
+      { name: "Cone Health", fhirBaseUrl: "https://cone.example/R4" },
+      { name: "One Brooklyn Health System", fhirBaseUrl: "https://one.example/R4" },
+    ];
+    expect(searchOrganizations(listed, "one medical")).toEqual([]);
+    expect(searchOrganizations(listed, "one").map((o) => o.name)).toEqual(["One Brooklyn Health System"]);
+    expect(searchOrganizations(listed, "lang med").map((o) => o.name)).toEqual(["NYU Langone Medical Center"]);
+  });
+
+  it("matches other listed names and ignores apostrophes", () => {
+    const listed = [
+      { name: "UCSF Health", fhirBaseUrl: "https://ucsf.example/R4", otherNames: ["UCSF Benioff Children's Hospital"] },
+      { name: "St. Luke's University Health Network", fhirBaseUrl: "https://slu.example/R4" },
+    ];
+    expect(searchOrganizations(listed, "benioff").map((o) => o.name)).toEqual(["UCSF Health"]);
+    expect(searchOrganizations(listed, "childrens").map((o) => o.name)).toEqual(["UCSF Health"]);
+    expect(searchOrganizations(listed, "st lukes").map((o) => o.name)).toEqual(["St. Luke's University Health Network"]);
   });
 
   it("returns the first results for an empty query, up to the limit", () => {

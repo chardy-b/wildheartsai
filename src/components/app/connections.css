@@ -132,3 +132,10 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.org-aka {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.75;
+}

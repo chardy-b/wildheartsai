@@ -5,7 +5,10 @@ function ConnectList({ organizations, label }: { organizations: Organization[]; 
     <ul className="org-results">
       {organizations.map((org) => (
         <li key={org.fhirBaseUrl}>
-          <span>{org.name}</span>
+          <span>
+            {org.name}
+            {org.otherNames?.length ? <small className="org-aka">Also listed as {org.otherNames.join(", ")}</small> : null}
+          </span>
           <a className="btn" href={`/api/epic/authorize?iss=${encodeURIComponent(org.fhirBaseUrl)}`}>
             {label}
           </a>
@@ -51,7 +54,10 @@ export function OrgSearch({
       {results.length > 0 ? (
         <ConnectList organizations={results} label="Connect" />
       ) : query ? (
-        <p className="org-note">No health systems match “{query}”. Try a shorter name.</p>
+        <p className="org-note">
+          No health systems match “{query}”. Try one word from its name. Only health systems that offer MyChart
+          through Epic are listed, so some aren&apos;t here yet.
+        </p>
       ) : null}
       {sample ? (
         <div className="org-sample">
