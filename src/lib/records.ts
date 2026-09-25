@@ -124,8 +124,10 @@ async function fromConnection(connection: ConnectionSecrets, deps: Deps): Promis
       items.push(...result.value);
       continue;
     }
-    const status = result.reason instanceof EpicError ? result.reason.status : undefined;
-    console.error(`[records] ${RECORD_QUERIES[i].resourceType} failed ${status ?? "network"}`);
+    // HTTP status, else the client's own error code (resource_limit, page_limit, ...), else a network failure.
+    const reason = result.reason instanceof EpicError ? (result.reason.status ?? result.reason.code) : undefined;
+    const { resourceType, category } = RECORD_QUERIES[i];
+    console.error(`[records] ${resourceType} (${category}) failed ${reason ?? "network"}`);
     if (result.reason instanceof ReconnectRequiredError) kind = "reconnect";
     else kind ??= "unavailable";
   }

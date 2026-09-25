@@ -173,3 +173,21 @@ describe("record items", () => {
     expect(items[0]).toMatchObject({ title: "Asthma", resource, connectionId: north.id });
   });
 });
+
+describe("failure logging", () => {
+  it("says which search failed and why, with the error code when there's no HTTP status", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const search = vi.fn(async ({ path }: { path: string }) => {
+      if (path.includes("category=laboratory")) throw new EpicError("fhir", undefined, "resource_limit");
+      if (path.startsWith("Encounter")) throw new EpicError("fhir", 400);
+      if (path.startsWith("Goal")) throw new TypeError("fetch failed");
+      return [];
+    });
+    await gatherRecords([north], { accessToken: async () => "at", search });
+    const lines = log.mock.calls.map((call) => String(call[0]));
+    expect(lines).toContain("[records] Observation (lab) failed resource_limit");
+    expect(lines).toContain("[records] Encounter (visit) failed 400");
+    expect(lines).toContain("[records] Goal (goal) failed network");
+    log.mockRestore();
+  });
+});
