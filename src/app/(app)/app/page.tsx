@@ -15,7 +15,7 @@ import "@/components/records/records.css";
 
 export const metadata: Metadata = { title: "Your record | Wild Hearts Health" };
 
-const TIMELINE_LIMIT = 40;
+const TIMELINE_LIMIT = 60;
 
 async function HomeRecords({ userId }: { userId: string }) {
   const { items, problems } = await loadRecordsFor(userId);
@@ -24,7 +24,7 @@ async function HomeRecords({ userId }: { userId: string }) {
     <>
       <ProblemNotices problems={problems} />
       <ul className="record-summary" aria-label="Record summary">
-        {CATEGORIES.map(({ category, label, slug }) => (
+        {CATEGORIES.filter(({ category }) => counts[category] > 0).map(({ category, label, slug }) => (
           <li key={category}>
             <Link href={`/app/records/${slug}`}>
               <b>{counts[category]}</b> {label}
@@ -33,7 +33,7 @@ async function HomeRecords({ userId }: { userId: string }) {
         ))}
       </ul>
       <p className="record-note">Shown as recorded by your health systems. Wild Hearts doesn&apos;t change or interpret it.</p>
-      <Timeline items={items.slice(0, TIMELINE_LIMIT)} />
+      <Timeline items={items.filter((item) => item.date).slice(0, TIMELINE_LIMIT)} related={items} />
     </>
   );
 }

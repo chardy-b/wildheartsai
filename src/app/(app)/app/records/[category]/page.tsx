@@ -26,7 +26,7 @@ async function CategoryRecords({ userId, category }: { userId: string; category:
         <p className="lede">Nothing here from your connected health systems yet.</p>
       ) : (
         <div className="timeline">
-          <RecordList items={inCategory} />
+          <RecordList items={inCategory} related={items} />
         </div>
       )}
     </>

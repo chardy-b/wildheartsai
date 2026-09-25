@@ -55,14 +55,156 @@
 }
 
 .record {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+}
+
+.record > summary {
   display: grid;
   grid-template-columns: 12px 1fr auto;
   gap: 14px;
   align-items: start;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 24px;
   padding: 16px 20px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 24px;
+}
+
+.record > summary::-webkit-details-marker {
+  display: none;
+}
+
+.record > summary:hover {
+  background: var(--surface-2);
+}
+
+.record > summary:focus-visible {
+  outline: 2px solid var(--rasp-text);
+  outline-offset: 2px;
+}
+
+.record[open] {
+  border-color: var(--rasp-text);
+}
+
+.record-body {
+  display: grid;
+  gap: 18px;
+  padding: 4px 20px 20px 46px;
+}
+
+.record-sections {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.record-sections > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) 1fr;
+  gap: 12px;
+}
+
+.record-sections dt {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.record-sections dd {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.record-sections ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.visit-notes h4 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.visit-note {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.visit-note p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 14.5px;
+}
+
+.note-load {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.note-error {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.note-text {
+  white-space: pre-wrap;
+  max-height: 480px;
+  overflow: auto;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.all-fields > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.field-tree {
+  margin: 8px 0 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  font-size: 13.5px;
+}
+
+.field-tree > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 180px) 1fr;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.field-tree dt {
+  color: var(--muted);
+}
+
+.field-tree dd {
+  margin: 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  .record-body {
+    padding: 4px 16px 16px;
+  }
+
+  .record-sections > div,
+  .field-tree > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
 }
 
 .record-dot {
@@ -175,7 +317,7 @@
 }
 
 @media (max-width: 700px) {
-  .record {
+  .record > summary {
     grid-template-columns: 12px 1fr;
   }
 
