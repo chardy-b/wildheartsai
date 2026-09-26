@@ -1,3 +1,4 @@
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import type { NextConfig } from "next";
 
 const securityHeaders = [
@@ -17,3 +18,6 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
+// `next dev` gets the Worker's bindings (local D1 in .wrangler/state) through getCloudflareContext().
+initOpenNextCloudflareForDev();

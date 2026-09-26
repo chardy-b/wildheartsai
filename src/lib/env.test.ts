@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { enabledEpicEnvironment, parseEnv, resolveAppUrl } from "./env";
+import { enabledEpicEnvironment, parseEnv } from "./env";
 
 const valid = {
-  DATABASE_URL: "postgresql://user:pass@ep-example.neon.tech/neondb?sslmode=require",
   BETTER_AUTH_SECRET: "x".repeat(32),
   BETTER_AUTH_URL: "http://localhost:3000",
   EMAIL_FROM: "Wild Hearts Health <hello@example.com>",
@@ -16,10 +15,9 @@ const valid = {
 describe("parseEnv", () => {
   it("accepts a complete environment and defaults sign-ups to off", () => {
     const env = parseEnv(valid);
-    expect(env.DATABASE_URL).toBe(valid.DATABASE_URL);
+    expect(env.BETTER_AUTH_URL).toBe(valid.BETTER_AUTH_URL);
     expect(env.SIGNUPS_ENABLED).toBe(false);
     expect(env.EPIC_PRODUCTION_ACCESS_ENABLED).toBe(false);
-    expect(env.SMTP_PASS).toBeUndefined();
   });
 
   it("turns SIGNUPS_ENABLED=true into a boolean", () => {
@@ -47,8 +45,8 @@ describe("parseEnv", () => {
   });
 
   it("treats blank values, as copied from .env.example, as unset", () => {
-    const env = parseEnv({ ...valid, SMTP_PASS: "", EPIC_RETIRING_PUBLIC_JWK: "" });
-    expect(env.SMTP_PASS).toBeUndefined();
+    const env = parseEnv({ ...valid, SIGNUP_INVITE_CODE: "", EPIC_RETIRING_PUBLIC_JWK: "" });
+    expect(env.SIGNUP_INVITE_CODE).toBeUndefined();
     expect(env.EPIC_RETIRING_PUBLIC_JWK).toBeUndefined();
   });
 
@@ -75,27 +73,10 @@ describe("parseEnv", () => {
     expect(parseEnv({ ...valid, SIGNUP_INVITE_CODE: "garden-party" }).SIGNUP_INVITE_CODE).toBe("garden-party");
   });
 
-  it("rejects a missing database URL", () => {
-    const { DATABASE_URL: _omit, ...rest } = valid;
+  it("requires the app's public URL", () => {
+    const { BETTER_AUTH_URL: _omit, ...rest } = valid;
     void _omit;
-    expect(() => parseEnv(rest)).toThrow(/DATABASE_URL/);
-  });
-});
-
-describe("resolveAppUrl", () => {
-  it("prefers BETTER_AUTH_URL", () => {
-    expect(resolveAppUrl({ BETTER_AUTH_URL: "https://app.example.com", VERCEL_URL: "x.vercel.app" })).toBe(
-      "https://app.example.com",
-    );
-  });
-
-  it("falls back to the Vercel deployment URL", () => {
-    expect(resolveAppUrl({ VERCEL_URL: "wildhearts-git-branch.vercel.app" })).toBe(
-      "https://wildhearts-git-branch.vercel.app",
-    );
-  });
-
-  it("throws when neither is set", () => {
-    expect(() => resolveAppUrl({})).toThrow(/BETTER_AUTH_URL/);
+    expect(() => parseEnv(rest)).toThrow(/BETTER_AUTH_URL/);
+    expect(() => parseEnv({ ...valid, BETTER_AUTH_URL: "not a url" })).toThrow(/BETTER_AUTH_URL/);
   });
 });

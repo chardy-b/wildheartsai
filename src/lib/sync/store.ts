@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { contentHmac, sealField, unsealField, type UserKeys } from "@/lib/crypto/user-keys";
+import { chunkBySize, insertRows, jsonValues } from "@/lib/db/bulk";
 import { fhirResource, syncCursor, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import type { RecordSummary } from "@/lib/fhir/normalize";
@@ -11,14 +12,6 @@ import type { Cursor, SyncQuery } from "./plan";
 
 // Bump when normalize.ts changes what it produces, so stored summaries are rebuilt.
 export const NORMALIZER_VERSION = 1;
-
-const BATCH = 100;
-
-function chunks<T>(values: T[], size = BATCH): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < values.length; i += size) out.push(values.slice(i, i + size));
-  return out;
-}
 
 const resourceField = (rowId: string) => ({ table: "fhir_resource", field: "resource", rowId });
 const summaryField = (rowId: string) => ({ table: "fhir_resource", field: "summary", rowId });
@@ -56,8 +49,8 @@ export async function currentRows(
       found.set(row.id, row);
     }
   }
-  for (const ids of chunks(fhirIds, 1000)) {
-    for (const row of await db.select(columns).from(fhirResource).where(and(base, inArray(fhirResource.fhirId, ids)))) {
+  if (fhirIds.length > 0) {
+    for (const row of await db.select(columns).from(fhirResource).where(and(base, inArray(fhirResource.fhirId, jsonValues(fhirIds))))) {
       found.set(row.id, row);
     }
   }
@@ -100,34 +93,46 @@ function newRow(keys: UserKeys, context: Context, fetched: Fetched, now: Date): 
 
 export type ApplyCounts = Omit<SyncQueryStats, "fetched" | "errorCode">;
 
-// Applies one query's diff in a single transaction.
+const rowSize = (row: typeof fhirResource.$inferInsert) => row.sealedResource.length + row.sealedSummary.length + 1_000;
+
+// Applies one query's diff. D1 has no interactive transactions, so writes go in batches,
+// each atomic: a changed record's old version is retired, its new version stored and the
+// two linked in one batch. A failure part-way is safe to retry, because the retried step
+// fetches again and diffs against what was stored.
 export async function applyDiff(db: Db, keys: UserKeys, context: Context, diff: Diff, now: Date): Promise<ApplyCounts> {
-  await db.transaction(async (tx) => {
-    for (const batch of chunks(diff.insert)) {
-      await tx.insert(fhirResource).values(batch.map((f) => newRow(keys, context, f, now)));
-    }
-    for (const { stored, fetched } of diff.supersede) {
-      // Retire the old version first: only one current version may exist at a time.
-      await tx.update(fhirResource).set({ supersededAt: now }).where(eq(fhirResource.id, stored.id));
-      // The new version takes this query's category and summary. An Observation that matches
-      // two category searches is only re-stored when its content changes, so it can't flip back.
-      const row = newRow(keys, context, fetched, now);
-      await tx.insert(fhirResource).values(row);
-      await tx.update(fhirResource).set({ supersededBy: row.id }).where(eq(fhirResource.id, stored.id));
-    }
-    for (const batch of chunks(diff.unchanged)) {
-      await tx.update(fhirResource).set({ lastSeenAt: now }).where(inArray(fhirResource.id, batch.map((s) => s.id)));
-    }
-    for (const batch of chunks(diff.restore)) {
-      await tx
+  for (const rows of chunkBySize(diff.insert.map((f) => newRow(keys, context, f, now)), rowSize)) {
+    await insertRows(db, fhirResource, rows);
+  }
+
+  const replacements = diff.supersede.map(({ stored, fetched }) => ({
+    old: stored.id,
+    // The new version takes this query's category and summary. An Observation that matches
+    // two category searches is only re-stored when its content changes, so it can't flip back.
+    row: newRow(keys, context, fetched, now),
+  }));
+  for (const chunk of chunkBySize(replacements, (r) => rowSize(r.row))) {
+    const oldIds = jsonValues(chunk.map((r) => r.old));
+    const links = JSON.stringify(chunk.map((r) => ({ old: r.old, new: r.row.id })));
+    await db.batch([
+      // Retire the old versions first: only one current version may exist at a time.
+      db.update(fhirResource).set({ supersededAt: now }).where(inArray(fhirResource.id, oldIds)),
+      insertRows(db, fhirResource, chunk.map((r) => r.row)),
+      db
         .update(fhirResource)
-        .set({ lastSeenAt: now, removedAt: null })
-        .where(inArray(fhirResource.id, batch.map((s) => s.id)));
-    }
-    for (const batch of chunks(diff.remove)) {
-      await tx.update(fhirResource).set({ removedAt: now }).where(inArray(fhirResource.id, batch.map((s) => s.id)));
-    }
-  });
+        .set({ supersededBy: sql`(select value ->> '$.new' from json_each(${links}) where value ->> '$.old' = ${fhirResource.id})` })
+        .where(inArray(fhirResource.id, oldIds)),
+    ]);
+  }
+
+  const touch = (rows: Stored[], set: Partial<typeof fhirResource.$inferInsert>) =>
+    db.update(fhirResource).set(set).where(inArray(fhirResource.id, jsonValues(rows.map((s) => s.id))));
+  const updates = [
+    ...(diff.unchanged.length ? [touch(diff.unchanged, { lastSeenAt: now })] : []),
+    ...(diff.restore.length ? [touch(diff.restore, { lastSeenAt: now, removedAt: null })] : []),
+    ...(diff.remove.length ? [touch(diff.remove, { removedAt: now })] : []),
+  ];
+  if (updates.length > 0) await db.batch(updates as [(typeof updates)[number], ...typeof updates]);
+
   return {
     inserted: diff.insert.length,
     superseded: diff.supersede.length,

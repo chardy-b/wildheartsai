@@ -34,12 +34,15 @@ yarn-error.log*
 .env*
 !.env.example
 
-# vercel
-.vercel
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
 # local development database (pglite-server)
 /.pglite
+
+# cloudflare (OpenNext build output, local Wrangler state, local secrets)
+/.open-next
+/.wrangler
+.dev.vars*
+!.dev.vars.example
