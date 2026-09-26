@@ -21,6 +21,7 @@ export function notesForVisit(visit: RecordItem, items: RecordItem[]): RecordIte
     (item) =>
       item.category === "note" &&
       item.connectionId === visit.connectionId &&
+      item.source === visit.source &&
       ((item.resource as DocumentReference).context?.encounter ?? []).some((ref) => ref.reference?.split("/").slice(-2).join("/") === `Encounter/${id}`),
   );
 }

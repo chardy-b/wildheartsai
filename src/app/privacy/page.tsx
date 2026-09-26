@@ -35,7 +35,7 @@ export default function PrivacyPage() {
           </h1>
           <p className="max-w-[62ch] text-xl text-text-2">
             Wild Hearts Health gathers the records you choose from your health systems so you can see them in one
-            place. This notice explains what that involves. Last updated September 24, 2026.
+            place. This notice explains what that involves. Last updated September 26, 2026.
           </p>
         </header>
 
@@ -58,20 +58,26 @@ export default function PrivacyPage() {
               access it grants us (a list of permissions, plus the access and refresh tokens that carry them), and
               your patient ID there. The tokens and patient ID are encrypted before they&apos;re saved.
             </li>
+            <li>
+              <strong>Your health records:</strong> a copy of the records each connected health system shares with
+              us, and when we last checked for new ones. See below.
+            </li>
           </ul>
         </Section>
 
         <Section id="health-records" title="Your health records">
           <p>
-            When you view your record, we request it from your health systems at that moment and show it to you. We
-            don&apos;t save your health records in our database, and we don&apos;t write them to our logs.
+            When you connect a health system, we import the records it shares and keep a copy in our database, so
+            your dashboard loads quickly and shows your full history. We check for new and changed records when you
+            press Refresh. When a record changes, we keep the earlier
+            version too, marked as replaced. We don&apos;t write your records to our logs.
           </p>
           <p>
             Wild Hearts shows the parts of your record your health systems share through MyChart: conditions,
             medications and pharmacy fills, allergies, lab results and reports (including imaging reports), vital
             signs, immunizations, visits and their notes, procedures, orders, your care team, care plans, goals,
-            social history, implanted devices and insurance. We only request those. A note&apos;s text is fetched when
-            you open it.
+            social history, implanted devices and insurance. We only request those. A note&apos;s text is fetched from
+            your health system when you open it, and isn&apos;t stored.
           </p>
           <p>
             Wild Hearts Health is not a medical provider and does not give medical advice. Records appear as your
@@ -92,6 +98,10 @@ export default function PrivacyPage() {
               <strong>Vercel</strong> hosts the site and keeps short-lived request logs.
             </li>
             <li>
+              <strong>Inngest</strong> schedules the background work that imports your records. It only receives
+              internal ID numbers, never your records or your health-system access.
+            </li>
+            <li>
               <strong>Neon</strong> hosts our database.
             </li>
             <li>
@@ -99,8 +109,8 @@ export default function PrivacyPage() {
               password.
             </li>
             <li>
-              <strong>Epic and your health systems</strong> provide your records when you ask to see them, using the
-              access you approved in MyChart.
+              <strong>Epic and your health systems</strong> provide your records when you connect them and when you
+              refresh, using the access you approved in MyChart.
             </li>
           </ul>
         </Section>
@@ -115,19 +125,22 @@ export default function PrivacyPage() {
         <Section id="security" title="Security">
           <p>
             Everything travels over encrypted connections. Health-system tokens and patient IDs are encrypted in our
-            database, passwords are stored only as hashes, and new accounts confirm their email address before they
-            can sign in.
+            database. Your health records are encrypted with a key that belongs to your account alone, so records
+            can&apos;t be read without it, and deleting your account deletes the key. Passwords are stored only as
+            hashes, and new accounts confirm their email address before they can sign in.
           </p>
         </Section>
 
         <Section id="choices" title="Your choices">
           <p>
             You can disconnect a health system at any time from Connections. That deletes the tokens and patient ID
-            we stored for it. You can also remove Wild Hearts from the list of apps in your MyChart account.
+            we stored for it and keeps the records already imported, so your history stays in one place. You can
+            delete those records from Connections too. You can also remove Wild Hearts from the list of apps in your
+            MyChart account.
           </p>
           <p>
             To delete your account, email us from the address on your account and we&apos;ll delete it along with
-            your setup and connections.
+            your setup, connections and every record we imported.
           </p>
         </Section>
 

@@ -34,4 +34,11 @@ describe("notesForVisit", () => {
     const otherConnection = item("note", { resourceType: "DocumentReference", id: "d4", context: { encounter: [{ reference: "Encounter/e1" }] } }, "c2");
     expect(notesForVisit(visit, [visit, mine, absolute, otherVisit, otherConnection]).map((n) => n.resource.id)).toEqual(["d1", "d2"]);
   });
+
+  it("keeps notes from two disconnected organizations apart, though neither has a connection", () => {
+    const visit = { ...item("visit", { resourceType: "Encounter", id: "e1" }, ""), source: "North Clinic" };
+    const north = { ...item("note", { resourceType: "DocumentReference", id: "d1", context: { encounter: [{ reference: "Encounter/e1" }] } }, ""), source: "North Clinic" };
+    const south = { ...item("note", { resourceType: "DocumentReference", id: "d2", context: { encounter: [{ reference: "Encounter/e1" }] } }, ""), source: "South Hospital" };
+    expect(notesForVisit(visit, [visit, north, south]).map((n) => n.resource.id)).toEqual(["d1"]);
+  });
 });

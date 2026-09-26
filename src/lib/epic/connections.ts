@@ -43,7 +43,7 @@ export async function saveConnection(
   key: Buffer,
   input: { userId: string; fhirBaseUrl: string; organizationName: string; tokenEndpoint: string; tokens: InitialTokenSet },
   now: Date,
-): Promise<void> {
+): Promise<{ sourceId: string }> {
   const secrets = {
     organizationName: input.organizationName,
     tokenEndpoint: input.tokenEndpoint,
@@ -54,7 +54,7 @@ export async function saveConnection(
     scope: input.tokens.scope,
     updatedAt: now,
   };
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [source] = await tx
       .insert(healthSource)
       .values({
@@ -75,6 +75,7 @@ export async function saveConnection(
       .insert(epicConnection)
       .values({ id: randomUUID(), userId: input.userId, sourceId: source.id, fhirBaseUrl: input.fhirBaseUrl, createdAt: now, ...secrets })
       .onConflictDoUpdate({ target: [epicConnection.userId, epicConnection.fhirBaseUrl], set: secrets });
+    return { sourceId: source.id };
   });
 }
 
@@ -100,6 +101,16 @@ export async function getConnectionSecrets(db: Db, key: Buffer, userId: string):
     .where(eq(epicConnection.userId, userId))
     .orderBy(asc(epicConnection.createdAt));
   return rows.map((row) => connectionSecretsOf(row, key));
+}
+
+// The connection holding a source's tokens, or undefined once it's been disconnected.
+export async function getConnectionForSource(db: Db, key: Buffer, userId: string, sourceId: string): Promise<ConnectionSecrets | undefined> {
+  const [row] = await db
+    .select()
+    .from(epicConnection)
+    .where(and(eq(epicConnection.sourceId, sourceId), eq(epicConnection.userId, userId)))
+    .limit(1);
+  return row ? connectionSecretsOf(row, key) : undefined;
 }
 
 // Call only inside a transaction. The row lock serializes rotating refresh tokens

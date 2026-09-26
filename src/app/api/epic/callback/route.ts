@@ -9,6 +9,7 @@ import { exchangeCode } from "@/lib/epic/tokens";
 import { env } from "@/lib/env";
 import { onboardingStep } from "@/lib/onboarding";
 import { completeOnboarding, getProfile } from "@/lib/profile";
+import { requestSyncFor } from "@/lib/sync/server";
 
 export async function GET(request: NextRequest) {
   const session = await auth.api.getSession({ headers: request.headers });
@@ -19,6 +20,7 @@ export async function GET(request: NextRequest) {
   const { EPIC_REDIRECT_URI } = env();
   const params = request.nextUrl.searchParams;
   const inOnboarding = onboardingStep(await getProfile(db, userId)) === "connect";
+  let sourceId: string | undefined;
 
   const result = await completeAuthorization({
     params: { code: params.get("code"), state: params.get("state"), error: params.get("error") },
@@ -37,8 +39,8 @@ export async function GET(request: NextRequest) {
         clientAssertion: await clientAssertionFor(tokenEndpoint, credentials),
       });
     },
-    save: (flow, tokens) =>
-      saveConnection(
+    save: async (flow, tokens) => {
+      ({ sourceId } = await saveConnection(
         db,
         key,
         {
@@ -49,8 +51,17 @@ export async function GET(request: NextRequest) {
           tokens,
         },
         new Date(),
-      ),
+      ));
+    },
   });
+
+  // Import the records in the background. A failure to queue isn't fatal: the dashboard
+  // queues a first sync for any connected source that never had one.
+  if (result.ok && sourceId) {
+    await requestSyncFor(userId, sourceId, "connect").catch((error: unknown) => {
+      console.error("[sync] queueing failed", error instanceof Error ? error.name : "unknown");
+    });
+  }
 
   let target: string;
   if (result.ok && inOnboarding) {
