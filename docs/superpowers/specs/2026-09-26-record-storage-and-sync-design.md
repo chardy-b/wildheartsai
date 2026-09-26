@@ -143,13 +143,14 @@ Notes:
 fhir_attachment {
   id uuid pk, user_id fk, source_id fk
   resource_id   uuid fk → fhir_resource.id on delete cascade   -- the DocumentReference
-  url           text      -- the Binary address within the source; unique per source
+  sealed_url    text      -- the Binary address within the source (sealed: it can carry identifiers)
+  url_hmac      text      -- keyed hash of the address, so "already fetched?" needs no decryption
   content_type  text
   size          int
   sealed_text   text      -- plain text from note-text.ts
   sealed_bytes  text null -- original HTML/RTF, capped
   fetched_at    timestamptz
-  unique (source_id, url)
+  unique (source_id, url_hmac)
 }
 ```
 
@@ -194,7 +195,7 @@ B is designed so that C is a drop-in change: the "unwrap user key" function is t
 
 - **Key hierarchy.** A new `RECORDS_ENCRYPTION_KEY` (the key-encryption key, or KEK) is kept separate from `TOKEN_ENCRYPTION_KEY`, so one leaked key doesn't expose both tokens and records. The `user_data_key` table holds `{ user_id pk, sealed_dek, kek_version, created_at }`, and each user gets a random 32-byte data key (DEK).
 - **Crypto-shredding.** Deleting a user's `user_data_key` row makes their records unreadable everywhere, including in Neon point-in-time backups we can't edit. This is the honest way to honour "delete my data".
-- **Bind each ciphertext to its row.** Extend `seal()` with a `v2` format that takes associated data (`user_id|source_id|resource_type|fhir_id|row id`). A sealed blob copied onto another row, or another user's row, then fails to decrypt. The existing `v1` values keep working.
+- **Bind each ciphertext to its row.** Extend `seal()` with a `v2` format that takes associated data (`<table>:<column>:<user_id>:<row id>`). A sealed blob copied onto another row, or another user's row, then fails to decrypt. The existing `v1` values keep working.
 - **The HMAC, not a plain hash, for change detection.** A plain SHA-256 of a small resource could be matched against guessed values. The HMAC is keyed with a key derived from the user's DEK.
 - **Access control.** Every query filters on `user_id` from the session, as `deleteConnection` already does. Postgres row-level security is worth adding as defence in depth: a `pgPolicy` on `user_id = current_setting('app.user_id')`, set per transaction. That is a hardening item.
 - **Job queue payloads carry IDs only** (`sourceId`, `runId`), never tokens or health data. The queue vendor never sees PHI; workers load everything from our database.

@@ -5,11 +5,18 @@ import * as schema from "@/lib/db/schema";
 import { user } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 
-// An in-memory Postgres with every migration in drizzle/ applied.
+let migrated: Promise<PGlite> | undefined;
+
+// An in-memory Postgres with every migration in drizzle/ applied. Migrations run once per
+// test worker; each call gets its own clone, so tests stay isolated without paying for them again.
 export async function createTestDb(): Promise<Db> {
-  const db = drizzle(new PGlite(), { schema });
-  await migrate(db, { migrationsFolder: "drizzle" });
-  return db as unknown as Db;
+  migrated ??= (async () => {
+    const template = new PGlite();
+    await migrate(drizzle(template, { schema }), { migrationsFolder: "drizzle" });
+    return template;
+  })();
+  const client = (await (await migrated).clone()) as PGlite;
+  return drizzle(client, { schema }) as unknown as Db;
 }
 
 export async function createTestUser(db: Db, id = "user_test_1"): Promise<string> {

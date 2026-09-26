@@ -35,8 +35,17 @@ const schema = z
     TOKEN_ENCRYPTION_KEY: z
       .string()
       .refine((value) => Buffer.from(value, "base64").length === 32, "TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded"),
+    // Key-encryption key for stored health records (src/lib/crypto/user-keys.ts). Must differ from
+    // TOKEN_ENCRYPTION_KEY. Optional until records are stored; recordsKey() fails clearly without it.
+    RECORDS_ENCRYPTION_KEY: z
+      .string()
+      .refine((value) => Buffer.from(value, "base64").length === 32, "RECORDS_ENCRYPTION_KEY must be 32 bytes, base64-encoded")
+      .optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.RECORDS_ENCRYPTION_KEY && value.RECORDS_ENCRYPTION_KEY === value.TOKEN_ENCRYPTION_KEY) {
+      ctx.addIssue({ code: "custom", path: ["RECORDS_ENCRYPTION_KEY"], message: "RECORDS_ENCRYPTION_KEY must differ from TOKEN_ENCRYPTION_KEY" });
+    }
     if (value.EPIC_ENVIRONMENT !== "production") return;
     for (const key of ["EPIC_PRODUCTION_CLIENT_ID", "EPIC_PRODUCTION_PRIVATE_JWK"] as const) {
       if (!value[key]) ctx.addIssue({ code: "custom", path: [key], message: `${key} is required when EPIC_ENVIRONMENT=production` });

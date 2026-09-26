@@ -36,6 +36,16 @@ describe("parseEnv", () => {
     );
   });
 
+  it("accepts a separate records key and rejects one reused from the token key", () => {
+    const records = Buffer.alloc(32, 1).toString("base64");
+    expect(parseEnv({ ...valid, RECORDS_ENCRYPTION_KEY: records }).RECORDS_ENCRYPTION_KEY).toBe(records);
+    expect(parseEnv(valid).RECORDS_ENCRYPTION_KEY).toBeUndefined();
+    expect(() => parseEnv({ ...valid, RECORDS_ENCRYPTION_KEY: valid.TOKEN_ENCRYPTION_KEY })).toThrow(/must differ/);
+    expect(() => parseEnv({ ...valid, RECORDS_ENCRYPTION_KEY: Buffer.alloc(16).toString("base64") })).toThrow(
+      /RECORDS_ENCRYPTION_KEY/,
+    );
+  });
+
   it("treats blank values, as copied from .env.example, as unset", () => {
     const env = parseEnv({ ...valid, SMTP_PASS: "", EPIC_RETIRING_PUBLIC_JWK: "" });
     expect(env.SMTP_PASS).toBeUndefined();

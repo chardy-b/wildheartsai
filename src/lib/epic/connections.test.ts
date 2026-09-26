@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
-import { epicConnection } from "@/lib/db/schema";
+import { epicConnection, healthSource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { createTestDb, createTestUser } from "@/test/db";
 import { deleteConnection, getConnectionSecrets, listConnections, saveConnection, updateTokens } from "./connections";
@@ -80,5 +80,43 @@ describe("epic connections", () => {
     expect(await deleteConnection(db, otherUser, id)).toBe(false);
     expect(await deleteConnection(db, userId, id)).toBe(true);
     expect(await listConnections(db, userId)).toEqual([]);
+  });
+
+  it("creates one source per organization and reuses it on reconnect", async () => {
+    await saveConnection(db, key, input(), now);
+    await saveConnection(db, key, { ...input(), organizationName: "Example Health (renamed)" }, now);
+    const sources = await db.select().from(healthSource);
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({ userId, vendor: "epic", status: "connected", organizationName: "Example Health (renamed)" });
+    const [row] = await db.select().from(epicConnection);
+    expect(row.sourceId).toBe(sources[0].id);
+  });
+
+  it("keeps the source, marked disconnected, when disconnecting", async () => {
+    await saveConnection(db, key, input(), now);
+    const [{ id }] = await listConnections(db, userId);
+    await deleteConnection(db, userId, id, now);
+    expect(await db.select().from(epicConnection)).toEqual([]);
+    const [source] = await db.select().from(healthSource);
+    expect(source.status).toBe("disconnected");
+  });
+
+  it("reattaches to the same source when reconnecting after a disconnect", async () => {
+    await saveConnection(db, key, input(), now);
+    const [before] = await db.select().from(healthSource);
+    const [{ id }] = await listConnections(db, userId);
+    await deleteConnection(db, userId, id, now);
+    await saveConnection(db, key, input(), now);
+    const sources = await db.select().from(healthSource);
+    expect(sources).toEqual([expect.objectContaining({ id: before.id, status: "connected" })]);
+  });
+
+  it("does not touch the source when another user tries to disconnect", async () => {
+    await saveConnection(db, key, input(), now);
+    const [{ id }] = await listConnections(db, userId);
+    const otherUser = await createTestUser(db, "user_test_2");
+    await deleteConnection(db, otherUser, id, now);
+    const [source] = await db.select().from(healthSource);
+    expect(source.status).toBe("connected");
   });
 });
