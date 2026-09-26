@@ -88,3 +88,31 @@
 - [x] `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`.
 - [x] Test speed: `createTestDb` migrates once per file and clones per test; `testTimeout` raised to 15s because PGlite start-up plus migrations already took ~4.7s on `main` against the 5s default.
 - [x] Migration backfill covered by `records-schema.test.ts`, which applies `0000`–`0002`, inserts a connection, then applies `0003`.
+
+---
+
+## Stage 2: sync engine
+
+The engine is plain functions with the database, keys, clock, token and FHIR search passed in, so tests drive it with PGlite and a fake FHIR server, and stage 3 wraps each step in an Inngest `step.run`. Nothing is wired to the app yet.
+
+### File structure
+
+| File | Responsibility |
+| --- | --- |
+| `src/lib/sync/dates.ts` | `effectiveDate()`: partial FHIR dates become the start of their period, with the precision kept |
+| `src/lib/sync/plan.ts` | `SYNC_QUERIES` (from `RECORD_QUERIES`, keyed `Type:category`), paging caps, `planQuery()` (full vs incremental), `searchPath()`, the `_lastUpdated` probe and `interpretProbe()` |
+| `src/lib/sync/diff.ts` | `diffResources()`: insert / supersede / unchanged / restore / remove. `isEnteredInError()`, `withoutMeta()` |
+| `src/lib/sync/store.ts` | `prepareFetched()` (content HMAC excludes `meta`), `currentRows()`, `applyDiff()` in one transaction per query, cursor read/write, `openStoredRow()` |
+| `src/lib/sync/run.ts` | `startRun()` (returns the active run if one exists), `beginRun()`, `syncQuery()`, `finishRun()`, `failRun()`, `runStatusOf()`, and `syncSource()` running every step in order |
+
+### Tasks
+
+- [x] **Plan:** a full pull the first time, whenever the server doesn't honour `_lastUpdated` (or it hasn't been probed), and at least weekly. Otherwise incremental from `lastSuccessAt` minus 1 day.
+- [x] **Probe:** after the first complete full pull that finds anything, search again with `_lastUpdated=gt<tomorrow>`. No results means it's honoured; the same results means it's ignored; an error means unsupported.
+- [x] **Diff:** identity is `(source, type, FHIR id)`. The content HMAC excludes `meta`, so a bumped `lastUpdated` alone isn't a new version. A changed resource gets a new row and the old one is marked `superseded_at` / `superseded_by`. Entered-in-error is stored with `removed_at` set. A removed resource that comes back is restored. Only a complete full pull marks missing resources removed, and only within its own category.
+- [x] **Categories:** an Observation matching two category searches is stored once. A new version takes the category of the query that stored it, and it can't flip back because unchanged resources are never re-stored.
+- [x] **Cursors:** they advance to the time the query started, and only when the pull was complete. A truncated pull stores what it got, sets `errorCode: "truncated"`, and marks nothing removed.
+- [x] **Failures:** a FHIR error on one query goes in its stats as a status code and the run continues, ending `partial`. `ReconnectRequiredError` fails the run and marks the source `reconnect_required`. Database errors are thrown, so the queue retries them.
+- [x] **Stats and logs:** counts and codes only. Log lines are `[sync] <key> failed <code>` or `[sync] <key> truncated`.
+- [x] **Tests:** pure tests for plan, diff and dates, plus end-to-end tests on PGlite with a fake FHIR server covering: first sync; no-op resync; supersede; meta-only change; removal and restore; entered-in-error; incremental after a probe; servers that ignore or reject `_lastUpdated`; partial failure; truncation; reconnect; no PHI in stats; one active run.
+- [ ] **Sandbox check (manual, at the start of stage 3):** run a sync against the Epic sandbox patients and record which queries honour `_lastUpdated` (from `sync_cursor.supports_last_updated`).
