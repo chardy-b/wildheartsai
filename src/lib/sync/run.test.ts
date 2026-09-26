@@ -8,7 +8,8 @@ import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
 import type { Observation, Resource } from "@/lib/fhir/types";
 import { createTestDb, createTestUser } from "@/test/db";
 import { SYNC_QUERIES } from "./plan";
-import { startRun, syncSource, type SyncDeps, type SyncSource } from "./run";
+import { runSyncJob } from "./job";
+import { startRun, type SyncDeps, type SyncSource } from "./run";
 import { openStoredRow } from "./store";
 
 const QUERIES = SYNC_QUERIES.filter((q) => ["Observation:lab", "Observation:vital", "Condition:condition"].includes(q.key));
@@ -97,7 +98,12 @@ function deps(overrides: Partial<SyncDeps> = {}): SyncDeps {
 async function sync(overrides: Partial<SyncDeps> = {}) {
   const { runId } = await startRun(db, { userId, sourceId, trigger: "manual" }, clock);
   const source: SyncSource = { runId, userId, sourceId, organizationName: "Example Health", fhirBaseUrl: "https://fhir.example.org/R4", patientId: "p1" };
-  const status = await syncSource(deps(overrides), source, QUERIES);
+  const status = await runSyncJob(
+    { runId, userId, sourceId },
+    (_id, work) => work(),
+    { db, now: () => clock, load: async () => ({ deps: deps(overrides), source }) },
+    QUERIES,
+  );
   const [run] = await db.select().from(syncRun).where(eq(syncRun.id, runId));
   return { status, run };
 }
@@ -274,5 +280,14 @@ describe("startRun", () => {
     const second = await startRun(db, { userId, sourceId, trigger: "scheduled" }, clock);
     expect(first.created).toBe(true);
     expect(second).toEqual({ runId: first.runId, created: false });
+  });
+
+  it("replaces a run that was lost, so it can't block syncing forever", async () => {
+    const lost = await startRun(db, { userId, sourceId, trigger: "manual" }, clock);
+    later(4);
+    const next = await startRun(db, { userId, sourceId, trigger: "manual" }, clock);
+    expect(next.created).toBe(true);
+    const [old] = await db.select().from(syncRun).where(eq(syncRun.id, lost.runId));
+    expect(old.status).toBe("failed");
   });
 });

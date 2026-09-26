@@ -15,10 +15,12 @@ export function ProblemNotices({ problems }: { problems: RecordProblem[] }) {
             <>
               {problem.organizationName} needs you to sign in again. <Link href="/app/connections">Reconnect</Link>
             </>
+          ) : problem.kind === "importing" ? (
+            <>Importing your records from {problem.organizationName}. Refresh this page in a minute to see more.</>
           ) : problem.kind === "partial" ? (
             <>
-              {problem.organizationName} has more {list(problem.categories.map((c) => labelFor(c).toLowerCase()))} than we can
-              show at once, so some are missing.
+              {problem.organizationName} has more {list(problem.categories.map((c) => labelFor(c).toLowerCase()))} than we could
+              import, so some are missing.
             </>
           ) : (
             <>We couldn&apos;t reach {problem.organizationName} just now, so some records may be missing.</>

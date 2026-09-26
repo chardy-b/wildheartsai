@@ -44,8 +44,8 @@ describe("nameSchema", () => {
 });
 
 describe("ACKNOWLEDGEMENTS", () => {
-  it("covers the privacy notice now that real records can be connected", () => {
-    expect(CONSENT_VERSION).toBe("2026-09-launch-1");
+  it("covers the privacy notice, re-asked now that records are stored", () => {
+    expect(CONSENT_VERSION).toBe("2026-09-stored-records");
     expect(ACKNOWLEDGEMENTS.map((item) => item.id)).toEqual(["not-medical-advice", "privacy-notice"]);
     expect(ACKNOWLEDGEMENTS.find((item) => item.id === "privacy-notice")?.link).toEqual({ href: "/privacy", label: "I've read the privacy notice." });
   });

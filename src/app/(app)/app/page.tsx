@@ -5,12 +5,10 @@ import { FaceMark } from "@/components/landing/marks";
 import { ProblemNotices } from "@/components/records/ProblemNotices";
 import { RecordsLoading } from "@/components/records/RecordsLoading";
 import { Timeline } from "@/components/records/Timeline";
-import { db } from "@/lib/db";
-import { listConnections } from "@/lib/epic/connections";
 import { CATEGORIES } from "@/lib/fhir/categories";
 import { requireOnboarded } from "@/lib/onboarding-guard";
 import { countByCategory } from "@/lib/records";
-import { loadRecordsFor } from "@/lib/records-server";
+import { loadRecordsFor, loadSourcesFor } from "@/lib/records-server";
 import "@/components/records/records.css";
 
 export const metadata: Metadata = { title: "Your record | Wild Hearts Health" };
@@ -40,9 +38,9 @@ async function HomeRecords({ userId }: { userId: string }) {
 
 export default async function AppHome() {
   const { session, profile } = await requireOnboarded();
-  const connections = await listConnections(db, session.user.id);
+  const sources = await loadSourcesFor(session.user.id);
 
-  if (connections.length === 0) {
+  if (sources.length === 0) {
     return (
       <section className="app-page">
         <h1>Welcome, {profile.preferredName}.</h1>
@@ -64,7 +62,7 @@ export default async function AppHome() {
     <section className="app-page">
       <h1>{profile.preferredName}&apos;s record</h1>
       <p className="lede">
-        From {connections.length === 1 ? connections[0].organizationName : `${connections.length} health systems`}, newest first.
+        From {sources.length === 1 ? sources[0].organizationName : `${sources.length} health systems`}, newest first.
       </p>
       <Suspense fallback={<RecordsLoading />}>
         <HomeRecords userId={session.user.id} />

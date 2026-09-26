@@ -116,3 +116,33 @@ The engine is plain functions with the database, keys, clock, token and FHIR sea
 - [x] **Stats and logs:** counts and codes only. Log lines are `[sync] <key> failed <code>` or `[sync] <key> truncated`.
 - [x] **Tests:** pure tests for plan, diff and dates, plus end-to-end tests on PGlite with a fake FHIR server covering: first sync; no-op resync; supersede; meta-only change; removal and restore; entered-in-error; incremental after a probe; servers that ignore or reject `_lastUpdated`; partial failure; truncation; reconnect; no PHI in stats; one active run.
 - [ ] **Sandbox check (manual, at the start of stage 3):** run a sync against the Epic sandbox patients and record which queries honour `_lastUpdated` (from `sync_cursor.supports_last_updated`).
+
+---
+
+## Stage 3: queue and read switch
+
+### File structure
+
+| File | Responsibility |
+| --- | --- |
+| `src/lib/inngest/client.ts` | Inngest client and the `records/sync.requested` event (`{ runId, userId, sourceId }`, IDs only) |
+| `src/lib/inngest/functions.ts` | `sync-source` function: concurrency 1 per source, 3 retries per step, `onFailure` ends the run |
+| `src/app/api/inngest/route.ts` | Inngest serve endpoint (GET/POST/PUT), verified with `INNGEST_SIGNING_KEY` |
+| `src/lib/sync/job.ts` | `runSyncJob()`: `begin`, one step per query, `finish`. Each step reloads its connection and keys, and returns only booleans or strings. Replaces stage 2's `syncSource()` |
+| `src/lib/sync/request.ts` | `requestSync()`: owner and connected checks, a 5-minute manual cooldown, one active run, and failing the run if the event can't be sent |
+| `src/lib/sync/server.ts` | Server wiring: `loadSyncJob`, `requestSyncFor`, and `startFirstSyncs` for connected sources that never synced |
+| `src/lib/sources.ts` | `listSources()` (status, connection, syncing, last run stats, record count), `deleteSource()`, `needingFirstSync()` |
+| `src/lib/records-store.ts` | `loadStoredRecords()` (decrypts current rows, tags each with the organization's current name, newest first), `sourceProblems()` |
+| `src/lib/records.ts` | Live-fetch aggregator removed; keeps `RECORD_QUERIES`, `RecordProblem` (adds `importing`), `newestFirst`, `countByCategory` |
+
+### Tasks
+
+- [x] `startRun` fails queued or running runs older than 3 hours, so a lost event can't block a source forever. `failRun` only touches active runs.
+- [x] The callback queues a `connect` sync after saving. Queueing failures are logged and not fatal: the dashboard queues first syncs for connected sources that never had one, which also covers connections made before stage 3.
+- [x] Dashboard and category pages read stored records only. Disconnected sources' records still show, without a connection for note text.
+- [x] Connections page lists organizations: status, record count and last update, Refresh, Reconnect, Disconnect, and "Delete records" behind a `<details>` confirmation.
+- [x] Copy and consent: privacy notice (health records, what we store, Inngest, security, choices, account deletion), landing principles, acknowledgement text, `CONSENT_VERSION` → `2026-09-stored-records`, connections footnote, notices.
+- [x] `RECORDS_ENCRYPTION_KEY` is now required. `.env.example` documents `INNGEST_DEV`, `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`.
+- [x] Verified locally with a production build and the Inngest dev server: the endpoint registers the function, and an event runs `begin`, 18 query steps and `finish`, with stats and the source updated. Epic is unreachable from the build sandbox, so every search returned 403 there.
+- [ ] Before merging: install the Inngest Vercel integration (it sets `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`) and set `RECORDS_ENCRYPTION_KEY` in preview and production.
+- [ ] On preview: connect the Epic sandbox, watch the import finish, refresh, disconnect, delete records. Record which queries honour `_lastUpdated` (`sync_cursor.supports_last_updated`).

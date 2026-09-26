@@ -11,13 +11,13 @@ const PRINCIPLES = [
     kicker: "Least access",
     title: "Only what we show you",
     detail:
-      "We only request the parts of your record that Wild Hearts shows you, and we don’t store your records.",
+      "We only request the parts of your record that Wild Hearts shows you, and we keep them encrypted with a key that’s yours alone.",
   },
   {
     kicker: "Your call",
     title: "Revocable any time",
     detail:
-      "Disconnect a health system whenever you like and we delete the access we stored. We don’t sell patient health data.",
+      "Disconnect a health system whenever you like, and delete what we imported from it. We don’t sell patient health data.",
   },
 ];
 

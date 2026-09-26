@@ -10,6 +10,7 @@ const valid = {
   EPIC_REDIRECT_URI: "http://localhost:3000/api/epic/callback",
   EPIC_PRIVATE_JWK: '{"kty":"RSA"}',
   TOKEN_ENCRYPTION_KEY: Buffer.alloc(32).toString("base64"),
+  RECORDS_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
 };
 
 describe("parseEnv", () => {
@@ -36,10 +37,9 @@ describe("parseEnv", () => {
     );
   });
 
-  it("accepts a separate records key and rejects one reused from the token key", () => {
-    const records = Buffer.alloc(32, 1).toString("base64");
-    expect(parseEnv({ ...valid, RECORDS_ENCRYPTION_KEY: records }).RECORDS_ENCRYPTION_KEY).toBe(records);
-    expect(parseEnv(valid).RECORDS_ENCRYPTION_KEY).toBeUndefined();
+  it("requires a separate records key and rejects one reused from the token key", () => {
+    expect(parseEnv(valid).RECORDS_ENCRYPTION_KEY).toBe(valid.RECORDS_ENCRYPTION_KEY);
+    expect(() => parseEnv({ ...valid, RECORDS_ENCRYPTION_KEY: undefined })).toThrow(/RECORDS_ENCRYPTION_KEY/);
     expect(() => parseEnv({ ...valid, RECORDS_ENCRYPTION_KEY: valid.TOKEN_ENCRYPTION_KEY })).toThrow(/must differ/);
     expect(() => parseEnv({ ...valid, RECORDS_ENCRYPTION_KEY: Buffer.alloc(16).toString("base64") })).toThrow(
       /RECORDS_ENCRYPTION_KEY/,

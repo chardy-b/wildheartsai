@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { epicConnection, healthSource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { createTestDb, createTestUser } from "@/test/db";
-import { deleteConnection, getConnectionSecrets, listConnections, saveConnection, updateTokens } from "./connections";
+import { deleteConnection, getConnectionForSource, getConnectionSecrets, listConnections, saveConnection, updateTokens } from "./connections";
 
 const key = randomBytes(32);
 const now = new Date("2026-09-23T10:00:00Z");
@@ -118,5 +118,15 @@ describe("epic connections", () => {
     await deleteConnection(db, otherUser, id, now);
     const [source] = await db.select().from(healthSource);
     expect(source.status).toBe("connected");
+  });
+
+  it("finds a source's connection only for its owner, and none after disconnecting", async () => {
+    const { sourceId } = await saveConnection(db, key, input(), now);
+    expect(await getConnectionForSource(db, key, userId, sourceId)).toMatchObject({ patientId: "pat-1" });
+    const otherUser = await createTestUser(db, "user_test_3");
+    expect(await getConnectionForSource(db, key, otherUser, sourceId)).toBeUndefined();
+    const [{ id }] = await listConnections(db, userId);
+    await deleteConnection(db, userId, id, now);
+    expect(await getConnectionForSource(db, key, userId, sourceId)).toBeUndefined();
   });
 });

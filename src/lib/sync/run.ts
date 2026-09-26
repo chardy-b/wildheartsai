@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { UserKeys } from "@/lib/crypto/user-keys";
 import { healthSource, syncRun, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
@@ -12,7 +12,6 @@ import {
   searchPath,
   SYNC_MAX_PAGES,
   SYNC_MAX_RESOURCES,
-  SYNC_QUERIES,
   type Cursor,
   type SyncQuery,
 } from "./plan";
@@ -47,12 +46,26 @@ export type SyncDeps = {
   }) => Promise<{ resources: Resource[]; truncated: boolean }>;
 };
 
+// A queued or running run older than this was lost (its job never ran or died without
+// reporting), so it no longer blocks new runs.
+export const STALE_RUN_MS = 3 * 60 * 60 * 1000;
+
 // Queues a run unless one is already queued or running for the source (then returns that one).
 export async function startRun(
   db: Db,
   input: { userId: string; sourceId: string; trigger: SyncTrigger },
   now: Date,
 ): Promise<{ runId: string; created: boolean }> {
+  await db
+    .update(syncRun)
+    .set({ status: "failed", finishedAt: now })
+    .where(
+      and(
+        eq(syncRun.sourceId, input.sourceId),
+        inArray(syncRun.status, ["queued", "running"]),
+        lt(sql`coalesce(${syncRun.startedAt}, ${syncRun.queuedAt})`, new Date(now.getTime() - STALE_RUN_MS)),
+      ),
+    );
   const [created] = await db
     .insert(syncRun)
     .values({ ...input, status: "queued", queuedAt: now })
@@ -190,24 +203,12 @@ export async function failRun(db: Db, runId: string, reason: "reconnect" | "erro
     const [run] = await tx
       .update(syncRun)
       .set({ status: "failed", finishedAt: now })
-      .where(eq(syncRun.id, runId))
+      .where(and(eq(syncRun.id, runId), inArray(syncRun.status, ["queued", "running"])))
       .returning({ sourceId: syncRun.sourceId });
+    if (!run) return; // already finished
     await tx
       .update(healthSource)
       .set({ lastSyncStatus: "failed", updatedAt: now, ...(reason === "reconnect" ? { status: "reconnect_required" as const } : {}) })
       .where(eq(healthSource.id, run.sourceId));
   });
-}
-
-// Every step in order, in one process. The job queue runs the same steps one by one.
-export async function syncSource(deps: SyncDeps, source: SyncSource, queries = SYNC_QUERIES): Promise<RunStatus> {
-  await beginRun(deps.db, source.runId, deps.now());
-  try {
-    for (const query of queries) await syncQuery(deps, source, query);
-  } catch (error) {
-    await failRun(deps.db, source.runId, error instanceof ReconnectRequiredError ? "reconnect" : "error", deps.now());
-    if (error instanceof ReconnectRequiredError) return "failed";
-    throw error;
-  }
-  return finishRun(deps.db, source.runId, deps.now());
 }
