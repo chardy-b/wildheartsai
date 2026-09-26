@@ -29,6 +29,34 @@ describe("seal", () => {
   });
 });
 
+describe("seal with associated data (v2)", () => {
+  it("round-trips with the same associated data", () => {
+    const sealed = seal("lab result", key, "fhir_resource:resource:user-1:row-1");
+    expect(sealed.startsWith("v2.")).toBe(true);
+    expect(unseal(sealed, key, "fhir_resource:resource:user-1:row-1")).toBe("lab result");
+  });
+
+  it("fails with different associated data", () => {
+    const sealed = seal("lab result", key, "fhir_resource:resource:user-1:row-1");
+    expect(() => unseal(sealed, key, "fhir_resource:resource:user-1:row-2")).toThrow();
+    expect(() => unseal(sealed, key, "fhir_resource:summary:user-1:row-1")).toThrow();
+  });
+
+  it("will not open a bound value without its associated data", () => {
+    expect(() => unseal(seal("lab result", key, "a"), key)).toThrow(/binding/);
+  });
+
+  it("will not accept an unbound value where a bound one is expected", () => {
+    expect(() => unseal(seal("lab result", key), key, "a")).toThrow(/binding/);
+  });
+
+  it("keeps v1 values readable", () => {
+    const sealed = seal("token", key);
+    expect(sealed.startsWith("v1.")).toBe(true);
+    expect(unseal(sealed, key)).toBe("token");
+  });
+});
+
 describe("keyFromBase64", () => {
   it("accepts 32 bytes and rejects anything else", () => {
     expect(keyFromBase64(randomBytes(32).toString("base64")).length).toBe(32);

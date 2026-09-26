@@ -13,5 +13,8 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
     setupFiles: ["./src/test/setup.ts"],
+    // Database tests start an in-process Postgres (PGlite); the first one in each file also
+    // runs migrations, which takes several seconds on a busy machine.
+    testTimeout: 15_000,
   },
 });

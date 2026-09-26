@@ -8,3 +8,4 @@ process.env.EPIC_CLIENT_ID ??= "test-client-id";
 process.env.EPIC_REDIRECT_URI ??= "http://localhost:3000/api/epic/callback";
 process.env.EPIC_PRIVATE_JWK ??= "{}";
 process.env.TOKEN_ENCRYPTION_KEY ??= Buffer.alloc(32).toString("base64");
+process.env.RECORDS_ENCRYPTION_KEY ??= Buffer.alloc(32, 1).toString("base64");

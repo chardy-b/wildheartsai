@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { seal, unseal } from "@/lib/crypto/seal";
-import { epicConnection } from "@/lib/db/schema";
+import { epicConnection, healthSource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import type { InitialTokenSet, TokenSet } from "./tokens";
 
@@ -36,6 +36,8 @@ function connectionSecretsOf(row: typeof epicConnection.$inferSelect, key: Buffe
   };
 }
 
+// Upserts the organization (health_source) and its tokens together. Reconnecting an
+// organization, including after a disconnect, reuses the same source and its records.
 export async function saveConnection(
   db: Db,
   key: Buffer,
@@ -52,10 +54,28 @@ export async function saveConnection(
     scope: input.tokens.scope,
     updatedAt: now,
   };
-  await db
-    .insert(epicConnection)
-    .values({ id: randomUUID(), userId: input.userId, fhirBaseUrl: input.fhirBaseUrl, createdAt: now, ...secrets })
-    .onConflictDoUpdate({ target: [epicConnection.userId, epicConnection.fhirBaseUrl], set: secrets });
+  await db.transaction(async (tx) => {
+    const [source] = await tx
+      .insert(healthSource)
+      .values({
+        userId: input.userId,
+        vendor: "epic",
+        fhirBaseUrl: input.fhirBaseUrl,
+        organizationName: input.organizationName,
+        status: "connected",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [healthSource.userId, healthSource.fhirBaseUrl],
+        set: { organizationName: input.organizationName, status: "connected", updatedAt: now },
+      })
+      .returning({ id: healthSource.id });
+    await tx
+      .insert(epicConnection)
+      .values({ id: randomUUID(), userId: input.userId, sourceId: source.id, fhirBaseUrl: input.fhirBaseUrl, createdAt: now, ...secrets })
+      .onConflictDoUpdate({ target: [epicConnection.userId, epicConnection.fhirBaseUrl], set: secrets });
+  });
 }
 
 export async function listConnections(db: Db, userId: string): Promise<ConnectionSummary[]> {
@@ -102,10 +122,19 @@ export async function updateTokens(db: Db, key: Buffer, id: string, tokens: Toke
     .where(eq(epicConnection.id, id));
 }
 
-export async function deleteConnection(db: Db, userId: string, id: string): Promise<boolean> {
-  const deleted = await db
-    .delete(epicConnection)
-    .where(and(eq(epicConnection.id, id), eq(epicConnection.userId, userId)))
-    .returning({ id: epicConnection.id });
-  return deleted.length > 0;
+// Deletes the tokens. The organization and its stored records stay, marked disconnected,
+// until the person deletes them.
+export async function deleteConnection(db: Db, userId: string, id: string, now = new Date()): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const deleted = await tx
+      .delete(epicConnection)
+      .where(and(eq(epicConnection.id, id), eq(epicConnection.userId, userId)))
+      .returning({ sourceId: epicConnection.sourceId });
+    if (deleted.length === 0) return false;
+    await tx
+      .update(healthSource)
+      .set({ status: "disconnected", updatedAt: now })
+      .where(and(eq(healthSource.id, deleted[0].sourceId), eq(healthSource.userId, userId)));
+    return true;
+  });
 }
