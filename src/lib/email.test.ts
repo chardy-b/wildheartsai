@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createEmailSender, gmailTransportOptions } from "./email";
+import { createEmailSender } from "./email";
 
 const email = { to: "person@example.com", subject: "Confirm your email", text: "Open https://x.test/verify" };
 const from = "Wild Hearts Health <no-reply@wildheartsai.com>";
@@ -16,7 +16,7 @@ describe("createEmailSender", () => {
   });
 
   it("refuses to run without a mailbox in production", () => {
-    expect(() => createEmailSender({ from, production: true })).toThrow(/SMTP_USER and SMTP_PASS/);
+    expect(() => createEmailSender({ from, production: true })).toThrow(/EMAIL binding/);
   });
 
   it("sends through the mailer with the configured From address", async () => {
@@ -30,22 +30,11 @@ describe("createEmailSender", () => {
     });
   });
 
-  it("reports delivery failures by SMTP code only", async () => {
-    const failure = Object.assign(new Error("535 Username and Password not accepted for person@example.com"), { code: "EAUTH" });
+  it("reports delivery failures by error code only", async () => {
+    const failure = Object.assign(new Error("Sender not verified for person@example.com"), { code: "E_SENDER_NOT_VERIFIED" });
     const mailer = vi.fn().mockRejectedValue(failure);
     const send = createEmailSender({ from, production: true, mailer });
-    await expect(send(email)).rejects.toThrow("Email delivery failed (EAUTH)");
+    await expect(send(email)).rejects.toThrow("Email delivery failed (E_SENDER_NOT_VERIFIED)");
     await expect(send(email)).rejects.not.toThrow(/person@example.com/);
-  });
-});
-
-describe("gmailTransportOptions", () => {
-  it("uses Google's SMTP server over TLS with the app password", () => {
-    expect(gmailTransportOptions("no-reply@wildheartsai.com", "app-password")).toEqual({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: { user: "no-reply@wildheartsai.com", pass: "app-password" },
-    });
   });
 });

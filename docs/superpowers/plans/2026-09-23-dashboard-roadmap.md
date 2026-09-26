@@ -88,7 +88,7 @@ Nothing flips `EPIC_ENVIRONMENT=production` or `SIGNUPS_ENABLED=true` until ever
 
 - [ ] Reviewed threat model covering auth, token storage, the SMART flow and logging
 - [ ] Privacy policy and terms published; onboarding acknowledgements updated to reference them (bump `CONSENT_VERSION`)
-- [ ] Business associate agreements in place with Vercel and Neon (and any other vendor that can see patient data)
+- [ ] Business associate agreement in place with Cloudflare, which hosts the app, database, background jobs and email since the Cloudflare migration (and with any other vendor that can see patient data)
 - [ ] MFA or passkeys available to every account (Better Auth `twoFactor` / `passkey` plugins)
 - [ ] Audit log of connection events (connect, refresh failure, disconnect) without PHI
 - [ ] Data retention and account deletion design, including deleting `epic_connection` rows

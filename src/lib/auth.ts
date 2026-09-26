@@ -14,7 +14,7 @@ export function createAuth() {
   return betterAuth({
     baseURL: appUrl(),
     secret: env().BETTER_AUTH_SECRET,
-    database: drizzleAdapter(db, { provider: "pg" }),
+    database: drizzleAdapter(db, { provider: "sqlite" }),
     emailAndPassword: {
       enabled: true,
       disableSignUp: !env().SIGNUPS_ENABLED,
@@ -33,6 +33,9 @@ export function createAuth() {
     },
     session: { expiresIn: 7 * DAY, updateAge: DAY },
     hooks: { before: inviteGate(env().SIGNUP_INVITE_CODE) },
+    // Cloudflare sets cf-connecting-ip to the visitor's address and overwrites any value the
+    // client sends, so rate limits count per visitor rather than in one shared bucket.
+    advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] } },
     plugins: [nextCookies()],
   });
 }

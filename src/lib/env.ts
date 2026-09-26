@@ -2,14 +2,11 @@ import { z } from "zod";
 
 const schema = z
   .object({
-    DATABASE_URL: z.url(),
     BETTER_AUTH_SECRET: z.string().min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
-    BETTER_AUTH_URL: z.url().optional(),
-    VERCEL_URL: z.string().optional(),
+    // The public origin of this deployment: its custom domain, workers.dev URL or http://localhost:3000.
+    BETTER_AUTH_URL: z.url(),
+    // Sender for verification and reset emails, on a domain onboarded to Cloudflare Email Service (src/lib/email.ts).
     EMAIL_FROM: z.string().min(3),
-    // Google Workspace mailbox that sends verification and reset emails (see src/lib/email.ts).
-    SMTP_USER: z.email().optional(),
-    SMTP_PASS: z.string().min(1).optional(),
     // When set, sign-up also needs this early-access invite code (see src/lib/invite.ts).
     SIGNUP_INVITE_CODE: z.string().min(1).optional(),
     SIGNUPS_ENABLED: z
@@ -71,14 +68,7 @@ export function env(): ServerEnv {
   return cached;
 }
 
-// The public origin of this deployment. Preview deployments on Vercel have no
-// fixed domain, so fall back to the per-deployment URL Vercel provides.
-export function resolveAppUrl(source: { BETTER_AUTH_URL?: string; VERCEL_URL?: string }): string {
-  if (source.BETTER_AUTH_URL) return source.BETTER_AUTH_URL;
-  if (source.VERCEL_URL) return `https://${source.VERCEL_URL}`;
-  throw new Error("Set BETTER_AUTH_URL (or deploy on Vercel, which sets VERCEL_URL)");
-}
-
+// The public origin of this deployment.
 export function appUrl(): string {
-  return resolveAppUrl(env());
+  return env().BETTER_AUTH_URL;
 }

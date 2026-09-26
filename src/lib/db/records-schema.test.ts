@@ -1,5 +1,3 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, createTestUser } from "@/test/db";
@@ -35,7 +33,7 @@ function resourceRow(sourceId: string, overrides: Partial<typeof fhirResource.$i
   };
 }
 
-// drizzle-orm wraps driver errors; the Postgres message is on the cause.
+// drizzle-orm wraps driver errors; the D1 (SQLite) message is on the cause.
 async function failure(promise: Promise<unknown>): Promise<string> {
   try {
     await promise;
@@ -62,7 +60,7 @@ describe("fhir_resource", () => {
   it("allows one current version per resource, and any number of superseded ones", async () => {
     const sourceId = await addSource();
     const [old] = await db.insert(fhirResource).values(resourceRow(sourceId)).returning();
-    expect(await failure(db.insert(fhirResource).values(resourceRow(sourceId)))).toMatch(/fhir_resource_current_idx/);
+    expect(await failure(db.insert(fhirResource).values(resourceRow(sourceId)))).toMatch(/UNIQUE constraint failed: fhir_resource\.source_id, fhir_resource\.resource_type, fhir_resource\.fhir_id/);
 
     const [current] = await db.insert(fhirResource).values(resourceRow(sourceId, { supersededAt: now })).returning();
     await db.update(fhirResource).set({ supersededAt: now, supersededBy: current.id }).where(eq(fhirResource.id, old.id));
@@ -84,7 +82,7 @@ describe("sync_run", () => {
     const sourceId = await addSource();
     await db.insert(syncRun).values({ userId, sourceId, trigger: "connect", status: "running" });
     expect(await failure(db.insert(syncRun).values({ userId, sourceId, trigger: "manual", status: "queued" }))).toMatch(
-      /sync_run_active_idx/,
+      /UNIQUE constraint failed: sync_run\.source_id/,
     );
     await db.update(syncRun).set({ status: "ok" }).where(eq(syncRun.sourceId, sourceId));
     await db.insert(syncRun).values({ userId, sourceId, trigger: "manual", status: "queued" });
@@ -103,32 +101,5 @@ describe("account deletion", () => {
     expect(await db.select().from(fhirResource).where(eq(fhirResource.userId, userId))).toEqual([]);
     expect(await db.select().from(syncRun).where(eq(syncRun.userId, userId))).toEqual([]);
     expect(await db.select().from(userDataKey).where(eq(userDataKey.userId, userId))).toEqual([]);
-  });
-});
-
-describe("migration 0003", () => {
-  it("gives every existing connection a health_source", async () => {
-    const files = readdirSync("drizzle").filter((f) => f.endsWith(".sql")).sort();
-    const pg = new PGlite();
-    const run = async (file: string) => {
-      for (const statement of readFileSync(`drizzle/${file}`, "utf8").split("--> statement-breakpoint")) {
-        if (statement.trim()) await pg.exec(statement);
-      }
-    };
-    for (const file of files.filter((f) => f < "0003")) await run(file);
-    await pg.exec(`
-      insert into "user" (id, name, email, email_verified, created_at, updated_at)
-        values ('u1', 'Test', 'u1@example.com', true, now(), now());
-      insert into epic_connection (id, user_id, fhir_base_url, organization_name, token_endpoint, sealed_patient_id,
-        sealed_access_token, access_token_expires_at, scope)
-        values ('c1', 'u1', 'https://fhir.example.org/R4', 'Example Health', 'https://t', 'v1.a', 'v1.b', now(), 's');
-    `);
-    await run(files.find((f) => f.startsWith("0003"))!);
-
-    const { rows } = await pg.query<{ organization_name: string; status: string; linked: boolean }>(`
-      select s.organization_name, s.status, c.source_id = s.id as linked
-      from epic_connection c join health_source s on s.user_id = c.user_id and s.fhir_base_url = c.fhir_base_url`);
-    expect(rows).toEqual([{ organization_name: "Example Health", status: "connected", linked: true }]);
-    await expect(pg.exec(`update epic_connection set source_id = null`)).rejects.toThrow();
   });
 });
