@@ -1,4 +1,5 @@
-import { and, asc, count, desc, eq, gte, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, gte, inArray, isNull, notExists, notInArray, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { epicConnection, fhirResource, healthSource, syncRun, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { STALE_RUN_MS } from "@/lib/sync/run";
@@ -24,6 +25,7 @@ export type SourceSummary = {
 };
 
 const ACTIVE: ("queued" | "running")[] = ["queued", "running"];
+const laterRun = alias(syncRun, "later_run");
 
 export async function listSources(db: Db, userId: string, now = new Date()): Promise<SourceSummary[]> {
   const [sources, connections, active, lastFinished, counts] = await Promise.all([
@@ -38,15 +40,26 @@ export async function listSources(db: Db, userId: string, now = new Date()): Pro
         and(
           eq(syncRun.userId, userId),
           inArray(syncRun.status, ACTIVE),
-          gte(sql`coalesce(${syncRun.startedAt}, ${syncRun.queuedAt})`, new Date(now.getTime() - STALE_RUN_MS)),
+          gte(sql`coalesce(${syncRun.startedAt}, ${syncRun.queuedAt})`, now.getTime() - STALE_RUN_MS),
         ),
       ),
-    // Only the latest finished run per source, rather than the whole history.
+    // Only the latest finished run per source, rather than the whole history: a finished
+    // run with no later finished run for the same source.
     db
-      .selectDistinctOn([syncRun.sourceId], { sourceId: syncRun.sourceId, stats: syncRun.stats })
+      .select({ sourceId: syncRun.sourceId, stats: syncRun.stats })
       .from(syncRun)
-      .where(and(eq(syncRun.userId, userId), notInArray(syncRun.status, ACTIVE)))
-      .orderBy(syncRun.sourceId, desc(syncRun.queuedAt)),
+      .where(
+        and(
+          eq(syncRun.userId, userId),
+          notInArray(syncRun.status, ACTIVE),
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(laterRun)
+              .where(and(eq(laterRun.sourceId, syncRun.sourceId), notInArray(laterRun.status, ACTIVE), gt(laterRun.queuedAt, syncRun.queuedAt))),
+          ),
+        ),
+      ),
     db
       .select({ sourceId: fhirResource.sourceId, category: fhirResource.category, n: count() })
       .from(fhirResource)

@@ -95,18 +95,10 @@ export default function PrivacyPage() {
         <Section id="services" title="Services we use">
           <ul className="list-disc space-y-2 pl-6">
             <li>
-              <strong>Vercel</strong> hosts the site and keeps short-lived request logs.
-            </li>
-            <li>
-              <strong>Inngest</strong> schedules the background work that imports your records. It only receives
-              internal ID numbers, never your records or your health-system access.
-            </li>
-            <li>
-              <strong>Neon</strong> hosts our database.
-            </li>
-            <li>
-              <strong>Google Workspace</strong> sends our emails, such as confirming your address or resetting your
-              password.
+              <strong>Cloudflare</strong> hosts the site and our database, runs the background work that imports
+              your records, sends our emails (such as confirming your address or resetting your password), and keeps
+              short-lived request logs. The background work is only handed internal ID numbers, never your records or
+              your health-system access.
             </li>
             <li>
               <strong>Epic and your health systems</strong> provide your records when you connect them and when you

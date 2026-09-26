@@ -1,5 +1,5 @@
-// Prints a new private RSA JWK for EPIC_PRIVATE_JWK. Store it only in Vercel env
-// settings or .env.local, never in git.
+// Prints a new private RSA JWK for EPIC_PRIVATE_JWK. Store it only as a Worker secret
+// (`wrangler secret put EPIC_PRIVATE_JWK`) or in .dev.vars, never in git.
 import { randomUUID } from "node:crypto";
 import { exportJWK, generateKeyPair } from "jose";
 

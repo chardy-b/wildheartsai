@@ -3,12 +3,12 @@
 // kept records, and an amended lab). For manual and automated testing of the dashboard
 // and connections pages without going through Epic.
 //
-//   npm run db:local        (in another terminal)
-//   npm run db:migrate
+//   npm run db:migrate:local
 //   npm run db:seed
 //
 // Sign in at http://localhost:3000/sign-in with the account below. These are local test
-// values, not secrets. The seed refuses to run against anything but a local database.
+// values, not secrets. The seed only ever opens the local D1 in .wrangler/state (remote
+// bindings are off), the same one `npm run dev` and `npm run preview` use.
 // Re-running it deletes the account and everything stored for it, then recreates it.
 
 import { loadEnvConfig } from "@next/env";
@@ -19,13 +19,11 @@ export const TEST_EMAIL = "test@wildhearts.localhost";
 export const TEST_PASSWORD = "local-test-password";
 const TEST_USER_ID = "local_test_user";
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
 async function main() {
   const { hashPassword } = await import("better-auth/crypto");
   const { eq } = await import("drizzle-orm");
-  const { drizzle } = await import("drizzle-orm/node-postgres");
-  const { Pool } = await import("pg");
+  const { drizzle } = await import("drizzle-orm/d1");
+  const { getPlatformProxy } = await import("wrangler");
   const { keyFromBase64 } = await import("@/lib/crypto/seal");
   const { userKeysFor } = await import("@/lib/crypto/user-keys");
   const schema = await import("@/lib/db/schema");
@@ -39,11 +37,8 @@ async function main() {
   type SyncDeps = import("@/lib/sync/run").SyncDeps;
 
   const config = env();
-  const host = new URL(config.DATABASE_URL).hostname;
-  if (!LOCAL_HOSTS.has(host)) throw new Error(`Refusing to seed a non-local database (${host})`);
-
-  const pool = new Pool({ connectionString: config.DATABASE_URL, max: 2 });
-  const db = drizzle(pool, { schema }) as unknown as Db;
+  const platform = await getPlatformProxy<CloudflareEnv>({ remoteBindings: false });
+  const db: Db = drizzle(platform.env.DB, { schema });
   const tokenKey = keyFromBase64(config.TOKEN_ENCRYPTION_KEY);
   const kek = keyFromBase64(config.RECORDS_ENCRYPTION_KEY);
   const now = new Date();
@@ -166,7 +161,7 @@ async function main() {
   const [southConnection] = await db.select().from(schema.epicConnection).where(eq(schema.epicConnection.sourceId, south));
   await deleteConnection(db, TEST_USER_ID, southConnection.id, now);
 
-  await pool.end();
+  await platform.dispose();
   console.log(`Seeded ${TEST_EMAIL}: North Clinic connected (amended A1c), South Hospital disconnected with records kept.`);
 }
 
