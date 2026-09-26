@@ -31,7 +31,12 @@ type Query = {
   resourceType: string;
   path: (patientId: string) => string;
   normalize: (resource: never, source: string) => RecordSummary;
+  // Higher cap for types a long history fills quickly. Beyond it, the rest are
+  // skipped and the person is told (a "partial" problem), rather than failing.
+  maxResources?: number;
 };
+
+const HIGH_VOLUME = 500;
 
 const patient = (id: string) => `patient=${encodeURIComponent(id)}`;
 
@@ -41,14 +46,14 @@ export const RECORD_QUERIES: Query[] = [
   { category: "condition", resourceType: "Condition", path: (p) => `Condition?${patient(p)}&category=problem-list-item`, normalize: normalizeCondition },
   { category: "medication", resourceType: "MedicationRequest", path: (p) => `MedicationRequest?${patient(p)}`, normalize: normalizeMedication },
   { category: "allergy", resourceType: "AllergyIntolerance", path: (p) => `AllergyIntolerance?${patient(p)}`, normalize: normalizeAllergy },
-  { category: "lab", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=laboratory`, normalize: normalizeLab },
+  { category: "lab", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=laboratory`, normalize: normalizeLab, maxResources: HIGH_VOLUME },
   { category: "immunization", resourceType: "Immunization", path: (p) => `Immunization?${patient(p)}`, normalize: normalizeImmunization },
   { category: "visit", resourceType: "Encounter", path: (p) => `Encounter?${patient(p)}`, normalize: normalizeVisit },
   { category: "report", resourceType: "DiagnosticReport", path: (p) => `DiagnosticReport?${patient(p)}`, normalize: normalizeReport },
   { category: "note", resourceType: "DocumentReference", path: (p) => `DocumentReference?${patient(p)}&category=clinical-note`, normalize: normalizeNote },
   { category: "procedure", resourceType: "Procedure", path: (p) => `Procedure?${patient(p)}`, normalize: normalizeProcedure },
-  { category: "vital", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=vital-signs`, normalize: normalizeVital },
-  { category: "social", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=social-history`, normalize: normalizeSocial },
+  { category: "vital", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=vital-signs`, normalize: normalizeVital, maxResources: HIGH_VOLUME },
+  { category: "social", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=social-history`, normalize: normalizeSocial, maxResources: HIGH_VOLUME },
   { category: "careTeam", resourceType: "CareTeam", path: (p) => `CareTeam?${patient(p)}`, normalize: normalizeCareTeam },
   // 38717003: SNOMED "Longitudinal care plan", the category Epic supports for patients.
   { category: "carePlan", resourceType: "CarePlan", path: (p) => `CarePlan?${patient(p)}&category=38717003`, normalize: normalizeCarePlan },
@@ -59,7 +64,9 @@ export const RECORD_QUERIES: Query[] = [
   { category: "coverage", resourceType: "Coverage", path: (p) => `Coverage?${patient(p)}`, normalize: normalizeCoverage },
 ];
 
-export type RecordProblem = { organizationName: string; kind: "reconnect" | "unavailable" };
+export type RecordProblem =
+  | { organizationName: string; kind: "reconnect" | "unavailable" }
+  | { organizationName: string; kind: "partial"; categories: RecordCategory[] };
 export type RecordsResult = { items: RecordItem[]; problems: RecordProblem[] };
 
 const MAX_CONNECTIONS = 5;
@@ -90,7 +97,13 @@ async function allSettledWithLimit<T, R>(
 
 type Deps = {
   accessToken: (connection: ConnectionSecrets) => Promise<string>;
-  search: (input: { baseUrl: string; path: string; resourceType: string; accessToken: string }) => Promise<Resource[]>;
+  search: (input: {
+    baseUrl: string;
+    path: string;
+    resourceType: string;
+    accessToken: string;
+    maxResources?: number;
+  }) => Promise<{ resources: Resource[]; truncated: boolean }>;
 };
 
 async function fromConnection(connection: ConnectionSecrets, deps: Deps): Promise<RecordsResult> {
@@ -104,24 +117,31 @@ async function fromConnection(connection: ConnectionSecrets, deps: Deps): Promis
   }
 
   const settled = await allSettledWithLimit(RECORD_QUERIES, MAX_CONCURRENT_SEARCHES, async (query) => {
-      const resources = await deps.search({
+      const { resources, truncated } = await deps.search({
         baseUrl: connection.fhirBaseUrl,
         path: query.path(connection.patientId),
         resourceType: query.resourceType,
         accessToken,
+        ...(query.maxResources ? { maxResources: query.maxResources } : {}),
       });
-      return resources.map((resource): RecordItem => ({
+      const items = resources.map((resource): RecordItem => ({
         ...query.normalize(resource as never, source),
         resource,
         connectionId: connection.id,
       }));
+      return { items, truncated };
     });
 
   const items: RecordItem[] = [];
-  let kind: RecordProblem["kind"] | null = null;
+  const partial: RecordCategory[] = [];
+  let kind: "reconnect" | "unavailable" | null = null;
   for (const [i, result] of settled.entries()) {
     if (result.status === "fulfilled") {
-      items.push(...result.value);
+      items.push(...result.value.items);
+      if (result.value.truncated) {
+        partial.push(RECORD_QUERIES[i].category);
+        console.error(`[records] ${RECORD_QUERIES[i].resourceType} (${RECORD_QUERIES[i].category}) truncated`);
+      }
       continue;
     }
     // HTTP status, else the client's own error code (resource_limit, page_limit, ...), else a network failure.
@@ -131,7 +151,10 @@ async function fromConnection(connection: ConnectionSecrets, deps: Deps): Promis
     if (result.reason instanceof ReconnectRequiredError) kind = "reconnect";
     else kind ??= "unavailable";
   }
-  return { items, problems: kind ? [{ organizationName: source, kind }] : [] };
+  const problems: RecordProblem[] = [];
+  if (kind) problems.push({ organizationName: source, kind });
+  if (partial.length) problems.push({ organizationName: source, kind: "partial", categories: partial });
+  return { items, problems };
 }
 
 function timeOf(item: RecordItem): number {

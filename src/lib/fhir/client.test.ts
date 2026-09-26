@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
-import { fhirRead, fhirSearch } from "./client";
+import { fhirRead, fhirSearch, fhirSearchBounded } from "./client";
 
 const base = "https://fhir.example.org/api/FHIR/R4";
 
@@ -156,5 +156,29 @@ describe("fhirRead", () => {
     await expect(fhirRead({ baseUrl: base, path: "Binary/b1", accessToken: "at", fetchImpl: vi.fn().mockResolvedValue(new Response("", { status: 401 })) })).rejects.toBeInstanceOf(ReconnectRequiredError);
     const big = vi.fn().mockResolvedValue(new Response(JSON.stringify({ resourceType: "Binary", data: "x".repeat(2000) })));
     await expect(fhirRead({ baseUrl: base, path: "Binary/b1", accessToken: "at", fetchImpl: big, maxBytes: 100 })).rejects.toMatchObject({ code: "response_too_large" });
+  });
+});
+
+describe("fhirSearchBounded", () => {
+  it("returns what it fetched, flagged as truncated, when a search reaches its resource cap", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(bundle(["a", "b", "c"], `${base}/Condition?page=2`));
+    const result = await fhirSearchBounded({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl, maxResources: 2 });
+    expect(result).toEqual({ resources: [expect.objectContaining({ id: "a" }), expect.objectContaining({ id: "b" })], truncated: true });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("flags a search that still has pages left after maxPages", async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => bundle(["x"], `${base}/Condition?page=next`));
+    const result = await fhirSearchBounded({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl, maxPages: 3 });
+    expect(result.resources).toHaveLength(3);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("is not truncated when everything fits, and still fails on real errors", async () => {
+    const complete = await fhirSearchBounded({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl: vi.fn().mockResolvedValue(bundle(["a"])) });
+    expect(complete).toEqual({ resources: [expect.objectContaining({ id: "a" })], truncated: false });
+    await expect(
+      fhirSearchBounded({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl: vi.fn().mockResolvedValue(new Response("", { status: 500 })) }),
+    ).rejects.toMatchObject({ stage: "fhir", status: 500 });
   });
 });
