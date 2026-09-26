@@ -88,16 +88,7 @@ function isAllowedNext(next: string, current: string, root: URL): string | undef
   return candidate.origin === root.origin && withinPath ? candidate.toString() : undefined;
 }
 
-export async function fhirSearch<T extends Resource>({
-  baseUrl,
-  path,
-  resourceType,
-  accessToken,
-  fetchImpl = fetch,
-  maxPages = DEFAULT_MAX_PAGES,
-  maxResources = DEFAULT_MAX_RESOURCES,
-  maxPageBytes = DEFAULT_MAX_PAGE_BYTES,
-}: {
+type SearchOptions<T extends Resource> = {
   baseUrl: string;
   path: string;
   resourceType: T["resourceType"];
@@ -106,7 +97,20 @@ export async function fhirSearch<T extends Resource>({
   maxPages?: number;
   maxResources?: number;
   maxPageBytes?: number;
-}): Promise<T[]> {
+};
+
+// Follows same-origin `next` links. Stops early, without failing, when a cap is
+// reached, and says which one so callers can decide whether partial is acceptable.
+async function searchPages<T extends Resource>({
+  baseUrl,
+  path,
+  resourceType,
+  accessToken,
+  fetchImpl = fetch,
+  maxPages = DEFAULT_MAX_PAGES,
+  maxResources = DEFAULT_MAX_RESOURCES,
+  maxPageBytes = DEFAULT_MAX_PAGE_BYTES,
+}: SearchOptions<T>): Promise<{ resources: T[]; stoppedAt: "resource_limit" | "page_limit" | null }> {
   const root = configuredRoot(baseUrl);
   const results: T[] = [];
   const initial = isAllowedNext(path, root.toString(), root);
@@ -125,14 +129,27 @@ export async function fhirSearch<T extends Resource>({
     if (bundle.resourceType !== "Bundle") throw fhirFailure("invalid_bundle");
     for (const entry of bundle.entry ?? []) {
       if (entry.resource?.resourceType !== resourceType) continue;
-      if (results.length >= maxResources) throw fhirFailure("resource_limit");
+      if (results.length >= maxResources) return { resources: results, stoppedAt: "resource_limit" };
       results.push(entry.resource as T);
     }
     const next = bundle.link?.find((link) => link.relation === "next")?.url;
     url = next ? isAllowedNext(next, url, root) : undefined;
   }
-  if (url) throw fhirFailure("page_limit");
-  return results;
+  return { resources: results, stoppedAt: url ? "page_limit" : null };
+}
+
+// Every matching resource, or an error: never silently partial.
+export async function fhirSearch<T extends Resource>(options: SearchOptions<T>): Promise<T[]> {
+  const { resources, stoppedAt } = await searchPages(options);
+  if (stoppedAt) throw fhirFailure(stoppedAt);
+  return resources;
+}
+
+// Up to the caps, with `truncated` saying whether more existed. For views that
+// show what they have and tell the person some records weren't loaded.
+export async function fhirSearchBounded<T extends Resource>(options: SearchOptions<T>): Promise<{ resources: T[]; truncated: boolean }> {
+  const { resources, stoppedAt } = await searchPages(options);
+  return { resources, truncated: stoppedAt !== null };
 }
 
 // Reads one resource (for example a note's Binary) at an address inside the

@@ -23,7 +23,10 @@ const north = connection("North Clinic", "https://north.example/R4");
 const south = connection("South Hospital", "https://south.example/R4");
 
 function fakeSearch(byBase: Record<string, Partial<Record<string, Resource[]>>>) {
-  return vi.fn(async ({ baseUrl, resourceType }: { baseUrl: string; resourceType: string; path: string }) => byBase[baseUrl]?.[resourceType] ?? []);
+  return vi.fn(async ({ baseUrl, resourceType }: { baseUrl: string; resourceType: string; path: string }) => ({
+    resources: byBase[baseUrl]?.[resourceType] ?? [],
+    truncated: false,
+  }));
 }
 
 describe("RECORD_QUERIES", () => {
@@ -84,8 +87,8 @@ describe("gatherRecords", () => {
   it("reports a connection once when some of its searches fail", async () => {
     const search = vi.fn(async ({ resourceType }: { resourceType: string }) => {
       if (resourceType === "Encounter" || resourceType === "Immunization") throw new EpicError("fhir", 400);
-      if (resourceType === "Condition") return [{ resourceType: "Condition", id: "c1" } as Resource];
-      return [];
+      if (resourceType === "Condition") return { resources: [{ resourceType: "Condition", id: "c1" } as Resource], truncated: false };
+      return { resources: [], truncated: false };
     });
     const result = await gatherRecords([north], { accessToken: async () => "at", search });
     expect(result.problems).toEqual([{ organizationName: "North Clinic", kind: "unavailable" }]);
@@ -113,7 +116,7 @@ describe("gatherRecords", () => {
       highest = Math.max(highest, active);
       await Promise.resolve();
       active -= 1;
-      return [];
+      return { resources: [], truncated: false };
     });
     await gatherRecords([north], { accessToken: async () => "at", search });
     expect(search).toHaveBeenCalledTimes(RECORD_QUERIES.length);
@@ -181,7 +184,7 @@ describe("failure logging", () => {
       if (path.includes("category=laboratory")) throw new EpicError("fhir", undefined, "resource_limit");
       if (path.startsWith("Encounter")) throw new EpicError("fhir", 400);
       if (path.startsWith("Goal")) throw new TypeError("fetch failed");
-      return [];
+      return { resources: [], truncated: false };
     });
     await gatherRecords([north], { accessToken: async () => "at", search });
     const lines = log.mock.calls.map((call) => String(call[0]));
@@ -189,5 +192,27 @@ describe("failure logging", () => {
     expect(lines).toContain("[records] Encounter (visit) failed 400");
     expect(lines).toContain("[records] Goal (goal) failed network");
     log.mockRestore();
+  });
+});
+
+describe("partial results", () => {
+  it("keeps what a capped search returned and says which categories are incomplete", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const vital = { resourceType: "Observation", id: "v1", code: { text: "Pulse" } } as Resource;
+    const search = vi.fn(async ({ path }: { path: string }) =>
+      path.includes("category=vital-signs") ? { resources: [vital], truncated: true } : { resources: [], truncated: false },
+    );
+    const result = await gatherRecords([north], { accessToken: async () => "at", search });
+    expect(result.items.map((i) => i.title)).toEqual(["Pulse"]);
+    expect(result.problems).toEqual([{ organizationName: "North Clinic", kind: "partial", categories: ["vital"] }]);
+    expect(log.mock.calls.map((c) => String(c[0]))).toContain("[records] Observation (vital) truncated");
+    log.mockRestore();
+  });
+
+  it("asks for up to 500 results for high-volume observation searches and the default for the rest", async () => {
+    const search = fakeSearch({});
+    await gatherRecords([north], { accessToken: async () => "at", search });
+    const caps = Object.fromEntries(search.mock.calls.map(([input]) => [input.path.split("&category=")[1] ?? input.resourceType, (input as { maxResources?: number }).maxResources]));
+    expect(caps).toMatchObject({ laboratory: 500, "vital-signs": 500, "social-history": 500, Encounter: undefined });
   });
 });
