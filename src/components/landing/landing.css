@@ -206,7 +206,8 @@
   }
 }
 
-.record {
+/* Scoped to the hero animation: the dashboard also uses .record, .record-dot and .record-meta. */
+.eight .record {
   position: absolute;
   left: 0;
   top: 0;
@@ -227,7 +228,7 @@
   transition: transform 0.9s cubic-bezier(0.55, 0, 0.35, 1.3) calc(var(--i) * 380ms), opacity 0.4s;
 }
 
-.record-dot {
+.eight .record-dot {
   flex: none;
   width: 1.8cqw;
   height: 1.8cqw;
@@ -236,7 +237,7 @@
   transition: background 0.4s calc(var(--i) * 380ms + 0.7s);
 }
 
-.record-meta {
+.eight .record-meta {
   margin-left: auto;
   color: var(--cream-ink-2);
   font-weight: 500;
