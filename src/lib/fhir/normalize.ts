@@ -53,7 +53,13 @@ export type RecordSummary = {
 
 // A row plus the resource it came from (rendered in the expanded detail, never
 // stored) and the connection that fetched it (needed to load a note's text).
-export type RecordItem = RecordSummary & { resource: Resource; connectionId: string };
+export type RecordItem = RecordSummary & {
+  resource: Resource;
+  connectionId: string;
+  // Stored records only: the organization it came from, and earlier versions it replaced (newest first).
+  sourceId?: string;
+  history?: { replacedAt: string; resource: Resource }[];
+};
 
 function textOf(concept: CodeableConcept | undefined): string | null {
   return concept?.text?.trim() || concept?.coding?.find((c) => c.display)?.display?.trim() || null;

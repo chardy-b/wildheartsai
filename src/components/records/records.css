@@ -332,3 +332,127 @@
   gap: 8px;
   margin-top: 36px;
 }
+
+/* One color per health system, in the order they were connected. The name is always
+   shown too, so color is never the only cue. */
+.tone-0 { --tone: #ec6e96; }
+.tone-1 { --tone: #6cc5b0; }
+.tone-2 { --tone: #e0b25c; }
+.tone-3 { --tone: #a99bf0; }
+.tone-4 { --tone: #7fb7e6; }
+.tone-5 { --tone: #d79aaf; }
+
+.source-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--tone, inherit);
+}
+
+.source-tag::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tone, currentColor);
+}
+
+.record-list .record-meta .source-tag {
+  border-color: color-mix(in srgb, var(--tone, var(--line)) 45%, transparent);
+}
+
+.timeline-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  margin: 24px 0 0;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: var(--night-2);
+  font-size: 14px;
+}
+
+.timeline-filters fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  flex-basis: 100%;
+  min-inline-size: 0;
+}
+
+.timeline-filters > label {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.timeline-filters legend,
+.timeline-filters label > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.timeline-filters fieldset label {
+  padding: 4px 12px 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.timeline-filters fieldset label::before {
+  display: none;
+}
+
+.timeline-filters fieldset input {
+  accent-color: var(--tone);
+  margin: 0;
+}
+
+.timeline-filters select,
+.timeline-filters input[type="date"] {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  color-scheme: dark;
+}
+
+.timeline-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.timeline-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.record-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.record-history h4 {
+  margin: 0;
+}
+
+.record-history p {
+  margin: 0;
+  color: var(--text-2);
+}

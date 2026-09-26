@@ -1,20 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RecordItem } from "@/lib/fhir/normalize";
-import { countByCategory, newestFirst, RECORD_QUERIES } from "./records";
-
-function item(title: string, date: string | null, category: RecordItem["category"] = "condition"): RecordItem {
-  return {
-    key: title,
-    category,
-    title,
-    date,
-    detail: null,
-    status: null,
-    source: "North Clinic",
-    resource: { resourceType: "Condition" },
-    connectionId: "c1",
-  };
-}
+import { RECORD_QUERIES } from "./records";
 
 describe("RECORD_QUERIES", () => {
   it("scopes every search to the patient, with the categories Epic requires", () => {
@@ -50,23 +35,5 @@ describe("resource allowlist", () => {
       "Encounter", "Goal", "Immunization", "MedicationDispense", "MedicationRequest", "Observation", "Procedure", "ServiceRequest",
     ]);
     for (const q of RECORD_QUERIES) expect(q.path("p").startsWith(`${q.resourceType}?`)).toBe(true);
-  });
-});
-
-describe("countByCategory", () => {
-  it("counts items in every category, including zeros", () => {
-    const counts = countByCategory([item("a", null), item("b", null)]);
-    expect(counts.condition).toBe(2);
-    expect(Object.keys(counts)).toHaveLength(18);
-    expect(Object.entries(counts).filter(([category]) => category !== "condition").every(([, n]) => n === 0)).toBe(true);
-  });
-});
-
-describe("newestFirst", () => {
-  it("sorts newest first, partial years at their start, undated last, ties by title", () => {
-    const sorted = [item("undated", null), item("old", "2019"), item("b", "2024-03-01"), item("a", "2024-03-01"), item("new", "2025-01-02T10:00:00Z")].sort(
-      newestFirst,
-    );
-    expect(sorted.map((i) => i.title)).toEqual(["new", "a", "b", "old", "undated"]);
   });
 });

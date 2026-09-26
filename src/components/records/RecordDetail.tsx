@@ -61,6 +61,22 @@ export function RecordDetail({ item, related }: { item: RecordItem; related: Rec
         </div>
       ) : null}
 
+      {item.history?.length ? (
+        <div className="record-history">
+          <h4>Amended</h4>
+          <p>
+            {item.source} changed this record since we first imported it. We kept{" "}
+            {item.history.length === 1 ? "the earlier version" : `${item.history.length} earlier versions`}.
+          </p>
+          {item.history.map((version) => (
+            <details className="all-fields" key={version.replacedAt}>
+              <summary>Version replaced {formatRecordDate(version.replacedAt)}</summary>
+              <FieldList nodes={fieldTree(version.resource as Record<string, unknown>)} />
+            </details>
+          ))}
+        </div>
+      ) : null}
+
       <details className="all-fields">
         <summary>All fields from {item.source}</summary>
         <FieldList nodes={fieldTree(item.resource as Record<string, unknown>)} />

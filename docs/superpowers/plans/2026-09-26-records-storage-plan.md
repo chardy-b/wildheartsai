@@ -159,3 +159,16 @@ The engine is plain functions with the database, keys, clock, token and FHIR sea
 - [x] Disconnect asks what to do with imported records: keep them (primary) or delete them. Disconnected organizations offer Reconnect (primary) and Delete records.
 - [x] The dashboard's "unavailable" notice now says some records didn't load last time, with a link to refresh.
 - [x] Checked in a local production build with seeded data (connected with issues, disconnected with kept records, importing) at desktop and phone widths.
+
+---
+
+## Stage 5: dashboard timeline
+
+- [x] `src/lib/timeline.ts`: `timelinePage()` reads one page with keyset pagination on `(effective_at desc nulls last, id desc)`, filtered by source, category and date range (a date range leaves out undated records). It attaches each record's earlier versions as `history`. Also `parseFilters` (only the person's own sources, known types, valid dates), `parseCursor`/`encodeCursor`, `filterQuery`, `countsFor`, `sourceTones`, and `allNotes` (so a visit's notes show whatever page they're on).
+- [x] The dashboard home shows filters (health systems, type, from/to) as a plain GET form, 100 records a page with "Older records" and "Back to newest" links, undated records last, and category chips counted from stored totals. Category pages get the same filters (minus type) and paging.
+- [x] Each organization gets its own color (6 tones, by connection order) on row tags and filter options, always alongside its name.
+- [x] Amended records carry an "Amended" tag. Their detail explains the change and lists each earlier version's fields.
+- [x] Removed the load-everything path (`loadRecordsFor`, `loadStoredRecords`, `newestFirst`, `countByCategory`, `RecordsResult`).
+- [x] Visit notes match on organization as well as connection, so two disconnected organizations' notes can't mix.
+- [x] Fixed a phone-width overflow in the app header (it predates this work): the brand and links now wrap onto two lines under 700px. Checked no horizontal scroll at 320, 390, 768 and 1100px on the dashboard, a category page and connections.
+- [x] Checked in a local production build: 114 records across two organizations page as 100 + 14, the organization filter narrows to 3, and an amended lab shows its new value with the earlier one kept.

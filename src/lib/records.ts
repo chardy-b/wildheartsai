@@ -1,4 +1,3 @@
-import { CATEGORIES } from "@/lib/fhir/categories";
 import {
   normalizeAllergy,
   normalizeCarePlan,
@@ -19,7 +18,6 @@ import {
   normalizeVisit,
   normalizeVital,
   type RecordCategory,
-  type RecordItem,
   type RecordSummary,
 } from "@/lib/fhir/normalize";
 
@@ -61,20 +59,3 @@ export const RECORD_QUERIES: Query[] = [
 export type RecordProblem =
   | { organizationName: string; kind: "reconnect" | "unavailable" | "importing" }
   | { organizationName: string; kind: "partial"; categories: RecordCategory[] };
-export type RecordsResult = { items: RecordItem[]; problems: RecordProblem[] };
-
-function timeOf(item: RecordSummary): number {
-  const time = item.date ? Date.parse(item.date.length === 4 ? `${item.date}-01-01` : item.date) : NaN;
-  return Number.isNaN(time) ? -Infinity : time;
-}
-
-// Newest first; undated last; ties by title.
-export function newestFirst(a: RecordSummary, b: RecordSummary): number {
-  return timeOf(b) - timeOf(a) || a.title.localeCompare(b.title);
-}
-
-export function countByCategory(items: RecordItem[]): Record<RecordCategory, number> {
-  const counts = Object.fromEntries(CATEGORIES.map(({ category }) => [category, 0])) as Record<RecordCategory, number>;
-  for (const item of items) counts[item.category] += 1;
-  return counts;
-}

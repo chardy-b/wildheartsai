@@ -5,11 +5,22 @@ import { RecordDetail } from "./RecordDetail";
 
 // Each row expands in place to show everything the health system sent.
 // `related` is the wider set used to find a visit's notes (defaults to `items`).
-export function RecordList({ items, related = items, showCategory = false }: { items: RecordItem[]; related?: RecordItem[]; showCategory?: boolean }) {
+// `tones` gives each organization's tag its own color, by source id.
+export function RecordList({
+  items,
+  related = items,
+  showCategory = false,
+  tones = {},
+}: {
+  items: RecordItem[];
+  related?: RecordItem[];
+  showCategory?: boolean;
+  tones?: Record<string, number>;
+}) {
   return (
     <ul className="record-list">
       {items.map((item) => (
-        <li key={item.key}>
+        <li key={item.sourceId ? `${item.sourceId}|${item.key}` : item.key}>
           <details className="record">
             <summary>
               <span className="record-dot" aria-hidden="true" />
@@ -19,7 +30,10 @@ export function RecordList({ items, related = items, showCategory = false }: { i
                 <div className="record-meta">
                   {showCategory ? <span>{labelFor(item.category)}</span> : null}
                   {item.status ? <span>{item.category === "lab" || item.category === "vital" ? `Marked ${item.status}` : item.status}</span> : null}
-                  <span>From {item.source}</span>
+                  {item.history?.length ? <span>Amended</span> : null}
+                  <span className={item.sourceId !== undefined && tones[item.sourceId] !== undefined ? `source-tag tone-${tones[item.sourceId]}` : undefined}>
+                    From {item.source}
+                  </span>
                 </div>
               </div>
               <time className="record-date" dateTime={item.date ?? undefined}>
