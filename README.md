@@ -38,6 +38,7 @@ Requires a Node.js version supported by the pinned Next.js release.
 npm ci
 cp .env.example .env.local      # then fill in the blanks
 npm run db:migrate:local        # creates the local D1 database in .wrangler/state
+npm run db:seed                 # optional: a signed-in test account with sample records (see AGENTS.md)
 npm run dev                     # Next.js dev server, with the Worker's bindings
 ```
 

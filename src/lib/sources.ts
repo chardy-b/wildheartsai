@@ -1,6 +1,8 @@
-import { and, asc, count, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, count, eq, gt, gte, inArray, isNull, notExists, notInArray, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { epicConnection, fhirResource, healthSource, syncRun, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
+import { STALE_RUN_MS } from "@/lib/sync/run";
 
 // The organizations a person has connected, as the connections page and dashboard see
 // them: status, sync state and how many records are stored. No secrets, no PHI.
@@ -22,15 +24,42 @@ export type SourceSummary = {
   categoryCounts: Partial<Record<string, number>>;
 };
 
-export async function listSources(db: Db, userId: string): Promise<SourceSummary[]> {
-  const [sources, connections, runs, counts] = await Promise.all([
+const ACTIVE: ("queued" | "running")[] = ["queued", "running"];
+const laterRun = alias(syncRun, "later_run");
+
+export async function listSources(db: Db, userId: string, now = new Date()): Promise<SourceSummary[]> {
+  const [sources, connections, active, lastFinished, counts] = await Promise.all([
     db.select().from(healthSource).where(eq(healthSource.userId, userId)).orderBy(asc(healthSource.createdAt)),
     db.select({ id: epicConnection.id, sourceId: epicConnection.sourceId }).from(epicConnection).where(eq(epicConnection.userId, userId)),
+    // A run queued or started longer ago than STALE_RUN_MS was lost (startRun fails it on the
+    // next request), so it doesn't count as importing.
     db
-      .select({ sourceId: syncRun.sourceId, status: syncRun.status, stats: syncRun.stats })
+      .select({ sourceId: syncRun.sourceId })
       .from(syncRun)
-      .where(eq(syncRun.userId, userId))
-      .orderBy(desc(syncRun.queuedAt)),
+      .where(
+        and(
+          eq(syncRun.userId, userId),
+          inArray(syncRun.status, ACTIVE),
+          gte(sql`coalesce(${syncRun.startedAt}, ${syncRun.queuedAt})`, now.getTime() - STALE_RUN_MS),
+        ),
+      ),
+    // Only the latest finished run per source, rather than the whole history: a finished
+    // run with no later finished run for the same source.
+    db
+      .select({ sourceId: syncRun.sourceId, stats: syncRun.stats })
+      .from(syncRun)
+      .where(
+        and(
+          eq(syncRun.userId, userId),
+          notInArray(syncRun.status, ACTIVE),
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(laterRun)
+              .where(and(eq(laterRun.sourceId, syncRun.sourceId), notInArray(laterRun.status, ACTIVE), gt(laterRun.queuedAt, syncRun.queuedAt))),
+          ),
+        ),
+      ),
     db
       .select({ sourceId: fhirResource.sourceId, category: fhirResource.category, n: count() })
       .from(fhirResource)
@@ -39,8 +68,6 @@ export async function listSources(db: Db, userId: string): Promise<SourceSummary
   ]);
 
   return sources.map((source) => {
-    const mine = runs.filter((r) => r.sourceId === source.id);
-    const lastFinished = mine.find((r) => r.status !== "queued" && r.status !== "running");
     const categoryCounts: Partial<Record<string, number>> = {};
     for (const c of counts) if (c.sourceId === source.id && c.category) categoryCounts[c.category] = c.n;
     return {
@@ -51,8 +78,8 @@ export async function listSources(db: Db, userId: string): Promise<SourceSummary
       connectionId: connections.find((c) => c.sourceId === source.id)?.id ?? null,
       lastSyncedAt: source.lastSyncedAt,
       lastSyncStatus: source.lastSyncStatus,
-      syncing: mine.some((r) => r.status === "queued" || r.status === "running"),
-      lastRunStats: lastFinished?.stats ?? null,
+      syncing: active.some((r) => r.sourceId === source.id),
+      lastRunStats: lastFinished.find((r) => r.sourceId === source.id)?.stats ?? null,
       recordCount: counts.filter((c) => c.sourceId === source.id).reduce((sum, c) => sum + c.n, 0),
       categoryCounts,
     };
