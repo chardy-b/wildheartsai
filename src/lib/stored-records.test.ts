@@ -7,11 +7,11 @@ import type { Db } from "@/lib/db/types";
 import { deleteConnection, saveConnection } from "@/lib/epic/connections";
 import type { Resource } from "@/lib/fhir/types";
 import { createTestDb, createTestUser } from "@/test/db";
-import { sourceProblems } from "./records-store";
+import { sourceProblems } from "./source-display";
 import { deleteSource, listSources, needingFirstSync, type SourceSummary } from "./sources";
 import { runSyncJob } from "./sync/job";
 import { SYNC_QUERIES } from "./sync/plan";
-import { startRun, type SyncDeps } from "./sync/run";
+import { STALE_RUN_MS, startRun, type SyncDeps } from "./sync/run";
 import {
   countsFor,
   encodeCursor,
@@ -120,9 +120,29 @@ describe("sources", () => {
     expect(needingFirstSync(await listSources(db, userId)).map((s) => s.id)).toEqual([north]);
 
     await startRun(db, { userId, sourceId: north, trigger: "connect" }, now);
-    const [importing] = await listSources(db, userId);
+    const [importing] = await listSources(db, userId, now);
     expect(importing).toMatchObject({ syncing: true, lastSyncedAt: null });
     expect(needingFirstSync([importing])).toEqual([]);
+  });
+
+  it("stops reporting a lost run as importing once it's stale, so a first sync is queued again", async () => {
+    const north = await connect("North Clinic", "https://north.example/R4");
+    await startRun(db, { userId, sourceId: north, trigger: "connect" }, now);
+    const later = new Date(now.getTime() + STALE_RUN_MS + 1);
+    const [lost] = await listSources(db, userId, later);
+    expect(lost.syncing).toBe(false);
+    expect(needingFirstSync([lost]).map((s) => s.id)).toEqual([north]);
+  });
+
+  it("reports the stats of the latest finished run", async () => {
+    const north = await connect("North Clinic", "https://north.example/R4");
+    const stats = (errorCode?: string) => ({ fetched: 0, inserted: 0, superseded: 0, unchanged: 0, removed: 0, ...(errorCode ? { errorCode } : {}) });
+    await db.insert(syncRun).values([
+      { userId, sourceId: north, trigger: "connect", status: "partial", stats: { "Observation:lab": stats("500") }, queuedAt: new Date(now.getTime() - 60_000) },
+      { userId, sourceId: north, trigger: "manual", status: "ok", stats: { "Observation:lab": stats() }, queuedAt: now },
+    ]);
+    const [source] = await listSources(db, userId, now);
+    expect(source.lastRunStats).toEqual({ "Observation:lab": stats() });
   });
 
   it("deletes a source with its records, tokens and history, only for its owner", async () => {
