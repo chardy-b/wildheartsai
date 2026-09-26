@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { FaceMark } from "@/components/landing/marks";
+import { SyncWatcher } from "@/components/app/SyncWatcher";
 import { ProblemNotices } from "@/components/records/ProblemNotices";
 import { RecordsLoading } from "@/components/records/RecordsLoading";
 import { Timeline } from "@/components/records/Timeline";
@@ -21,6 +22,7 @@ async function HomeRecords({ userId }: { userId: string }) {
   return (
     <>
       <ProblemNotices problems={problems} />
+      <SyncWatcher active={problems.some((p) => p.kind === "importing")} />
       <ul className="record-summary" aria-label="Record summary">
         {CATEGORIES.filter(({ category }) => counts[category] > 0).map(({ category, label, slug }) => (
           <li key={category}>

@@ -18,6 +18,8 @@ export type SourceSummary = {
   // Per-query stats of the last finished run, for saying what didn't load.
   lastRunStats: Record<string, SyncQueryStats> | null;
   recordCount: number;
+  // Stored, visible records per category (RecordCategory keys).
+  categoryCounts: Partial<Record<string, number>>;
 };
 
 export async function listSources(db: Db, userId: string): Promise<SourceSummary[]> {
@@ -30,15 +32,17 @@ export async function listSources(db: Db, userId: string): Promise<SourceSummary
       .where(eq(syncRun.userId, userId))
       .orderBy(desc(syncRun.queuedAt)),
     db
-      .select({ sourceId: fhirResource.sourceId, n: count() })
+      .select({ sourceId: fhirResource.sourceId, category: fhirResource.category, n: count() })
       .from(fhirResource)
       .where(and(eq(fhirResource.userId, userId), isNull(fhirResource.supersededAt), isNull(fhirResource.removedAt)))
-      .groupBy(fhirResource.sourceId),
+      .groupBy(fhirResource.sourceId, fhirResource.category),
   ]);
 
   return sources.map((source) => {
     const mine = runs.filter((r) => r.sourceId === source.id);
     const lastFinished = mine.find((r) => r.status !== "queued" && r.status !== "running");
+    const categoryCounts: Partial<Record<string, number>> = {};
+    for (const c of counts) if (c.sourceId === source.id && c.category) categoryCounts[c.category] = c.n;
     return {
       id: source.id,
       organizationName: source.organizationName,
@@ -49,7 +53,8 @@ export async function listSources(db: Db, userId: string): Promise<SourceSummary
       lastSyncStatus: source.lastSyncStatus,
       syncing: mine.some((r) => r.status === "queued" || r.status === "running"),
       lastRunStats: lastFinished?.stats ?? null,
-      recordCount: counts.find((c) => c.sourceId === source.id)?.n ?? 0,
+      recordCount: counts.filter((c) => c.sourceId === source.id).reduce((sum, c) => sum + c.n, 0),
+      categoryCounts,
     };
   });
 }

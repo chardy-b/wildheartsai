@@ -139,23 +139,65 @@
   font-weight: 500;
   opacity: 0.75;
 }
+.sources-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
 
-.delete-source summary {
+.connection.source {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.source-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.source-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.source-counts li {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.source-counts b {
+  color: var(--rasp-text);
+}
+
+.connection p.source-issue {
+  color: var(--text-2);
+}
+
+.source-confirm summary {
   list-style: none;
   cursor: pointer;
 }
 
-.delete-source summary::-webkit-details-marker {
+.source-confirm summary::-webkit-details-marker {
   display: none;
 }
 
-.delete-source[open] form {
+.source-confirm-body {
   display: grid;
   gap: 10px;
   margin-top: 10px;
   max-width: 320px;
 }
 
-.delete-source form p {
+.source-confirm-body p {
   margin: 0;
 }

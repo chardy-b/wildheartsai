@@ -2,10 +2,10 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { UserKeys } from "@/lib/crypto/user-keys";
 import { fhirResource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
-import type { RecordCategory, RecordItem } from "@/lib/fhir/normalize";
+import type { RecordItem } from "@/lib/fhir/normalize";
 import { newestFirst, type RecordProblem, type RecordsResult } from "@/lib/records";
+import { lastRunIssues } from "@/lib/source-display";
 import type { SourceSummary } from "@/lib/sources";
-import { SYNC_QUERIES } from "@/lib/sync/plan";
 import { openStoredRow } from "@/lib/sync/store";
 
 // Reads the person's stored records, from every source including disconnected ones.
@@ -21,12 +21,8 @@ export function sourceProblems(sources: SourceSummary[]): RecordProblem[] {
       continue;
     }
     if (source.status === "disconnected" || source.syncing || !source.lastRunStats) continue;
-    const stats = Object.entries(source.lastRunStats);
-    const truncated = stats
-      .filter(([, s]) => s.errorCode === "truncated")
-      .map(([key]) => SYNC_QUERIES.find((q) => q.key === key)?.category)
-      .filter((c): c is RecordCategory => c !== undefined);
-    if (stats.some(([, s]) => s.errorCode && s.errorCode !== "truncated")) problems.push({ organizationName, kind: "unavailable" });
+    const { failed, truncated } = lastRunIssues(source.lastRunStats);
+    if (failed.length) problems.push({ organizationName, kind: "unavailable" });
     if (truncated.length) problems.push({ organizationName, kind: "partial", categories: truncated });
   }
   return problems;

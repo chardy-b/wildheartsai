@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
 import { OrgSearch } from "@/components/app/OrgSearch";
+import { SyncWatcher } from "@/components/app/SyncWatcher";
 import { SCOPE_LABELS } from "@/lib/epic/authorize";
 import { isSampleData, loadConnectable, organizationChoices } from "@/lib/epic/directory";
 import { connectErrorMessage } from "@/lib/epic/messages";
 import { enabledEpicEnvironment, env } from "@/lib/env";
 import { requireOnboarded } from "@/lib/onboarding-guard";
 import { loadSourcesFor } from "@/lib/records-server";
+import { labelFor } from "@/lib/fhir/categories";
+import type { RecordCategory } from "@/lib/fhir/normalize";
+import { ago, categoryCounts, lastRunIssues, listOf } from "@/lib/source-display";
 import type { SourceSummary } from "@/lib/sources";
-import { deleteSourceAction, disconnectAction, refreshAction } from "./actions";
+import { deleteSourceAction, disconnectAction, refreshAction, refreshAllAction } from "./actions";
 import "@/components/auth/auth.css";
 import "@/components/app/connections.css";
 
@@ -21,23 +25,25 @@ const REFRESH_MESSAGES: Record<string, { text: string; error?: boolean }> = {
   failed: { text: "We couldn't start checking for new records. Please try again.", error: true },
 };
 
-function ago(date: Date, now: Date): string {
-  const minutes = Math.round((now.getTime() - date.getTime()) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
-}
-
 function sourceStatus(source: SourceSummary, now: Date): string {
   const records = `${source.recordCount.toLocaleString("en-US")} record${source.recordCount === 1 ? "" : "s"}`;
-  if (source.syncing) return `Importing records… ${records} so far`;
+  if (source.syncing) return source.lastSyncedAt ? `Checking for new records… ${records}` : `Importing your records… ${records} so far`;
   if (source.status === "disconnected") return `Disconnected · ${records} kept`;
   if (source.status === "reconnect_required") return `Needs you to sign in again · ${records}`;
-  if (!source.lastSyncedAt) return "Waiting to import records";
+  if (!source.lastSyncedAt) return "Waiting to import your records";
   return `${records} · updated ${ago(source.lastSyncedAt, now)}`;
+}
+
+function SourceIssues({ source }: { source: SourceSummary }) {
+  if (source.syncing || source.status === "disconnected") return null;
+  const { failed, truncated } = lastRunIssues(source.lastRunStats);
+  const names = (categories: RecordCategory[]) => listOf(categories.map((c) => labelFor(c).toLowerCase()));
+  return (
+    <>
+      {failed.length ? <p className="source-issue">Last time we couldn&apos;t load {names(failed)}. Refresh to try again.</p> : null}
+      {truncated.length ? <p className="source-issue">There were more {names(truncated)} than we could import at once.</p> : null}
+    </>
+  );
 }
 
 export default async function ConnectionsPage({ searchParams }: PageProps<"/app/connections">) {
@@ -79,19 +85,39 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
       ) : null}
 
       <div>
-        <h2>Your health systems</h2>
+        <div className="sources-head">
+          <h2>Your health systems</h2>
+          {sources.filter((s) => s.status === "connected").length > 1 ? (
+            <form action={refreshAllAction}>
+              <button className="btn btn-ghost" type="submit" disabled={sources.some((s) => s.syncing)}>
+                Refresh all
+              </button>
+            </form>
+          ) : null}
+        </div>
+        <SyncWatcher active={sources.some((s) => s.syncing)} />
         {sources.length === 0 ? (
           <p className="notice">Nothing connected yet.</p>
         ) : (
           <ul className="connection-list">
             {sources.map((source) => (
-              <li className="connection" key={source.id}>
-                <div>
+              <li className="connection source" key={source.id}>
+                <div className="source-main">
                   <h3>{source.organizationName}</h3>
-                  <p>
+                  <p role={source.syncing ? "status" : undefined}>
                     {sourceStatus(source, now)}
                     {isSampleData(source) ? <span className="tag">Sample data, not your records</span> : null}
                   </p>
+                  {source.recordCount > 0 ? (
+                    <ul className="source-counts" aria-label={`Records from ${source.organizationName}`}>
+                      {categoryCounts(source.categoryCounts).map(({ category, label, count }) => (
+                        <li key={category}>
+                          <b>{count.toLocaleString("en-US")}</b> {label}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <SourceIssues source={source} />
                 </div>
                 <div className="connection-actions">
                   {source.status === "connected" ? (
@@ -103,30 +129,51 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                     </form>
                   ) : null}
                   {/* Signing in again replaces the stored access and keeps the records already imported. */}
-                  <a className="btn btn-ghost" href={`/api/epic/authorize?iss=${encodeURIComponent(source.fhirBaseUrl)}`}>
+                  <a
+                    className={source.status === "connected" ? "btn btn-ghost" : "btn"}
+                    href={`/api/epic/authorize?iss=${encodeURIComponent(source.fhirBaseUrl)}`}
+                  >
                     Reconnect
                   </a>
                   {source.connectionId ? (
-                    <form action={disconnectAction}>
-                      <input type="hidden" name="connectionId" value={source.connectionId} />
-                      <button className="btn btn-ghost" type="submit">
-                        Disconnect
-                      </button>
-                    </form>
-                  ) : null}
-                  <details className="delete-source">
-                    <summary className="btn btn-ghost">Delete records</summary>
-                    <form action={deleteSourceAction}>
-                      <p>
-                        This deletes every record we imported from {source.organizationName}
-                        {source.connectionId ? " and disconnects it" : ""}. Your records at the health system aren&apos;t affected.
-                      </p>
-                      <input type="hidden" name="sourceId" value={source.id} />
-                      <button className="btn" type="submit">
-                        Delete records from {source.organizationName}
-                      </button>
-                    </form>
-                  </details>
+                    <details className="source-confirm">
+                      <summary className="btn btn-ghost">Disconnect</summary>
+                      <div className="source-confirm-body">
+                        <p>
+                          We&apos;ll delete the access {source.organizationName} gave us. What should happen to the records
+                          already imported?
+                        </p>
+                        <form action={disconnectAction}>
+                          <input type="hidden" name="connectionId" value={source.connectionId} />
+                          <button className="btn" type="submit">
+                            Disconnect and keep records
+                          </button>
+                        </form>
+                        <form action={deleteSourceAction}>
+                          <input type="hidden" name="sourceId" value={source.id} />
+                          <button className="btn btn-ghost" type="submit">
+                            Disconnect and delete records
+                          </button>
+                        </form>
+                      </div>
+                    </details>
+                  ) : (
+                    <details className="source-confirm">
+                      <summary className="btn btn-ghost">Delete records</summary>
+                      <div className="source-confirm-body">
+                        <p>
+                          This deletes every record we imported from {source.organizationName}. Your records at the health
+                          system aren&apos;t affected.
+                        </p>
+                        <form action={deleteSourceAction}>
+                          <input type="hidden" name="sourceId" value={source.id} />
+                          <button className="btn" type="submit">
+                            Delete records from {source.organizationName}
+                          </button>
+                        </form>
+                      </div>
+                    </details>
+                  )}
                 </div>
               </li>
             ))}
@@ -148,7 +195,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
         </ul>
         <p className="lede">
           Read-only. We import your records and keep them encrypted so your dashboard loads quickly and has your full history.
-          Disconnecting deletes the access we stored and keeps the records already imported; you can delete those too, above.
+          When you disconnect, you choose whether to keep the records already imported or delete them.
           Your records at the health system are never affected.
         </p>
       </div>

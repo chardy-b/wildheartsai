@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { SyncWatcher } from "@/components/app/SyncWatcher";
 import { ProblemNotices } from "@/components/records/ProblemNotices";
 import { RecordList } from "@/components/records/RecordList";
 import { RecordsLoading } from "@/components/records/RecordsLoading";
@@ -22,6 +23,7 @@ async function CategoryRecords({ userId, category }: { userId: string; category:
   return (
     <>
       <ProblemNotices problems={problems} />
+      <SyncWatcher active={problems.some((p) => p.kind === "importing")} />
       {inCategory.length === 0 ? (
         <p className="lede">Nothing here from your connected health systems yet.</p>
       ) : (

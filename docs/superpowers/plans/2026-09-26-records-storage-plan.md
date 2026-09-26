@@ -146,3 +146,16 @@ The engine is plain functions with the database, keys, clock, token and FHIR sea
 - [x] Verified locally with a production build and the Inngest dev server: the endpoint registers the function, and an event runs `begin`, 18 query steps and `finish`, with stats and the source updated. Epic is unreachable from the build sandbox, so every search returned 403 there.
 - [ ] Before merging: install the Inngest Vercel integration (it sets `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`) and set `RECORDS_ENCRYPTION_KEY` in preview and production.
 - [ ] On preview: connect the Epic sandbox, watch the import finish, refresh, disconnect, delete records. Record which queries honour `_lastUpdated` (`sync_cursor.supports_last_updated`).
+
+---
+
+## Stage 4: connections page
+
+- [x] `listSources` returns per-category counts (`categoryCounts`) alongside the total.
+- [x] `src/lib/source-display.ts` (pure and tested): `ago`, `categoryCounts`, `lastRunIssues` (failed vs truncated categories, shared with the dashboard notices), `listOf`.
+- [x] Each organization shows its status line, category chips, and what the last sync couldn't load.
+- [x] Live progress: `SyncWatcher` (a client component) calls `router.refresh()` every 4s while anything is importing, on the connections, dashboard and category pages. It stops when the server reports nothing importing. Only server-rendered HTML is involved; there's no polling API.
+- [x] "Refresh all" appears with two or more connected organizations. One message reports the outcome.
+- [x] Disconnect asks what to do with imported records: keep them (primary) or delete them. Disconnected organizations offer Reconnect (primary) and Delete records.
+- [x] The dashboard's "unavailable" notice now says some records didn't load last time, with a link to refresh.
+- [x] Checked in a local production build with seeded data (connected with issues, disconnected with kept records, importing) at desktop and phone widths.

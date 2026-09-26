@@ -88,7 +88,7 @@ describe("loadStoredRecords", () => {
     await deleteConnection(db, userId, connection.id, now);
 
     const sources = await listSources(db, userId);
-    expect(sources[0]).toMatchObject({ status: "disconnected", connectionId: null, recordCount: 1 });
+    expect(sources[0]).toMatchObject({ status: "disconnected", connectionId: null, recordCount: 1, categoryCounts: { lab: 1 } });
     const { items } = await loadStoredRecords(db, keys, userId, sources);
     expect(items).toEqual([expect.objectContaining({ title: "A1c", connectionId: "" })]);
   });
@@ -139,6 +139,7 @@ describe("sourceProblems", () => {
     syncing: false,
     lastRunStats: {},
     recordCount: 1,
+    categoryCounts: { lab: 1 },
   };
   const stats = (errorCode?: string) => ({ fetched: 1, inserted: 1, superseded: 0, unchanged: 0, removed: 0, ...(errorCode ? { errorCode } : {}) });
 
