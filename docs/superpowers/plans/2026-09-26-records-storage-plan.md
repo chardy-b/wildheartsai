@@ -241,6 +241,13 @@ Stages 8a and 8b are merged but dormant. The current Epic app registration is ma
 
 ### Next
 
-- [ ] 9b: Postgres row-level security on the record tables, keyed by the signed-in user.
+### 9b: row-level security, phase 1
+
+- [x] Migration `0006_row_level_security`: RLS enabled and forced (so it binds the tables' owner too) on `user_data_key`, `health_source`, `epic_connection`, `fhir_resource`, `fhir_attachment`, `sync_run`, `sync_cursor` (through its source), `audit_event` and `profile`. Policy `owner_only`: while `app.user_id` is set, only that user's rows are visible or writable.
+- [x] `asUser(db, userId, work)` (`src/lib/db/rls.ts`) runs work in a transaction with `app.user_id` set transaction-locally, so it can't leak across pooled connections. Used for everything the signed-in person's requests read or change: timeline, sources, note text, export, connect callback, disconnect and delete. Network calls (Epic, the queue) stay outside the transaction.
+- [x] Phase 1 keeps queries without a user working as before, because migrations run while the previous deployment is still serving, and background jobs (sync, scheduled refresh) don't set a user yet.
+- [x] `npm run db:check-rls` reports whether RLS actually applies to a database's role (superusers and BYPASSRLS roles skip it); `migrate-production.ps1` runs it after migrating.
+- [ ] Production: run the check. If the Neon role bypasses RLS, create an app role without it, grant it the tables, and point `DATABASE_URL` at it (migrations can keep the owner's URL).
+- [ ] Phase 2: sync and scheduled jobs run as the source's user (per step, outside network calls) or in an explicit system context; then a migration makes an unset context see nothing.
 - [ ] 9c: wrap per-user data keys with a KMS instead of `RECORDS_ENCRYPTION_KEY` (the unwrap function is the only change).
 - [x] Export as a FHIR Bundle: already on main (`/app/export`, `src/lib/export.ts`).

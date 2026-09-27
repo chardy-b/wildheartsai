@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
+import { asUser } from "@/lib/db/rls";
 import { exportBundle, exportFilename } from "@/lib/export";
 import { requireOnboarded } from "@/lib/onboarding-guard";
 import { loadExportFor, loadSourcesFor } from "@/lib/records-server";
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest) {
   const { sources, items } = await loadExportFor(userId, filters);
   const now = new Date();
   const filtered = filters.sourceIds.length > 0 || filters.categories.length > 0 || filters.from !== null || filters.to !== null;
-  await recordAudit(db, { userId, action: "export", detail: { records: items.length, filtered } }, now);
+  await asUser(db, userId, (tx) => recordAudit(tx, { userId, action: "export", detail: { records: items.length, filtered } }, now));
   return new Response(JSON.stringify(exportBundle(items, sources, now), null, 2), {
     headers: {
       "Content-Type": "application/fhir+json; charset=utf-8",

@@ -52,6 +52,10 @@ const { Client } = require("pg");
 })().catch((e) => { console.error("  check failed:", e.message); process.exit(1); });
 '@
   if ($LASTEXITCODE -ne 0) { throw "The database doesn't look fully migrated. See above." }
+
+  Write-Host "`nChecking row-level security..."
+  npx tsx scripts/check-rls.ts
+  if ($LASTEXITCODE -ne 0) { Write-Warning "Row-level security doesn't protect this connection yet. See above." }
   Write-Host "`nDone. Reload https://www.wildheartsai.com/app"
 }
 finally {
