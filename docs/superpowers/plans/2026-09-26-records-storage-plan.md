@@ -228,3 +228,19 @@ Stages 8a and 8b are merged but dormant. The current Epic app registration is ma
 - [ ] Put the new non-production and production client IDs in `.env.local` and Vercel (Preview first), and set `EPIC_EXPANDED_SCOPES=true` in the same place. Never turn the switch on for an app that lacks the APIs: sign-ins would request scopes it can't grant.
 - [ ] Reconnect the sandbox locally, Refresh, check `sync_run.stats` for the new searches and `Reference:linked`, then `npm run qa:capture -- --name sandbox-tester` and commit the fixture.
 - [ ] Before production: everyone reconnects once (Connections prompts for it), and each health system has to enable the new app. Connections that aren't granted the new scopes keep working and skip the new searches (`not_granted`).
+
+## Stage 9: hardening
+
+### 9a: audit trail
+
+- [x] `audit_event` table (`src/lib/db/audit-schema.ts`, migration `0005_audit_event`): user id, source id, action, small `detail`, time. No foreign keys, so the trail outlives the source it describes; indexed by user and time.
+- [x] Recorded in the same transaction as the action: `connect` or `reconnect` (`saveConnection`), `disconnect` (`deleteConnection`), `delete_source` (`deleteSource`), `sync` at the end of every run (`finishRun`: trigger, status, records added or updated; `failRun`: trigger, status, reason), and `export` (records exported, whether filtered).
+- [x] Holds no health data: `recordAudit`'s detail type allows only numbers, flags and known status words. A test checks tokens, the patient id and the organization name never reach it.
+- [ ] Account deletion doesn't exist yet. When it's added, record `delete_account` and decide how long the trail is kept after it.
+- [ ] Nothing reads the trail yet. A "Recent activity" list on the connections page could come later.
+
+### Next
+
+- [ ] 9b: Postgres row-level security on the record tables, keyed by the signed-in user.
+- [ ] 9c: wrap per-user data keys with a KMS instead of `RECORDS_ENCRYPTION_KEY` (the unwrap function is the only change).
+- [x] Export as a FHIR Bundle: already on main (`/app/export`, `src/lib/export.ts`).

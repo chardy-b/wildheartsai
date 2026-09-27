@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
+import { recordAudit } from "@/lib/audit";
 import { seal, unseal } from "@/lib/crypto/seal";
 import { epicConnection, healthSource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
@@ -55,6 +56,11 @@ export async function saveConnection(
     updatedAt: now,
   };
   return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: healthSource.id })
+      .from(healthSource)
+      .where(and(eq(healthSource.userId, input.userId), eq(healthSource.fhirBaseUrl, input.fhirBaseUrl)))
+      .limit(1);
     const [source] = await tx
       .insert(healthSource)
       .values({
@@ -75,6 +81,7 @@ export async function saveConnection(
       .insert(epicConnection)
       .values({ id: randomUUID(), userId: input.userId, sourceId: source.id, fhirBaseUrl: input.fhirBaseUrl, createdAt: now, ...secrets })
       .onConflictDoUpdate({ target: [epicConnection.userId, epicConnection.fhirBaseUrl], set: secrets });
+    await recordAudit(tx, { userId: input.userId, sourceId: source.id, action: existing ? "reconnect" : "connect" }, now);
     return { sourceId: source.id };
   });
 }
@@ -146,6 +153,7 @@ export async function deleteConnection(db: Db, userId: string, id: string, now =
       .update(healthSource)
       .set({ status: "disconnected", updatedAt: now })
       .where(and(eq(healthSource.id, deleted[0].sourceId), eq(healthSource.userId, userId)));
+    await recordAudit(tx, { userId, sourceId: deleted[0].sourceId, action: "disconnect" }, now);
     return true;
   });
 }
