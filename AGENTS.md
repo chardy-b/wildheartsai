@@ -25,8 +25,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Deploying schema changes
 
-- **Deploys do not run migrations.** A PR that adds a file to `drizzle/` needs `npm run db:migrate` against production before or right as it merges, or pages that touch the new tables fail with "relation … does not exist".
-- Run `pwsh scripts/migrate-production.ps1` and paste production's `DATABASE_URL_UNPOOLED` (Vercel → Settings → Environment Variables, **Production** scope; the Preview and Development values point at other Neon branches). It shows the host, asks to confirm, migrates, and checks the tables exist. Without a URL, drizzle reads `.env.local` and migrates the local database instead.
+- **Every Vercel build runs `drizzle-kit migrate` first** (the `vercel-build` script), against that deployment's database: production's on `main`, the preview's own Neon branch on a PR. A failed migration fails the build, so the previous deployment keeps serving. `drizzle.config.ts` prefers `DATABASE_URL_UNPOOLED`, Neon's direct connection.
+- Migrations run before the new code goes live but while the old code is still serving, so keep them backward compatible: add columns and tables in one PR, drop or rename in a later one.
+- To migrate production by hand (for example, to apply one before merging), run `pwsh scripts/migrate-production.ps1` and paste production's `DATABASE_URL_UNPOOLED` (Vercel → Settings → Environment Variables, **Production** scope; the Preview and Development values point at other Neon branches). It shows the host, asks to confirm, migrates, and checks the tables exist. Without a URL, drizzle reads `.env.local` and migrates the local database instead.
 - New required env vars (see `src/lib/env.ts`) must be set in Vercel for preview and production before merging.
 
 # Vercel CLI
