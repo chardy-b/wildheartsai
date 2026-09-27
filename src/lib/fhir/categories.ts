@@ -3,11 +3,14 @@ import type { RecordCategory } from "./normalize";
 // Every category, in the order the dashboard lists them.
 export const CATEGORIES: { category: RecordCategory; label: string; slug: string }[] = [
   { category: "condition", label: "Conditions", slug: "conditions" },
+  { category: "diagnosis", label: "Visit diagnoses", slug: "visit-diagnoses" },
+  { category: "concern", label: "Health concerns", slug: "health-concerns" },
   { category: "medication", label: "Medications", slug: "medications" },
   { category: "allergy", label: "Allergies", slug: "allergies" },
   { category: "lab", label: "Lab results", slug: "labs" },
   { category: "report", label: "Reports", slug: "reports" },
   { category: "vital", label: "Vitals", slug: "vitals" },
+  { category: "assessment", label: "Assessments", slug: "assessments" },
   { category: "immunization", label: "Immunizations", slug: "immunizations" },
   { category: "visit", label: "Visits", slug: "visits" },
   { category: "note", label: "Notes", slug: "notes" },

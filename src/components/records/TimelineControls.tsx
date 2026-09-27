@@ -87,3 +87,16 @@ export function TimelinePager({
     </nav>
   );
 }
+
+// A plain link, not <Link>, so prefetching never starts a download. It carries the applied
+// filters (not unsaved form edits) and every page of results, not just the one shown.
+export function ExportLink({ filters }: { filters: TimelineFilters }) {
+  return (
+    <p className="timeline-export">
+      <a className="btn btn-ghost" href={`/app/export${filterQuery(filters)}`} download>
+        {hasFilters(filters) ? "Export these records" : "Export all records"}
+      </a>
+      <span>FHIR JSON, as sent by your health systems.</span>
+    </p>
+  );
+}

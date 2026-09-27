@@ -167,3 +167,10 @@ export type Coverage = Resource & {
   payor?: Reference[];
   period?: Period;
 };
+
+export type Patient = Resource & {
+  resourceType: "Patient";
+  name?: { text?: string; given?: string[]; family?: string }[];
+  birthDate?: string;
+  gender?: string;
+};

@@ -434,6 +434,19 @@
   gap: 14px;
 }
 
+.timeline-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 20px;
+}
+
+.timeline-export span {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
 .timeline-pager {
   display: flex;
   align-items: center;

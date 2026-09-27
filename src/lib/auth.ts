@@ -32,6 +32,23 @@ export function createAuth() {
       },
     },
     session: { expiresIn: 7 * DAY, updateAge: DAY },
+    // On in production only (Better Auth's default). Counted in Postgres rather than in each
+    // server instance's memory, so the limits hold across Vercel's instances. Keyed per IP and path.
+    rateLimit: {
+      storage: "database",
+      window: 60,
+      max: 100,
+      customRules: {
+        // Password guessing, and invite-code guessing on sign-up.
+        "/sign-in/email": { window: 5 * 60, max: 10 },
+        "/sign-up/email": { window: 10 * 60, max: 5 },
+        // Emails: reset links and verification resends.
+        "/request-password-reset": { window: 15 * 60, max: 3 },
+        "/send-verification-email": { window: 15 * 60, max: 3 },
+        // Read on every page load; not worth a database write each time.
+        "/get-session": false,
+      },
+    },
     hooks: { before: inviteGate(env().SIGNUP_INVITE_CODE) },
     plugins: [nextCookies()],
   });

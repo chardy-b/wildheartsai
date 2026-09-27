@@ -6,7 +6,7 @@ import { SyncWatcher } from "@/components/app/SyncWatcher";
 import { ProblemNotices } from "@/components/records/ProblemNotices";
 import { RecordList } from "@/components/records/RecordList";
 import { RecordsLoading } from "@/components/records/RecordsLoading";
-import { TimelineFilterForm, TimelinePager } from "@/components/records/TimelineControls";
+import { ExportLink, TimelineFilterForm, TimelinePager } from "@/components/records/TimelineControls";
 import { categoryForSlug, labelFor } from "@/lib/fhir/categories";
 import type { RecordCategory } from "@/lib/fhir/normalize";
 import { requireOnboarded } from "@/lib/onboarding-guard";
@@ -35,9 +35,12 @@ async function CategoryRecords({ userId, category, slug, params }: { userId: str
       {items.length === 0 ? (
         <p className="lede">{hasFilters(filters) ? "No records match these filters." : "Nothing here from your connected health systems yet."}</p>
       ) : (
-        <div className="timeline">
-          <RecordList items={items} related={related} tones={tones} />
-        </div>
+        <>
+          <ExportLink filters={{ ...filters, categories: [category] }} />
+          <div className="timeline">
+            <RecordList items={items} related={related} tones={tones} />
+          </div>
+        </>
       )}
       <TimelinePager path={path} filters={filters} next={next} paged={cursor !== null} />
     </>

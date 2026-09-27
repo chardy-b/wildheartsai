@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import { epicConnection, fhirResource, healthSource, syncRun, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { STALE_RUN_MS } from "@/lib/sync/run";
@@ -11,7 +11,7 @@ export type SourceSummary = {
   organizationName: string;
   fhirBaseUrl: string;
   status: "connected" | "reconnect_required" | "disconnected";
-  // The tokens row, when the source is still connected (needed to disconnect, and to load a note).
+  // The tokens row, when the source is still connected (needed to disconnect).
   connectionId: string | null;
   lastSyncedAt: Date | null;
   lastSyncStatus: "ok" | "partial" | "failed" | null;
@@ -50,7 +50,14 @@ export async function listSources(db: Db, userId: string, now = new Date()): Pro
     db
       .select({ sourceId: fhirResource.sourceId, category: fhirResource.category, n: count() })
       .from(fhirResource)
-      .where(and(eq(fhirResource.userId, userId), isNull(fhirResource.supersededAt), isNull(fhirResource.removedAt)))
+      .where(
+        and(
+          eq(fhirResource.userId, userId),
+          isNull(fhirResource.supersededAt),
+          isNull(fhirResource.removedAt),
+          isNotNull(fhirResource.category),
+        ),
+      )
       .groupBy(fhirResource.sourceId, fhirResource.category),
   ]);
 

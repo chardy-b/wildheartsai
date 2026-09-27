@@ -7,12 +7,14 @@ import type { Db } from "@/lib/db/types";
 import { deleteConnection, saveConnection } from "@/lib/epic/connections";
 import type { Resource } from "@/lib/fhir/types";
 import { createTestDb, createTestUser } from "@/test/db";
+import { exportBundle, exportFilename } from "./export";
 import { sourceProblems } from "./source-display";
 import { deleteSource, listSources, needingFirstSync, type SourceSummary } from "./sources";
 import { runSyncJob } from "./sync/job";
 import { SYNC_QUERIES } from "./sync/plan";
 import { STALE_RUN_MS, startRun, type SyncDeps } from "./sync/run";
 import {
+  allMatching,
   countsFor,
   encodeCursor,
   filterQuery,
@@ -28,7 +30,7 @@ const ALL: TimelineFilters = { sourceIds: [], categories: [], from: null, to: nu
 const tokenKey = randomBytes(32);
 const kek = randomBytes(32);
 const now = new Date("2026-09-26T12:00:00Z");
-const QUERIES = SYNC_QUERIES.filter((q) => ["Observation:lab", "Condition:condition"].includes(q.key));
+const QUERIES = SYNC_QUERIES.filter((q) => ["Observation:lab", "Condition:condition", "Patient:self"].includes(q.key));
 let db: Db;
 let userId: string;
 let keys: UserKeys;
@@ -63,7 +65,10 @@ async function connect(organizationName: string, fhirBaseUrl: string): Promise<s
 async function importInto(sourceId: string, organizationName: string, byPath: Record<string, Resource[]>): Promise<void> {
   const { runId } = await startRun(db, { userId, sourceId, trigger: "connect" }, now);
   const search: SyncDeps["search"] = async ({ path }) => ({ resources: byPath[path.split("&_lastUpdated=")[0]] ?? [], truncated: false });
-  const deps: SyncDeps = { db, keys, now: () => now, accessToken: async () => "at", search };
+  const read: SyncDeps["read"] = async () => {
+    throw new Error("no binaries here");
+  };
+  const deps: SyncDeps = { db, keys, now: () => now, accessToken: async () => "at", search, read };
   const source = { runId, userId, sourceId, organizationName, fhirBaseUrl: "https://x", patientId: "p1" };
   await runSyncJob({ runId, userId, sourceId }, (_id, work) => work(), { db, now: () => now, load: async () => ({ deps, source }) }, QUERIES);
 }
@@ -248,11 +253,44 @@ describe("timeline filters and paging", () => {
     expect((items[0].resource as { valueQuantity?: { value: number } }).valueQuantity?.value).toBe(6.1);
   });
 
+  it("exports every record the filters select, across pages, as a FHIR Bundle", async () => {
+    const { north, sources } = await twoSources();
+    const labs = await allMatching(db, keys, userId, sources, { ...ALL, categories: ["lab"] }, 2);
+    expect(labs.map((i) => i.title)).toEqual(["Lipid panel", "TSH", "A1c", "Ferritin"]);
+
+    const northOnly = await allMatching(db, keys, userId, sources, { ...ALL, sourceIds: [north], from: "2024-01-01" }, 1);
+    const bundle = exportBundle(northOnly, sources, now);
+    expect(bundle).toMatchObject({ resourceType: "Bundle", type: "collection", timestamp: now.toISOString(), total: 2 });
+    expect(bundle.entry).toEqual([
+      { fullUrl: "https://north.example/R4/Observation/n2", resource: expect.objectContaining({ id: "n2", code: { text: "TSH" } }) },
+      { fullUrl: "https://north.example/R4/Observation/n1", resource: expect.objectContaining({ id: "n1" }) },
+    ]);
+  });
+
+  it("names the export by date, and says when it was filtered", () => {
+    expect(exportFilename(ALL, now)).toBe("wild-hearts-records-2026-09-26.json");
+    expect(exportFilename({ ...ALL, categories: ["lab"] }, now)).toBe("wild-hearts-records-filtered-2026-09-26.json");
+  });
+
   it("counts records per type for the chosen health systems, and colors each system", async () => {
     const { north, south, sources } = await twoSources();
     expect(countsFor(sources, ALL)).toMatchObject({ lab: 4, condition: 1 });
     expect(countsFor(sources, { ...ALL, sourceIds: [south] })).toMatchObject({ lab: 1, condition: 1 });
     expect(sourceTones(sources)).toEqual({ [north]: 0, [south]: 1 });
+  });
+});
+
+describe("rows kept but not listed", () => {
+  it("keeps the patient's own details out of the timeline and the counts", async () => {
+    const north = await connect("North Clinic", "https://north.example/R4");
+    await importInto(north, "North Clinic", {
+      "Observation?patient=p1&category=laboratory": [lab("n1", "2024-01-05", "A1c")],
+      "Patient?_id=p1": [{ resourceType: "Patient", id: "p1", name: [{ text: "Sam Doe" }] } as Resource],
+    });
+    const sources = await listSources(db, userId);
+    expect(sources[0]).toMatchObject({ recordCount: 1, categoryCounts: { lab: 1 } });
+    const { items } = await timelinePage(db, keys, userId, sources, ALL, null);
+    expect(items.map((i) => i.title)).toEqual(["A1c"]);
   });
 });
 
