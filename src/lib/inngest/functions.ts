@@ -32,7 +32,7 @@ export const syncSource = inngest.createFunction(
 
 const QUEUE_CHUNK = 100;
 
-// Nightly at 10:17 UTC (3:17am Pacific): queue a sync for every connected source not synced in a day.
+// Nightly at 10:17 UTC (3:17am Pacific daylight time, 2:17am standard): queue a sync for every connected source not synced in a day.
 export const refreshSources = inngest.createFunction(
   { id: "refresh-sources", triggers: [{ cron: "17 10 * * *" }], retries: 2 },
   async ({ step }) => {
@@ -50,6 +50,5 @@ export const refreshSources = inngest.createFunction(
     return totals;
   },
 );
-
 
 export const functions = [syncSource, refreshSources];
