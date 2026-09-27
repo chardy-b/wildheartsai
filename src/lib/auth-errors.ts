@@ -22,7 +22,7 @@ export function authErrorMessage(error: AuthError): string {
     case 422:
       return "An account with this email already exists. Try signing in instead.";
     case 429:
-      return "Too many attempts. Wait a minute, then try again.";
+      return "Too many attempts. Wait a few minutes, then try again.";
     default:
       return "Something went wrong on our side. Please try again.";
   }

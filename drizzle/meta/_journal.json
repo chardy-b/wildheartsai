@@ -29,6 +29,13 @@
       "when": 1790382854499,
       "tag": "0003_records_storage",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790474114163,
+      "tag": "0004_auth_rate_limit",
+      "breakpoints": true
     }
   ]
 }
