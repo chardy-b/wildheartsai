@@ -8,7 +8,7 @@ describe("authErrorMessage", () => {
     [{ code: "INVALID_EMAIL_OR_PASSWORD", status: 401 }, "That email and password don't match. Try again or reset your password."],
     [{ code: "PASSWORD_TOO_SHORT", status: 400 }, "Use at least 12 characters for your password."],
     [{ code: "INVITE_CODE_INVALID", status: 403 }, "That invite code isn't right. Check it and try again."],
-    [{ status: 429 }, "Too many attempts. Wait a minute, then try again."],
+    [{ status: 429 }, "Too many attempts. Wait a few minutes, then try again."],
     [{ status: 500 }, "Something went wrong on our side. Please try again."],
   ])("maps %o to calm copy", (error, message) => {
     expect(authErrorMessage(error)).toBe(message);
