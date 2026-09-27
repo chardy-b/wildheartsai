@@ -1,8 +1,10 @@
 import { yearOf } from "@/lib/fhir/format";
 import type { RecordItem } from "@/lib/fhir/normalize";
-import { RecordList } from "./RecordList";
+import { groupVitals } from "@/lib/timeline-groups";
+import { RecordRow, recordKey, VitalsRow } from "./RecordList";
 
-export function Timeline({ items, related = items, tones }: { items: RecordItem[]; related?: RecordItem[]; tones?: Record<string, number> }) {
+// Records by year, newest first, with each day's vitals from one organization folded into one row.
+export function Timeline({ items, related = items, tones = {} }: { items: RecordItem[]; related?: RecordItem[]; tones?: Record<string, number> }) {
   const years = new Map<string, RecordItem[]>();
   for (const item of items) {
     const year = yearOf(item.date);
@@ -13,7 +15,15 @@ export function Timeline({ items, related = items, tones }: { items: RecordItem[
       {[...years.entries()].map(([year, yearItems]) => (
         <section key={year} aria-labelledby={`year-${year}`}>
           <h2 id={`year-${year}`}>{year}</h2>
-          <RecordList items={yearItems} related={related} tones={tones} showCategory />
+          <ul className="record-list">
+            {groupVitals(yearItems).map((entry) =>
+              entry.kind === "record" ? (
+                <RecordRow key={recordKey(entry.item)} item={entry.item} related={related} showCategory tones={tones} />
+              ) : (
+                <VitalsRow key={entry.key} day={entry.day} source={entry.source} sourceId={entry.sourceId} items={entry.items} related={related} tones={tones} />
+              ),
+            )}
+          </ul>
         </section>
       ))}
     </div>

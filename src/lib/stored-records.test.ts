@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
-import { epicConnection, healthSource, syncRun } from "@/lib/db/schema";
+import { sealField, unsealField, userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
+import { epicConnection, fhirResource, healthSource, syncRun } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { deleteConnection, saveConnection } from "@/lib/epic/connections";
 import type { Resource } from "@/lib/fhir/types";
@@ -291,6 +291,25 @@ describe("rows kept but not listed", () => {
     expect(sources[0]).toMatchObject({ recordCount: 1, categoryCounts: { lab: 1 } });
     const { items } = await timelinePage(db, keys, userId, sources, ALL, null);
     expect(items.map((i) => i.title)).toEqual(["A1c"]);
+  });
+});
+
+describe("display fixes reach records imported before them", () => {
+  it("recomputes a summary stored by an older normalizer", async () => {
+    const north = await connect("North Clinic", "https://north.example/R4");
+    const temp = { ...lab("n1", "2024-01-05", "Temperature"), valueQuantity: { value: 37.2, unit: "Cel" } } as Resource;
+    await importInto(north, "North Clinic", { "Observation?patient=p1&category=laboratory": [temp] });
+    // As if imported before NORMALIZER_VERSION 2: an old summary with the raw unit.
+    const [row] = await db.select().from(fhirResource).where(eq(fhirResource.sourceId, north));
+    const summaryField = { table: "fhir_resource", field: "summary", rowId: row.id };
+    const old = { ...JSON.parse(unsealField(keys, row.sealedSummary, summaryField)), detail: "37.2 Cel" };
+    await db
+      .update(fhirResource)
+      .set({ normalizerVersion: 1, sealedSummary: sealField(keys, JSON.stringify(old), summaryField) })
+      .where(eq(fhirResource.id, row.id));
+
+    const { items } = await timelinePage(db, keys, userId, await listSources(db, userId), ALL, null);
+    expect(items[0].detail).toBe("37.2 °C");
   });
 });
 

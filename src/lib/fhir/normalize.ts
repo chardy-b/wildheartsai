@@ -20,6 +20,7 @@ import type {
   Resource,
   ServiceRequest,
 } from "./types";
+import { quantityText, readableUnit } from "./format";
 
 export type RecordCategory =
   | "condition"
@@ -123,7 +124,19 @@ export function normalizeMedication(r: MedicationRequest, source: string): Recor
   });
 }
 
+// SNOMED codes health systems use in an allergy list to say there are none, or that the
+// patient wasn't asked (Epic shows the latter as "Not on File"). They aren't allergies.
+const NO_ALLERGY_CODES: Record<string, string> = {
+  "716186003": "No known allergies",
+  "409137002": "No known drug allergies",
+  "429625007": "No known food allergies",
+  "428607008": "No known environmental allergies",
+  "1631000175102": "No allergies on file",
+};
+
 export function normalizeAllergy(r: AllergyIntolerance, source: string): RecordSummary {
+  const none = (r.code?.coding ?? []).map((c) => (c.code ? NO_ALLERGY_CODES[c.code] : undefined)).find(Boolean);
+  if (none) return item(r, source, { category: "allergy", title: none, date: r.recordedDate ?? null, detail: null, status: null });
   const reaction = textOf(r.reaction?.[0]?.manifestation?.[0]);
   return item(r, source, {
     category: "allergy",
@@ -135,7 +148,7 @@ export function normalizeAllergy(r: AllergyIntolerance, source: string): RecordS
 }
 
 export function normalizeLab(r: Observation, source: string): RecordSummary {
-  const quantity = r.valueQuantity?.value !== undefined ? `${r.valueQuantity.value} ${r.valueQuantity.unit ?? ""}`.trim() : null;
+  const quantity = quantityText(r.valueQuantity);
   return item(r, source, {
     category: "lab",
     title: textOf(r.code) ?? "Unnamed result",
@@ -166,9 +179,6 @@ export function normalizeVisit(r: Encounter, source: string): RecordSummary {
   });
 }
 
-function quantityText(q: Quantity | undefined): string | null {
-  return q?.value !== undefined ? `${q.value} ${q.unit ?? ""}`.trim() : null;
-}
 
 function joined(values: (string | null | undefined)[]): string | null {
   const present = values.filter((v): v is string => Boolean(v?.trim()));
@@ -207,10 +217,10 @@ export function normalizeProcedure(r: Procedure, source: string): RecordSummary 
   });
 }
 
-// Vitals are often two-part (blood pressure), so components are read as "120/80 mm[Hg]".
+// Vitals are often two-part (blood pressure), so components are read as "120/80 mmHg".
 function observationValue(r: Observation): string | null {
   const parts = (r.component ?? []).map((c) => c.valueQuantity).filter((q): q is Quantity => q?.value !== undefined);
-  if (parts.length > 1) return `${parts.map((q) => q.value).join("/")} ${parts[0].unit ?? ""}`.trim();
+  if (parts.length > 1) return `${parts.map((q) => q.value).join("/")} ${readableUnit(parts[0].unit)}`.trim();
   return quantityText(r.valueQuantity) ?? r.valueString ?? textOf(r.valueCodeableConcept);
 }
 

@@ -75,7 +75,7 @@ describe("describeResource", () => {
         ],
       }),
     );
-    expect(sections).toContainEqual({ label: "Parts", values: ["Systolic: 120 mm[Hg]", "Diastolic: 80 mm[Hg]"] });
+    expect(sections).toContainEqual({ label: "Parts", values: ["Systolic: 120 mmHg", "Diastolic: 80 mmHg"] });
   });
 
   it("lays out a prescription and a report", () => {
