@@ -1,0 +1,75 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Wild Hearts Health on Cloudflare Workers. `npm run deploy` builds the Next.js app with
+  // OpenNext (.open-next/) and deploys worker.ts, which wraps it and adds the sync workflow.
+  "name": "wildheartsai",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  // Keeps the plaintext settings below; URLs and secrets are set per worker
+  // (dashboard or `wrangler secret put`, see README), and deploys leave them in place.
+  "keep_vars": true,
+  "observability": { "enabled": true },
+  // Same port as `next dev`, so BETTER_AUTH_URL and EPIC_REDIRECT_URI in .env.local work for both.
+  "dev": { "port": 3000 },
+  // `server-only` throws outside Next's own bundler; worker.ts pulls app modules in directly.
+  "alias": { "server-only": "./src/test/empty.ts" },
+  "vars": {
+    "SIGNUPS_ENABLED": "false",
+    "EPIC_ENVIRONMENT": "sandbox",
+    "EPIC_PRODUCTION_ACCESS_ENABLED": "false",
+    "EMAIL_FROM": "Wild Hearts Health <no-reply@wildheartsai.com>"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wildheartsai",
+      // Replace with the ID printed by `npx wrangler d1 create wildheartsai`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "wildheartsai-sync",
+      "binding": "SYNC_WORKFLOW",
+      "class_name": "SyncWorkflow"
+    }
+  ],
+  // Cloudflare Email Service: verification and password-reset links only.
+  "send_email": [{ "name": "EMAIL" }],
+
+  "env": {
+    // Preview: `npm run deploy:preview`. Its own worker and database; sign-ups open.
+    "preview": {
+      "name": "wildheartsai-preview",
+      "vars": {
+        "SIGNUPS_ENABLED": "true",
+        "EPIC_ENVIRONMENT": "sandbox",
+        "EPIC_PRODUCTION_ACCESS_ENABLED": "false",
+        "EMAIL_FROM": "Wild Hearts Health <no-reply@wildheartsai.com>"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "wildheartsai-preview",
+          // Replace with the ID printed by `npx wrangler d1 create wildheartsai-preview`.
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "drizzle"
+        }
+      ],
+      "workflows": [
+        {
+          "name": "wildheartsai-preview-sync",
+          "binding": "SYNC_WORKFLOW",
+          "class_name": "SyncWorkflow"
+        }
+      ],
+      "send_email": [{ "name": "EMAIL" }],
+    }
+  }
+}

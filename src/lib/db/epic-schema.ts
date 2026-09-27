@@ -1,8 +1,9 @@
-import { pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { user } from "./auth-schema";
+import { createdAt, timestamp, updatedAt, uuid } from "./columns";
 import { healthSource } from "./records-schema";
 
-export const epicConnection = pgTable(
+export const epicConnection = sqliteTable(
   "epic_connection",
   {
     id: text("id").primaryKey(),
@@ -22,10 +23,13 @@ export const epicConnection = pgTable(
     sealedPatientId: text("sealed_patient_id").notNull(),
     sealedAccessToken: text("sealed_access_token").notNull(),
     sealedRefreshToken: text("sealed_refresh_token"),
-    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }).notNull(),
+    accessTokenExpiresAt: timestamp("access_token_expires_at").notNull(),
     scope: text("scope").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    // Lease held while one request refreshes the tokens (src/lib/epic/server.ts). D1 has no
+    // row locks, so this serializes rotating refresh tokens across requests and isolates.
+    refreshLeaseUntil: timestamp("refresh_lease_until"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (table) => [uniqueIndex("epic_connection_user_org_idx").on(table.userId, table.fhirBaseUrl)],
 );

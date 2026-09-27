@@ -3,7 +3,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { epicConnection, healthSource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { createTestDb, createTestUser } from "@/test/db";
-import { deleteConnection, getConnectionForSource, getConnectionSecrets, listConnections, saveConnection, updateTokens } from "./connections";
+import {
+  claimRefreshLease,
+  deleteConnection,
+  getConnectionForSource,
+  getConnectionSecrets,
+  listConnections,
+  releaseRefreshLease,
+  saveConnection,
+  updateTokens,
+} from "./connections";
 
 const key = randomBytes(32);
 const now = new Date("2026-09-23T10:00:00Z");
@@ -128,5 +137,46 @@ describe("epic connections", () => {
     const [{ id }] = await listConnections(db, userId);
     await deleteConnection(db, userId, id, now);
     expect(await getConnectionForSource(db, key, userId, sourceId)).toBeUndefined();
+  });
+});
+
+describe("refresh lease", () => {
+  const LEASE = 30_000;
+  const later = (ms: number) => new Date(now.getTime() + ms);
+
+  async function connectionId() {
+    await saveConnection(db, key, input(), now);
+    const [row] = await db.select().from(epicConnection);
+    return row.id;
+  }
+
+  it("lets one holder refresh at a time", async () => {
+    const id = await connectionId();
+    const [first, second] = await Promise.all([claimRefreshLease(db, id, now, LEASE), claimRefreshLease(db, id, now, LEASE)]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect(await claimRefreshLease(db, id, later(1_000), LEASE)).toBeUndefined();
+  });
+
+  it("ends when new tokens are stored", async () => {
+    const id = await connectionId();
+    await claimRefreshLease(db, id, now, LEASE);
+    await updateTokens(db, key, id, { accessToken: "at-2", expiresAt: later(3_600_000), scope: "s" }, now);
+    expect(await claimRefreshLease(db, id, later(1_000), LEASE)).toBeInstanceOf(Date);
+  });
+
+  it("expires if its holder never finishes", async () => {
+    const id = await connectionId();
+    await claimRefreshLease(db, id, now, LEASE);
+    expect(await claimRefreshLease(db, id, later(LEASE), LEASE)).toBeInstanceOf(Date);
+  });
+
+  it("is released only by its own holder", async () => {
+    const id = await connectionId();
+    const stale = await claimRefreshLease(db, id, now, LEASE);
+    const current = await claimRefreshLease(db, id, later(LEASE), LEASE);
+    await releaseRefreshLease(db, id, stale!);
+    expect(await claimRefreshLease(db, id, later(LEASE + 1_000), LEASE)).toBeUndefined();
+    await releaseRefreshLease(db, id, current!);
+    expect(await claimRefreshLease(db, id, later(LEASE + 1_000), LEASE)).toBeInstanceOf(Date);
   });
 });

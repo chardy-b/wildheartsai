@@ -1,5 +1,6 @@
 import { and, eq, gte, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { UserKeys } from "@/lib/crypto/user-keys";
+import { jsonValues } from "@/lib/db/bulk";
 import { fhirResource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { CATEGORIES, categoryForSlug } from "@/lib/fhir/categories";
@@ -172,7 +173,7 @@ async function earlierVersions(
       and(
         eq(fhirResource.userId, userId),
         isNotNull(fhirResource.supersededAt),
-        inArray(fhirResource.fhirId, [...new Set(rows.map((r) => r.fhirId))]),
+        inArray(fhirResource.fhirId, jsonValues([...new Set(rows.map((r) => r.fhirId))])),
       ),
     )
     .orderBy(sql`${fhirResource.supersededAt} desc`);

@@ -63,7 +63,7 @@ export async function startRun(
       and(
         eq(syncRun.sourceId, input.sourceId),
         inArray(syncRun.status, ["queued", "running"]),
-        lt(sql`coalesce(${syncRun.startedAt}, ${syncRun.queuedAt})`, new Date(now.getTime() - STALE_RUN_MS)),
+        lt(sql`coalesce(${syncRun.startedAt}, ${syncRun.queuedAt})`, now.getTime() - STALE_RUN_MS),
       ),
     );
   const [created] = await db
@@ -88,7 +88,7 @@ export async function beginRun(db: Db, runId: string, now: Date): Promise<void> 
 async function recordStats(db: Db, runId: string, key: string, stats: SyncQueryStats): Promise<void> {
   await db
     .update(syncRun)
-    .set({ stats: sql`${syncRun.stats} || ${JSON.stringify({ [key]: stats })}::jsonb` })
+    .set({ stats: sql`json_patch(${syncRun.stats}, ${JSON.stringify({ [key]: stats })})` })
     .where(eq(syncRun.id, runId));
 }
 
@@ -184,31 +184,25 @@ export function runStatusOf(stats: Record<string, SyncQueryStats>): RunStatus {
 }
 
 export async function finishRun(db: Db, runId: string, now: Date): Promise<RunStatus> {
-  return db.transaction(async (tx) => {
-    const [run] = await tx.select({ stats: syncRun.stats, sourceId: syncRun.sourceId }).from(syncRun).where(eq(syncRun.id, runId));
-    const status = runStatusOf(run.stats);
-    await tx.update(syncRun).set({ status, finishedAt: now }).where(eq(syncRun.id, runId));
-    await tx
-      .update(healthSource)
-      .set({ lastSyncedAt: now, lastSyncStatus: status, updatedAt: now })
-      .where(eq(healthSource.id, run.sourceId));
-    return status;
-  });
+  const [run] = await db.select({ stats: syncRun.stats, sourceId: syncRun.sourceId }).from(syncRun).where(eq(syncRun.id, runId));
+  const status = runStatusOf(run.stats);
+  await db.batch([
+    db.update(syncRun).set({ status, finishedAt: now }).where(eq(syncRun.id, runId)),
+    db.update(healthSource).set({ lastSyncedAt: now, lastSyncStatus: status, updatedAt: now }).where(eq(healthSource.id, run.sourceId)),
+  ]);
+  return status;
 }
 
 // Ends a run that couldn't continue. When the source needs signing in again, marks it
 // so the connections page asks the person to reconnect and background syncs skip it.
+// One batch, so both land or neither; the source is only touched while the run is active.
 export async function failRun(db: Db, runId: string, reason: "reconnect" | "error", now: Date): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [run] = await tx
-      .update(syncRun)
-      .set({ status: "failed", finishedAt: now })
-      .where(and(eq(syncRun.id, runId), inArray(syncRun.status, ["queued", "running"])))
-      .returning({ sourceId: syncRun.sourceId });
-    if (!run) return; // already finished
-    await tx
+  const active = and(eq(syncRun.id, runId), inArray(syncRun.status, ["queued", "running"]));
+  await db.batch([
+    db
       .update(healthSource)
       .set({ lastSyncStatus: "failed", updatedAt: now, ...(reason === "reconnect" ? { status: "reconnect_required" as const } : {}) })
-      .where(eq(healthSource.id, run.sourceId));
-  });
+      .where(inArray(healthSource.id, db.select({ id: syncRun.sourceId }).from(syncRun).where(active))),
+    db.update(syncRun).set({ status: "failed", finishedAt: now }).where(active),
+  ]);
 }

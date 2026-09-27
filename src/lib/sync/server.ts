@@ -1,15 +1,15 @@
 import "server-only";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { userKeysFor } from "@/lib/crypto/user-keys";
 import { db } from "@/lib/db";
 import { getConnectionForSource } from "@/lib/epic/connections";
 import { accessTokenFor, tokenKey } from "@/lib/epic/server";
 import { fhirSearchBounded } from "@/lib/fhir/client";
-import { inngest, syncRequested } from "@/lib/inngest/client";
 import { recordsKey } from "@/lib/records-keys";
 import { needingFirstSync, type SourceSummary } from "@/lib/sources";
-import type { JobEnv, SyncRequest } from "./job";
+import { runSyncJob, type JobEnv, type StepRunner, type SyncRequest } from "./job";
 import { requestSync, type RequestOutcome } from "./request";
-import type { SyncTrigger } from "./run";
+import { failRun, type SyncTrigger } from "./run";
 
 // Everything one sync step needs, loaded fresh for each step. Secrets stay in memory.
 export const loadSyncJob: JobEnv["load"] = async ({ runId, userId, sourceId }) => {
@@ -35,12 +35,32 @@ export const loadSyncJob: JobEnv["load"] = async ({ runId, userId, sourceId }) =
   };
 };
 
-async function send(request: SyncRequest): Promise<void> {
-  await inngest.send(syncRequested.create(request));
+// Hands a sync to Cloudflare Workflows (SyncWorkflow in src/worker/sync-workflow.ts).
+// The instance ID is the run ID, so a run starts at most once. The payload carries IDs
+// only: Workflows stores it, and every step loads what it needs from D1.
+async function startSyncWorkflow(request: SyncRequest): Promise<void> {
+  const { env, ctx } = getCloudflareContext();
+  if (env.SYNC_WORKFLOW) {
+    await env.SYNC_WORKFLOW.create({ id: request.runId, params: request });
+    return;
+  }
+  // `next dev` has no Workflows runtime: run the job here, after the response is sent.
+  if (process.env.NODE_ENV === "production") throw new Error("SYNC_WORKFLOW binding is missing");
+  ctx.waitUntil(runInDevelopment(request));
+}
+
+async function runInDevelopment(request: SyncRequest): Promise<void> {
+  const step: StepRunner = (_id, work) => work();
+  try {
+    await runSyncJob(request, step, { db, now: () => new Date(), load: loadSyncJob });
+  } catch (error) {
+    console.error("[sync] local run failed", error instanceof Error ? error.name : "unknown");
+    await failRun(db, request.runId, "error", new Date());
+  }
 }
 
 export function requestSyncFor(userId: string, sourceId: string, trigger: SyncTrigger): Promise<RequestOutcome> {
-  return requestSync(db, { userId, sourceId, trigger }, send, new Date());
+  return requestSync(db, { userId, sourceId, trigger }, startSyncWorkflow, new Date());
 }
 
 // Queues a first sync for connected sources that never had one (for example, those
