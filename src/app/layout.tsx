@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { M_PLUS_Rounded_1c } from "next/font/google";
+import { Analytics } from "./analytics";
 import "./globals.css";
 
 const rounded = M_PLUS_Rounded_1c({
@@ -36,7 +37,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={rounded.variable}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
