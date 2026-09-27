@@ -1,3 +1,4 @@
+import { recordAudit } from "@/lib/audit";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { UserKeys } from "@/lib/crypto/user-keys";
 import { healthSource, syncRun, type SyncQueryStats } from "@/lib/db/schema";
@@ -206,9 +207,14 @@ export function runStatusOf(stats: Record<string, SyncQueryStats>): RunStatus {
 
 export async function finishRun(db: Db, runId: string, now: Date): Promise<RunStatus> {
   return db.transaction(async (tx) => {
-    const [run] = await tx.select({ stats: syncRun.stats, sourceId: syncRun.sourceId }).from(syncRun).where(eq(syncRun.id, runId));
+    const [run] = await tx
+      .select({ stats: syncRun.stats, sourceId: syncRun.sourceId, userId: syncRun.userId, trigger: syncRun.trigger })
+      .from(syncRun)
+      .where(eq(syncRun.id, runId));
     const status = runStatusOf(run.stats);
     await tx.update(syncRun).set({ status, finishedAt: now }).where(eq(syncRun.id, runId));
+    const inserted = Object.values(run.stats).reduce((sum, s) => sum + s.inserted + s.superseded, 0);
+    await recordAudit(tx, { userId: run.userId, sourceId: run.sourceId, action: "sync", detail: { trigger: run.trigger, status, inserted } }, now);
     await tx
       .update(healthSource)
       .set({ lastSyncedAt: now, lastSyncStatus: status, updatedAt: now })
@@ -225,8 +231,9 @@ export async function failRun(db: Db, runId: string, reason: "reconnect" | "erro
       .update(syncRun)
       .set({ status: "failed", finishedAt: now })
       .where(and(eq(syncRun.id, runId), inArray(syncRun.status, ["queued", "running"])))
-      .returning({ sourceId: syncRun.sourceId });
+      .returning({ sourceId: syncRun.sourceId, userId: syncRun.userId, trigger: syncRun.trigger });
     if (!run) return; // already finished
+    await recordAudit(tx, { userId: run.userId, sourceId: run.sourceId, action: "sync", detail: { trigger: run.trigger, status: "failed", reason } }, now);
     await tx
       .update(healthSource)
       .set({ lastSyncStatus: "failed", updatedAt: now, ...(reason === "reconnect" ? { status: "reconnect_required" as const } : {}) })

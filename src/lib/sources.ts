@@ -1,3 +1,4 @@
+import { recordAudit } from "@/lib/audit";
 import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import { epicConnection, fhirResource, healthSource, syncRun, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
@@ -87,12 +88,16 @@ export async function listSources(db: Db, userId: string, now = new Date()): Pro
 }
 
 // Deletes the organization with its tokens, stored records and sync history.
-export async function deleteSource(db: Db, userId: string, sourceId: string): Promise<boolean> {
-  const deleted = await db
-    .delete(healthSource)
-    .where(and(eq(healthSource.id, sourceId), eq(healthSource.userId, userId)))
-    .returning({ id: healthSource.id });
-  return deleted.length > 0;
+export async function deleteSource(db: Db, userId: string, sourceId: string, now = new Date()): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const deleted = await tx
+      .delete(healthSource)
+      .where(and(eq(healthSource.id, sourceId), eq(healthSource.userId, userId)))
+      .returning({ id: healthSource.id });
+    if (deleted.length === 0) return false;
+    await recordAudit(tx, { userId, sourceId, action: "delete_source" }, now);
+    return true;
+  });
 }
 
 // Connected sources that have never finished a sync and have none in progress: the
