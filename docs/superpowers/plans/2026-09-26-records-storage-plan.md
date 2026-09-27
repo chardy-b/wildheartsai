@@ -184,3 +184,15 @@ The engine is plain functions with the database, keys, clock, token and FHIR sea
 - [x] Privacy notice: "once a day in the background while a health system is connected". The acknowledgement text doesn't mention refresh timing, so `CONSENT_VERSION` is unchanged.
 - [x] Verified the build registers 3 Inngest functions (sync, its failure handler, nightly refresh).
 - [ ] After merge: in Inngest → Functions, check `refresh-sources` shows its next scheduled run, and that the first night's run reports `queued` counts.
+
+---
+
+## Stage 7: store more, part 1 (no new scopes)
+
+- [x] **New categories** (same `Condition.rs` / `Observation.rs` scopes): visit diagnoses (`Condition?category=encounter-diagnosis`), health concerns (`health-concern`) and assessments (`Observation?category=survey`), each with a normalizer, label and category page. They're marked `optional`: not every organization supports them, so a failure is kept in the stats (`optional: true`) but isn't reported to the person and doesn't make the run `partial`.
+- [x] **Patient:** `Patient?_id=<id>` is stored as a row with **no category**. It is kept, to recognise the person across sources later, but never listed. The timeline and record counts only include rows with a category.
+- [x] **Note text:** a `notes` step after the searches fetches each note's readable Binary once, up to 100 per sync with 4 at a time, and stores it in `fhir_attachment`: the plain text, the original bytes up to 1 MB, and the address sealed and matched by HMAC. One failure doesn't stop the rest and is retried on the next sync. A refused token marks the source for reconnecting. Stats go under `Binary:note` (optional).
+- [x] "Show note" reads the stored text first, looked up by the person's own source, so it also works for disconnected organizations. It falls back to a live read through the source's connection. `showNoteAction` now takes a source id.
+- [x] Copy: the privacy notice says note text and name and birth date are stored, and lists the new categories. Scope labels mention visit diagnoses, health concerns and assessments. `CONSENT_VERSION` left unchanged: there are no real users yet. Bump it before launch whenever what we collect changes, as the notice promises.
+- [x] `package-lock.json` resynced: `@emnapi/core` and `@emnapi/runtime` were missing, which made `npm ci` fail.
+- [ ] On the sandbox: see which of the new searches Epic answers (`sync_run.stats`), and that notes show text without a live fetch.

@@ -27,11 +27,11 @@ export const EPIC_SCOPES = [
 // Shown on the connections page: "what we ask for", in plain language.
 export const SCOPE_LABELS: { scope: string; label: string }[] = [
   { scope: "patient/Patient.rs", label: "Your name and date of birth, to match your record" },
-  { scope: "patient/Condition.rs", label: "Conditions and diagnoses" },
+  { scope: "patient/Condition.rs", label: "Conditions, visit diagnoses and health concerns" },
   { scope: "patient/MedicationRequest.rs", label: "Medications you've been prescribed" },
   { scope: "patient/MedicationDispense.rs", label: "Pharmacy fills" },
   { scope: "patient/AllergyIntolerance.rs", label: "Allergies" },
-  { scope: "patient/Observation.rs", label: "Lab results, vital signs and social history" },
+  { scope: "patient/Observation.rs", label: "Lab results, vital signs, assessments and social history" },
   { scope: "patient/DiagnosticReport.rs", label: "Lab and imaging reports" },
   { scope: "patient/DocumentReference.rs", label: "Visit notes and other documents" },
   { scope: "patient/Binary.rs", label: "The text of those notes and documents" },

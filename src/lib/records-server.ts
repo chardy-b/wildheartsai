@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { userKeysFor } from "@/lib/crypto/user-keys";
 import { db } from "@/lib/db";
-import { getConnectionSecrets } from "@/lib/epic/connections";
+import { getConnectionForSource } from "@/lib/epic/connections";
 import { accessTokenFor, tokenKey } from "@/lib/epic/server";
 import { fhirRead } from "@/lib/fhir/client";
 import type { RecordItem } from "@/lib/fhir/normalize";
@@ -11,6 +11,7 @@ import { recordsKey } from "@/lib/records-keys";
 import { sourceProblems } from "@/lib/source-display";
 import { readNote, type NoteResult } from "@/lib/records-notes";
 import { listSources, type SourceSummary } from "@/lib/sources";
+import { storedNoteText } from "@/lib/sync/notes";
 import { startFirstSyncs } from "@/lib/sync/server";
 import { allMatching, allNotes, timelinePage, type TimelineCursor, type TimelineFilters } from "@/lib/timeline";
 
@@ -37,10 +38,18 @@ export async function loadTimelineFor(userId: string, filters: TimelineFilters, 
   return { sources, items: page.items, related, next: page.next, problems: sourceProblems(sources) };
 }
 
-// A note's text for the signed-in person, read on request through their live connection.
-export async function loadNoteFor(userId: string, connectionId: string, attachmentUrl: string): Promise<NoteResult> {
-  const connections = await getConnectionSecrets(db, tokenKey(), userId);
-  return readNote({ connections, connectionId, attachmentUrl }, { accessToken: accessTokenFor, read: (input) => fhirRead(input) });
+// A note's text for the signed-in person: the stored copy when there is one (so it works for
+// disconnected sources too), else read live through the source's connection.
+export async function loadNoteFor(userId: string, sourceId: string, attachmentUrl: string): Promise<NoteResult> {
+  const keys = await userKeysFor(db, recordsKey(), userId, new Date());
+  const stored = await storedNoteText(db, keys, userId, sourceId, attachmentUrl);
+  if (stored !== undefined) return stored === null ? { ok: false, reason: "unsupported" } : { ok: true, text: stored };
+  const connection = await getConnectionForSource(db, tokenKey(), userId, sourceId);
+  if (!connection) return { ok: false, reason: "not_found" };
+  return readNote(
+    { connections: [connection], connectionId: connection.id, attachmentUrl },
+    { accessToken: accessTokenFor, read: (input) => fhirRead(input) },
+  );
 }
 
 // Every stored record the filters select, for the signed-in person to download.

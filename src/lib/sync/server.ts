@@ -3,7 +3,7 @@ import { userKeysFor } from "@/lib/crypto/user-keys";
 import { db } from "@/lib/db";
 import { getConnectionForSource } from "@/lib/epic/connections";
 import { accessTokenFor, tokenKey } from "@/lib/epic/server";
-import { fhirSearchBounded } from "@/lib/fhir/client";
+import { fhirRead, fhirSearchBounded } from "@/lib/fhir/client";
 import { inngest, syncRequested } from "@/lib/inngest/client";
 import { recordsKey } from "@/lib/records-keys";
 import { needingFirstSync, type SourceSummary } from "@/lib/sources";
@@ -31,6 +31,7 @@ export const loadSyncJob: JobEnv["load"] = async ({ runId, userId, sourceId }) =
       now: () => new Date(),
       accessToken: () => accessTokenFor(connection),
       search: (input) => fhirSearchBounded(input),
+      read: (input) => fhirRead(input),
     },
   };
 };

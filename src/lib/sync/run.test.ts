@@ -2,13 +2,14 @@ import { randomBytes } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
-import { fhirResource, healthSource, syncCursor, syncRun } from "@/lib/db/schema";
+import { fhirAttachment, fhirResource, healthSource, syncCursor, syncRun } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
 import type { Observation, Resource } from "@/lib/fhir/types";
 import { createTestDb, createTestUser } from "@/test/db";
 import { SYNC_QUERIES } from "./plan";
 import { runSyncJob } from "./job";
+import { storedNoteText } from "./notes";
 import { startRun, type SyncDeps, type SyncSource } from "./run";
 import { openStoredRow } from "./store";
 
@@ -19,6 +20,8 @@ const kek = randomBytes(32);
 // treats _lastUpdated is configurable, as Epic's support varies by resource.
 function fakeServer() {
   const data = new Map<string, Resource[]>();
+  const binaries = new Map<string, Resource | Error>();
+  const reads: string[] = [];
   const failing = new Map<string, Error>();
   const calls: string[] = [];
   let lastUpdated: "honour" | "ignore" | "error" = "honour";
@@ -41,8 +44,19 @@ function fakeServer() {
     return { resources: resources.slice(0, limit), truncated: resources.length > limit };
   };
 
+  const read: SyncDeps["read"] = async ({ path }) => {
+    reads.push(path);
+    const found = binaries.get(path);
+    if (!found) throw new EpicError("fhir", 404);
+    if (found instanceof Error) throw found;
+    return found;
+  };
+
   return {
     search,
+    read,
+    reads,
+    binary: (path: string, value: Resource | Error) => binaries.set(path, value),
     calls,
     set: (path: string, resources: Resource[]) => data.set(path, resources),
     fail: (path: string, error: Error) => failing.set(path, error),
@@ -92,17 +106,17 @@ beforeEach(async () => {
 });
 
 function deps(overrides: Partial<SyncDeps> = {}): SyncDeps {
-  return { db, keys, now: () => clock, accessToken: async () => "token", search: server.search, ...overrides };
+  return { db, keys, now: () => clock, accessToken: async () => "token", search: server.search, read: server.read, ...overrides };
 }
 
-async function sync(overrides: Partial<SyncDeps> = {}) {
+async function sync(overrides: Partial<SyncDeps> = {}, queries = QUERIES) {
   const { runId } = await startRun(db, { userId, sourceId, trigger: "manual" }, clock);
   const source: SyncSource = { runId, userId, sourceId, organizationName: "Example Health", fhirBaseUrl: "https://fhir.example.org/R4", patientId: "p1" };
   const status = await runSyncJob(
     { runId, userId, sourceId },
     (_id, work) => work(),
     { db, now: () => clock, load: async () => ({ deps: deps(overrides), source }) },
-    QUERIES,
+    queries,
   );
   const [run] = await db.select().from(syncRun).where(eq(syncRun.id, runId));
   return { status, run };
@@ -231,6 +245,83 @@ describe("incremental sync", () => {
       await sync();
       expect(server.calls.filter((c) => c.startsWith(LAB)).every((c) => !c.includes("_lastUpdated="))).toBe(true);
     }
+  });
+});
+
+describe("optional searches and supporting rows", () => {
+  const withExtras = SYNC_QUERIES.filter((q) => ["Observation:lab", "Condition:diagnosis", "Patient:self"].includes(q.key));
+
+  it("doesn't count a failed optional search against the run", async () => {
+    server.set(LAB, [lab("a", 5.4)]);
+    server.fail("Condition?patient=p1&category=encounter-diagnosis", new EpicError("fhir", 400));
+    const { status, run } = await sync({}, withExtras);
+    expect(status).toBe("ok");
+    expect(run.stats["Condition:diagnosis"]).toMatchObject({ errorCode: "400", optional: true });
+  });
+
+  it("stores the patient's own details without a category, so they're never listed as a record", async () => {
+    server.set("Patient?_id=p1", [{ resourceType: "Patient", id: "p1", name: [{ text: "Sam Doe" }], birthDate: "1990-02-03" } as Resource]);
+    await sync({}, withExtras);
+    const [row] = (await rows()).filter((r) => r.resourceType === "Patient");
+    expect(row).toMatchObject({ category: null, effectiveAt: null });
+    expect(openStoredRow(keys, row).summary).toMatchObject({ title: "Sam Doe", detail: "Born 1990-02-03" });
+  });
+});
+
+describe("note text", () => {
+  const withNotes = SYNC_QUERIES.filter((q) => ["DocumentReference:note"].includes(q.key));
+  const NOTES = "DocumentReference?patient=p1&category=clinical-note";
+  const note = (id: string, url: string, contentType = "text/html") =>
+    ({ resourceType: "DocumentReference", id, status: "current", type: { text: "Progress note" }, content: [{ attachment: { contentType, url } }] }) as Resource;
+  const binary = (html: string, contentType = "text/html") =>
+    ({ resourceType: "Binary", contentType, data: Buffer.from(html).toString("base64") }) as Resource;
+
+  it("stores each note's text once, sealed, and reads it back", async () => {
+    server.set(NOTES, [note("d1", "Binary/b1"), note("d2", "Binary/b2")]);
+    server.binary("Binary/b1", binary("<p>Feeling <b>better</b> today.</p>"));
+    server.binary("Binary/b2", binary("{\\rtf1 Plain {\\b RTF} note}", "text/rtf"));
+    const { status, run } = await sync({}, withNotes);
+
+    expect(status).toBe("ok");
+    expect(run.stats["Binary:note"]).toMatchObject({ fetched: 2, inserted: 2, optional: true });
+    expect(await storedNoteText(db, keys, userId, sourceId, "Binary/b1")).toBe("Feeling better today.");
+    const attachments = await db.select().from(fhirAttachment).where(eq(fhirAttachment.sourceId, sourceId));
+    expect(JSON.stringify(attachments)).not.toMatch(/Feeling|Binary\/b1/);
+
+    later(1);
+    server.reads.length = 0;
+    await sync({}, withNotes);
+    expect(server.reads).toEqual([]);
+  });
+
+  it("keeps going when a note can't be read, and tries it again next time", async () => {
+    server.set(NOTES, [note("d1", "Binary/b1"), note("d2", "Binary/missing")]);
+    server.binary("Binary/b1", binary("<p>Hello</p>"));
+    const { status, run } = await sync({}, withNotes);
+    expect(status).toBe("ok");
+    expect(run.stats["Binary:note"]).toMatchObject({ inserted: 1, errorCode: "notes_failed" });
+
+    later(1);
+    server.reads.length = 0;
+    await sync({}, withNotes);
+    expect(server.reads).toEqual(["Binary/missing"]);
+  });
+
+  it("marks the source for reconnecting when access is refused while fetching notes", async () => {
+    server.set(NOTES, [note("d1", "Binary/b1")]);
+    server.binary("Binary/b1", new ReconnectRequiredError());
+    const { status } = await sync({}, withNotes);
+    expect(status).toBe("failed");
+    const [source] = await db.select().from(healthSource).where(eq(healthSource.id, sourceId));
+    expect(source.status).toBe("reconnect_required");
+  });
+
+  it("keeps a note it can't show as text as stored but unreadable, without refetching", async () => {
+    server.set(NOTES, [note("d1", "Binary/b1", "text/plain")]);
+    server.binary("Binary/b1", binary("x", "application/pdf"));
+    await sync({}, withNotes);
+    expect(await storedNoteText(db, keys, userId, sourceId, "Binary/b1")).toBeNull();
+    expect(await storedNoteText(db, keys, userId, sourceId, "Binary/other")).toBeUndefined();
   });
 });
 

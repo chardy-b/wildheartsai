@@ -6,6 +6,8 @@ describe("RECORD_QUERIES", () => {
     const paths = RECORD_QUERIES.map((q) => q.path("p 1"));
     expect(paths).toEqual([
       "Condition?patient=p%201&category=problem-list-item",
+      "Condition?patient=p%201&category=encounter-diagnosis",
+      "Condition?patient=p%201&category=health-concern",
       "MedicationRequest?patient=p%201",
       "AllergyIntolerance?patient=p%201",
       "Observation?patient=p%201&category=laboratory",
@@ -16,6 +18,7 @@ describe("RECORD_QUERIES", () => {
       "Procedure?patient=p%201",
       "Observation?patient=p%201&category=vital-signs",
       "Observation?patient=p%201&category=social-history",
+      "Observation?patient=p%201&category=survey",
       "CareTeam?patient=p%201",
       "CarePlan?patient=p%201&category=38717003",
       "Goal?patient=p%201",
@@ -24,6 +27,12 @@ describe("RECORD_QUERIES", () => {
       "Device?patient=p%201",
       "Coverage?patient=p%201",
     ]);
+  });
+});
+
+describe("optional searches", () => {
+  it("marks only the searches not every organization supports", () => {
+    expect(RECORD_QUERIES.filter((q) => q.optional).map((q) => q.category)).toEqual(["diagnosis", "concern", "assessment"]);
   });
 });
 

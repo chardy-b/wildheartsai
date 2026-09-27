@@ -133,6 +133,8 @@ export type SyncQueryStats = {
   unchanged: number;
   removed: number;
   errorCode?: string;
+  // A search not every organization supports: a failure isn't reported to the person.
+  optional?: boolean;
 };
 
 // One sync of one source. Stats hold counts and error codes only, never PHI.

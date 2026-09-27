@@ -14,6 +14,7 @@ import type {
   MedicationDispense,
   MedicationRequest,
   Observation,
+  Patient,
   Procedure,
   Quantity,
   Resource,
@@ -38,7 +39,10 @@ export type RecordCategory =
   | "order"
   | "fill"
   | "device"
-  | "coverage";
+  | "coverage"
+  | "diagnosis"
+  | "concern"
+  | "assessment";
 
 // One row as shown in a list. Normalizers produce this from a FHIR resource.
 export type RecordSummary = {
@@ -81,6 +85,28 @@ export function normalizeCondition(r: Condition, source: string): RecordSummary 
   return item(r, source, {
     category: "condition",
     title: textOf(r.code) ?? "Unnamed condition",
+    date: r.onsetDateTime ?? r.recordedDate ?? null,
+    detail: null,
+    status: codeOf(r.clinicalStatus),
+  });
+}
+
+// Diagnoses recorded at a visit (Condition category encounter-diagnosis).
+export function normalizeDiagnosis(r: Condition, source: string): RecordSummary {
+  return item(r, source, {
+    category: "diagnosis",
+    title: textOf(r.code) ?? "Unnamed diagnosis",
+    date: r.recordedDate ?? r.onsetDateTime ?? null,
+    detail: null,
+    status: codeOf(r.clinicalStatus),
+  });
+}
+
+// Things the care team is watching (Condition category health-concern).
+export function normalizeConcern(r: Condition, source: string): RecordSummary {
+  return item(r, source, {
+    category: "concern",
+    title: textOf(r.code) ?? "Unnamed health concern",
     date: r.onsetDateTime ?? r.recordedDate ?? null,
     detail: null,
     status: codeOf(r.clinicalStatus),
@@ -206,6 +232,35 @@ export function normalizeSocial(r: Observation, source: string): RecordSummary {
     detail: observationValue(r),
     status: null,
   });
+}
+
+// Questionnaire scores and screenings such as PHQ-9 (Observation category survey).
+export function normalizeAssessment(r: Observation, source: string): RecordSummary {
+  return item(r, source, {
+    category: "assessment",
+    title: textOf(r.code) ?? "Assessment",
+    date: r.effectiveDateTime ?? r.issued ?? null,
+    detail: observationValue(r),
+    status: null,
+  });
+}
+
+// Stored rows that aren't shown as records (the patient's own details at a source) have no category.
+export type StoredSummary = Omit<RecordSummary, "category"> & { category: RecordCategory | null };
+
+// The person as a source knows them: name and birth date. Kept to match sources later; not a timeline row.
+export function normalizePatient(r: Patient, source: string): StoredSummary {
+  const name = r.name?.[0];
+  const full = name?.text?.trim() || [...(name?.given ?? []), name?.family].filter(Boolean).join(" ") || "Patient";
+  return {
+    key: `${source}|Patient/${r.id ?? "unknown"}`,
+    source,
+    category: null,
+    title: full,
+    date: null,
+    detail: r.birthDate ? `Born ${r.birthDate}` : null,
+    status: null,
+  };
 }
 
 export function normalizeCareTeam(r: CareTeam, source: string): RecordSummary {

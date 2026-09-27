@@ -68,16 +68,18 @@ export default function PrivacyPage() {
         <Section id="health-records" title="Your health records">
           <p>
             When you connect a health system, we import the records it shares and keep a copy in our database, so
-            your dashboard loads quickly and shows your full history. We check for new and changed records when you
-            press Refresh, and once a day in the background while a health system is connected. When a record changes, we keep the earlier
-            version too, marked as replaced. We don&apos;t write your records to our logs.
+            your dashboard loads quickly and shows your full history. That includes the text of your notes, and your
+            name and date of birth as that health system has them, which we keep to recognise your record. We check
+            for new and changed records when you press Refresh, and once a day in the background while a health
+            system is connected. When a record changes, we keep the earlier version too, marked as replaced. We
+            don&apos;t write your records to our logs.
           </p>
           <p>
-            Wild Hearts shows the parts of your record your health systems share through MyChart: conditions,
-            medications and pharmacy fills, allergies, lab results and reports (including imaging reports), vital
-            signs, immunizations, visits and their notes, procedures, orders, your care team, care plans, goals,
-            social history, implanted devices and insurance. We only request those. A note&apos;s text is fetched from
-            your health system when you open it, and isn&apos;t stored.
+            Wild Hearts shows the parts of your record your health systems share through MyChart: conditions, visit
+            diagnoses and health concerns, medications and pharmacy fills, allergies, lab results and reports
+            (including imaging reports), vital signs, assessments such as questionnaire scores, immunizations,
+            visits and their notes, procedures, orders, your care team, care plans, goals, social history, implanted
+            devices and insurance. We only request those.
           </p>
           <p>
             Wild Hearts Health is not a medical provider and does not give medical advice. Records appear as your

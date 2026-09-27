@@ -32,7 +32,7 @@ export function lastRunIssues(stats: Record<string, SyncQueryStats> | null): { f
   const truncated: RecordCategory[] = [];
   for (const [key, s] of Object.entries(stats ?? {})) {
     const category = SYNC_QUERIES.find((q) => q.key === key)?.category;
-    if (!category || !s.errorCode) continue;
+    if (!category || !s.errorCode || s.optional) continue;
     (s.errorCode === "truncated" ? truncated : failed).push(category);
   }
   return { failed, truncated };

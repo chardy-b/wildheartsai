@@ -44,6 +44,8 @@ export type SyncDeps = {
     maxPages: number;
     maxResources: number;
   }) => Promise<{ resources: Resource[]; truncated: boolean }>;
+  // Reads one resource at an address inside the source (a note's Binary).
+  read: (input: { baseUrl: string; path: string; accessToken: string }) => Promise<unknown>;
 };
 
 // A queued or running run older than this was lost (its job never ran or died without
@@ -85,7 +87,7 @@ export async function beginRun(db: Db, runId: string, now: Date): Promise<void> 
   await db.update(syncRun).set({ status: "running", startedAt: now }).where(eq(syncRun.id, runId));
 }
 
-async function recordStats(db: Db, runId: string, key: string, stats: SyncQueryStats): Promise<void> {
+export async function recordStats(db: Db, runId: string, key: string, stats: SyncQueryStats): Promise<void> {
   await db
     .update(syncRun)
     .set({ stats: sql`${syncRun.stats} || ${JSON.stringify({ [key]: stats })}::jsonb` })
@@ -137,7 +139,15 @@ export async function syncQuery(deps: SyncDeps, source: SyncSource, query: SyncQ
     });
   } catch (error) {
     if (error instanceof ReconnectRequiredError) throw error;
-    const stats = { fetched: 0, inserted: 0, superseded: 0, unchanged: 0, removed: 0, errorCode: errorCodeOf(error) };
+    const stats: SyncQueryStats = {
+      fetched: 0,
+      inserted: 0,
+      superseded: 0,
+      unchanged: 0,
+      removed: 0,
+      errorCode: errorCodeOf(error),
+      ...(query.optional ? { optional: true } : {}),
+    };
     console.error(`[sync] ${query.key} failed ${stats.errorCode}`);
     await recordStats(deps.db, source.runId, query.key, stats);
     return stats;
@@ -153,7 +163,9 @@ export async function syncQuery(deps: SyncDeps, source: SyncSource, query: SyncQ
     items.map((i) => i.resource.id),
     full && complete,
   );
-  const diff = diffResources(items, stored, full && complete ? { removalsIn: query.category } : {});
+  // Only a complete full pull shows what's gone, and only rows shown as records are checked.
+  const removalsIn = full && complete && query.category !== null ? query.category : undefined;
+  const diff = diffResources(items, stored, { removalsIn });
   const counts = await applyDiff(deps.db, deps.keys, { ...source, query }, diff, deps.now());
 
   // A truncated pull didn't see everything, so the cursor stays where it was.
@@ -168,7 +180,12 @@ export async function syncQuery(deps: SyncDeps, source: SyncSource, query: SyncQ
   }
   await saveCursor(deps.db, source.sourceId, query.key, patch);
 
-  const stats: SyncQueryStats = { fetched: fetched.resources.length, ...counts, ...(complete ? {} : { errorCode: "truncated" }) };
+  const stats: SyncQueryStats = {
+    fetched: fetched.resources.length,
+    ...counts,
+    ...(complete ? {} : { errorCode: "truncated" }),
+    ...(query.optional ? { optional: true } : {}),
+  };
   if (!complete) console.error(`[sync] ${query.key} truncated`);
   await recordStats(deps.db, source.runId, query.key, stats);
   return stats;
@@ -178,9 +195,11 @@ export type RunStatus = "ok" | "partial" | "failed";
 
 export function runStatusOf(stats: Record<string, SyncQueryStats>): RunStatus {
   const all = Object.values(stats);
-  const failed = all.filter((s) => s.errorCode && s.errorCode !== "truncated").length;
-  if (all.length > 0 && failed === all.length) return "failed";
-  return all.some((s) => s.errorCode) ? "partial" : "ok";
+  // Failures of optional searches (not every organization supports them) don't count.
+  const counted = all.filter((s) => !s.optional);
+  const failed = counted.filter((s) => s.errorCode && s.errorCode !== "truncated").length;
+  if (counted.length > 0 && failed === counted.length) return "failed";
+  return counted.some((s) => s.errorCode) ? "partial" : "ok";
 }
 
 export async function finishRun(db: Db, runId: string, now: Date): Promise<RunStatus> {

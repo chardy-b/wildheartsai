@@ -100,7 +100,11 @@ async function main() {
   async function importInto(sourceId: string, organizationName: string, byType: Record<string, Resource[]>) {
     const { runId } = await startRun(db, { userId: TEST_USER_ID, sourceId, trigger: "connect" }, now);
     const search: SyncDeps["search"] = async ({ path }) => ({ resources: byType[path.split("&_lastUpdated=")[0]] ?? [], truncated: false });
-    const deps: SyncDeps = { db, keys, now: () => new Date(), accessToken: async () => "seed", search };
+    // Made-up organizations have no note text to fetch; notes stay unstored, as before.
+    const read: SyncDeps["read"] = async () => {
+      throw new Error("No note text for seeded organizations");
+    };
+    const deps: SyncDeps = { db, keys, now: () => new Date(), accessToken: async () => "seed", search, read };
     const source = { runId, userId: TEST_USER_ID, sourceId, organizationName, fhirBaseUrl: "https://seed.invalid", patientId: "seed-patient" };
     await runSyncJob({ runId, userId: TEST_USER_ID, sourceId }, (_id, work) => work(), {
       db,

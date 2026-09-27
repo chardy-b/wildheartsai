@@ -11,8 +11,8 @@ const MESSAGES: Record<Exclude<NoteResult, { ok: true }>["reason"], string> = {
   unavailable: "We couldn't load this note just now. Try again in a moment.",
 };
 
-// Loads a note's text when asked. The server returns plain text only, shown as text.
-export function NoteText({ connectionId, attachmentUrl }: { connectionId: string; attachmentUrl: string }) {
+// Loads a note's text when asked (stored during sync, or read live). The server returns plain text only, shown as text.
+export function NoteText({ sourceId, attachmentUrl }: { sourceId: string; attachmentUrl: string }) {
   const [result, setResult] = useState<NoteResult | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -23,7 +23,7 @@ export function NoteText({ connectionId, attachmentUrl }: { connectionId: string
         className="btn btn-ghost"
         type="button"
         disabled={pending}
-        onClick={() => startTransition(async () => setResult(await showNoteAction(connectionId, attachmentUrl)))}
+        onClick={() => startTransition(async () => setResult(await showNoteAction(sourceId, attachmentUrl)))}
       >
         {pending ? "Loading note" : "Show note"}
       </button>
