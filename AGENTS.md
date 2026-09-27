@@ -15,6 +15,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Do not claim HIPAA compliance, Epic production approval, or clinical accuracy without documented evidence.
 - Run `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` before delivery.
 - Keep the unauthenticated `/api/health` endpoint free of secrets and dependencies.
+- **Open pull requests without asking.** When work is committed and pushed, open a PR against `main` right away, in the same turn. This is standing permission from the repo owner. Don't ask "want a PR?" or wait to be told. Merging stays with the owner.
 
 # Project map
 
