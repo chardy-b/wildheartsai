@@ -4,6 +4,7 @@ import { contentHmac, sealField, unsealField, type UserKeys } from "@/lib/crypto
 import { fhirResource, syncCursor, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import type { RecordSummary } from "@/lib/fhir/normalize";
+import { withNames } from "@/lib/fhir/references";
 import type { Resource } from "@/lib/fhir/types";
 import { effectiveDate } from "./dates";
 import { isEnteredInError, withoutMeta, type Diff, type Fetched, type Stored } from "./diff";
@@ -171,15 +172,19 @@ export function openStoredRow(
 
 const NORMALIZERS = new Map(SYNC_QUERIES.map((q) => [q.category, q.normalize]));
 
-// A stored row as the timeline shows it. A summary made by an older normalizer is recomputed
-// from the stored resource, so display fixes reach records imported before them.
+// A stored row as the timeline shows it. The summary is recomputed from the stored resource
+// when it was made by an older normalizer (so display fixes reach records imported before
+// them), or when `names` fills in a name a reference didn't carry. The resource itself is
+// returned as the health system sent it.
 export function openForDisplay(
   keys: UserKeys,
   row: Pick<typeof fhirResource.$inferSelect, "id" | "sealedResource" | "sealedSummary" | "normalizerVersion" | "category">,
+  names?: Map<string, string>,
 ): StoredRecord {
   const opened = openStoredRow(keys, row);
-  if (row.normalizerVersion >= NORMALIZER_VERSION) return opened;
+  const named = names ? withNames(opened.resource, names) : opened.resource;
+  if (row.normalizerVersion >= NORMALIZER_VERSION && named === opened.resource) return opened;
   const normalize = NORMALIZERS.get(row.category as SyncQuery["category"]);
   if (!normalize) return opened;
-  return { ...opened, summary: normalize(opened.resource as never, opened.summary.source) as RecordSummary };
+  return { ...opened, summary: normalize(named as never, opened.summary.source) as RecordSummary };
 }

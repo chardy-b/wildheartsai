@@ -3,9 +3,10 @@ import { grantsResource } from "@/lib/epic/authorize";
 import { ReconnectRequiredError } from "@/lib/epic/errors";
 import { SYNC_QUERIES } from "./plan";
 import { NOTES_STATS_KEY, syncNoteTexts } from "./notes";
+import { REFERENCES_STATS_KEY, syncReferences } from "./references";
 import { beginRun, failRun, finishRun, recordStats, syncQuery, type RunStatus, type SyncDeps, type SyncSource } from "./run";
 
-// The sync job: one step to begin, one per query, one for note text, one to finish. Each step is retried
+// The sync job: one step to begin, one per query, one for referenced resources, one for note text, one to finish. Each step is retried
 // and resumed on its own by the queue, so each loads what it needs afresh and returns
 // only small, PHI-free values (the queue stores step results).
 
@@ -64,6 +65,13 @@ export async function runSyncJob(request: SyncRequest, step: StepRunner, env: Jo
     );
     if (outcome === "stop") return "failed";
   }
+
+  // After the searches, so references in records imported in this run are included.
+  const references = await step(
+    "references",
+    work(async ({ deps, source }) => recordStats(deps.db, source.runId, REFERENCES_STATS_KEY, await syncReferences(deps, source))),
+  );
+  if (references === "stop") return "failed";
 
   // After the searches, so notes imported in this run are included.
   const notes = await step(

@@ -4,6 +4,8 @@ import { fhirResource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { CATEGORIES, categoryForSlug } from "@/lib/fhir/categories";
 import type { RecordCategory, RecordItem } from "@/lib/fhir/normalize";
+import { collectReferences, REFERENCED_TYPES, referencedName } from "@/lib/fhir/references";
+import type { Resource } from "@/lib/fhir/types";
 import type { SourceSummary } from "@/lib/sources";
 import { openForDisplay, openStoredRow } from "@/lib/sync/store";
 
@@ -133,11 +135,19 @@ export async function timelinePage(
   const last = page[page.length - 1];
   const next = rows.length > limit && last ? { at: last.effectiveAt, id: last.id } : null;
   const history = await earlierVersions(db, keys, userId, page);
+  const referenced = await referencedResources(db, keys, userId, page);
   const bySource = new Map(sources.map((s) => [s.id, s]));
   const items = page.flatMap((row): RecordItem[] => {
     const source = bySource.get(row.sourceId);
     if (!source) return [];
-    const { resource, summary } = openForDisplay(keys, row);
+    const linkedHere = referenced.get(row.sourceId);
+    const { resource, summary } = openForDisplay(keys, row, linkedHere?.names);
+    const linked = linkedHere
+      ? collectReferences(resource).flatMap((key) => {
+          const found = linkedHere.resources.get(key);
+          return found ? [{ key, resource: found }] : [];
+        })
+      : [];
     return [
       {
         ...summary,
@@ -146,6 +156,7 @@ export async function timelinePage(
         resource,
         connectionId: source.connectionId ?? "",
         history: history.get(`${row.sourceId}|${row.resourceType}|${row.fhirId}`) ?? [],
+        linked,
       },
     ];
   });
@@ -169,6 +180,52 @@ export async function allMatching(
     cursor = page.next;
   } while (cursor);
   return items;
+}
+
+// The stored resources these rows point to (see src/lib/sync/references.ts), per source, by
+// "Type/id", with the names they go by.
+async function referencedResources(
+  db: Db,
+  keys: UserKeys,
+  userId: string,
+  page: Pick<typeof fhirResource.$inferSelect, "id" | "sourceId" | "sealedResource" | "sealedSummary">[],
+): Promise<Map<string, { resources: Map<string, Resource>; names: Map<string, string> }>> {
+  const found = new Map<string, { resources: Map<string, Resource>; names: Map<string, string> }>();
+  const wanted = new Set<string>();
+  for (const row of page) for (const key of collectReferences(openStoredRow(keys, row).resource)) wanted.add(`${row.sourceId}|${key}`);
+  if (wanted.size === 0) return found;
+  const fhirIds = [...new Set([...wanted].map((w) => w.slice(w.lastIndexOf("/") + 1)))];
+  const rows = await db
+    .select({
+      id: fhirResource.id,
+      sourceId: fhirResource.sourceId,
+      resourceType: fhirResource.resourceType,
+      fhirId: fhirResource.fhirId,
+      sealedResource: fhirResource.sealedResource,
+      sealedSummary: fhirResource.sealedSummary,
+    })
+    .from(fhirResource)
+    .where(
+      and(
+        eq(fhirResource.userId, userId),
+        inArray(fhirResource.sourceId, [...new Set(page.map((r) => r.sourceId))]),
+        isNull(fhirResource.category),
+        isNull(fhirResource.supersededAt),
+        inArray(fhirResource.resourceType, [...REFERENCED_TYPES]),
+        inArray(fhirResource.fhirId, fhirIds),
+      ),
+    );
+  for (const row of rows) {
+    const key = `${row.resourceType}/${row.fhirId}`;
+    if (!wanted.has(`${row.sourceId}|${key}`)) continue;
+    const entry = found.get(row.sourceId) ?? { resources: new Map(), names: new Map() };
+    const { resource } = openStoredRow(keys, row);
+    entry.resources.set(key, resource);
+    const name = referencedName(resource);
+    if (name) entry.names.set(key, name);
+    found.set(row.sourceId, entry);
+  }
+  return found;
 }
 
 // Superseded versions of the given rows' resources, newest first, keyed source|type|id.

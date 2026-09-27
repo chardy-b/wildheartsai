@@ -2,6 +2,7 @@ import { describeResource } from "@/lib/fhir/describe";
 import { fieldTree, type FieldNode } from "@/lib/fhir/fields";
 import { formatRecordDate } from "@/lib/fhir/format";
 import { noteAttachment, notesForVisit } from "@/lib/fhir/links";
+import { referencedName } from "@/lib/fhir/references";
 import type { RecordItem } from "@/lib/fhir/normalize";
 import { NoteText } from "./NoteText";
 
@@ -59,6 +60,32 @@ export function RecordDetail({ item, related }: { item: RecordItem; related: Rec
             </div>
           ))}
         </div>
+      ) : null}
+
+      {item.linked?.length ? (
+        <details className="all-fields">
+          <summary>Linked details</summary>
+          <div className="record-linked">
+            {item.linked.map(({ key, resource }) => {
+              const sections = describeResource(resource);
+              return (
+                <div key={key}>
+                  <h4>{referencedName(resource) ?? resource.resourceType}</h4>
+                  {sections.length ? (
+                    <dl className="record-sections">
+                      {sections.map((section) => (
+                        <div key={section.label}>
+                          <dt>{section.label}</dt>
+                          <dd>{section.values.join(", ")}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </details>
       ) : null}
 
       {item.history?.length ? (

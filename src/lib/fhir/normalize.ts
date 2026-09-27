@@ -68,6 +68,8 @@ export type RecordItem = RecordSummary & {
   // Stored records only: the organization it came from, and earlier versions it replaced (newest first).
   sourceId?: string;
   history?: { replacedAt: string; resource: Resource }[];
+  // Stored records only: the medications, clinicians, organizations and locations it points to.
+  linked?: { key: string; resource: Resource }[];
 };
 
 function textOf(concept: CodeableConcept | undefined): string | null {

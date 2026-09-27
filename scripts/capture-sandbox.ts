@@ -1,6 +1,7 @@
-// Records what Epic's sandbox returns for a connected sample patient, as a test fixture
-// that `src/lib/sync/sandbox-replay.test.ts` replays through the real sync. Lets tests
-// (and agents) exercise realistic Epic data with no network or MyChart sign-in.
+// Records what Epic's sandbox returns for a connected sample patient (searches, note text and
+// the resources records point to), as a test fixture that `src/lib/sync/sandbox-replay.test.ts`
+// replays through the real sync. Lets tests (and agents) exercise realistic Epic data with no
+// network or MyChart sign-in.
 //
 //   1. npm run db:local / db:migrate, then `npm run dev`, sign in locally and connect
 //      "Epic sandbox (sample patients)" with one of Epic's published sample patients.
@@ -31,6 +32,8 @@ async function main() {
   const { accessTokenFor, tokenKey } = await import("@/lib/epic/server");
   const { fhirRead, fhirSearchBounded } = await import("@/lib/fhir/client");
   const { noteAttachment } = await import("@/lib/fhir/links");
+  const { collectReferences } = await import("@/lib/fhir/references");
+  const { grantsResource } = await import("@/lib/epic/authorize");
   const { SYNC_MAX_PAGES, SYNC_MAX_RESOURCES, SYNC_QUERIES } = await import("@/lib/sync/plan");
   const { FIXTURE_DIR } = await import("@/test/epic-replay");
   type SandboxFixture = import("@/test/epic-replay").SandboxFixture;
@@ -122,6 +125,24 @@ async function main() {
     }
   }
   console.log(`${"note text".padEnd(34)} ${Object.keys(fixture.reads).length}`);
+
+  // What the records point to (clinicians, places, organizations, medications), as the sync fetches them.
+  const references = new Set<string>();
+  for (const result of Object.values(fixture.searches)) {
+    if ("error" in result) continue;
+    for (const resource of result.resources) for (const key of collectReferences(resource)) references.add(key);
+  }
+  let referenced = 0;
+  for (const key of references) {
+    if (!grantsResource(connection.scope, key.split("/")[0])) continue;
+    try {
+      fixture.reads[key] = await fhirRead({ baseUrl: connection.fhirBaseUrl, path: key, accessToken });
+    } catch (error) {
+      fixture.reads[key] = recordError(error);
+    }
+    referenced++;
+  }
+  console.log(`${"referenced resources".padEnd(34)} ${referenced} of ${references.size}${referenced < references.size ? " (the rest weren't granted)" : ""}`);
 
   const file = path.join(FIXTURE_DIR, `${name}.json`);
   writeFileSync(file, `${JSON.stringify(fixture, null, 2)}\n`);

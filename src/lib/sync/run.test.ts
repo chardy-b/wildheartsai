@@ -113,9 +113,9 @@ function deps(overrides: Partial<SyncDeps> = {}): SyncDeps {
   return { db, keys, now: () => clock, accessToken: async () => "token", search: server.search, read: server.read, ...overrides };
 }
 
-async function sync(overrides: Partial<SyncDeps> = {}, queries = QUERIES) {
+async function sync(overrides: Partial<SyncDeps> = {}, queries = QUERIES, scope = ALL_SCOPES) {
   const { runId } = await startRun(db, { userId, sourceId, trigger: "manual" }, clock);
-  const source: SyncSource = { runId, userId, sourceId, organizationName: "Example Health", fhirBaseUrl: "https://fhir.example.org/R4", patientId: "p1", scope: ALL_SCOPES };
+  const source: SyncSource = { runId, userId, sourceId, organizationName: "Example Health", fhirBaseUrl: "https://fhir.example.org/R4", patientId: "p1", scope };
   const status = await runSyncJob(
     { runId, userId, sourceId },
     (_id, work) => work(),
@@ -326,6 +326,70 @@ describe("note text", () => {
     await sync({}, withNotes);
     expect(await storedNoteText(db, keys, userId, sourceId, "Binary/b1")).toBeNull();
     expect(await storedNoteText(db, keys, userId, sourceId, "Binary/other")).toBeUndefined();
+  });
+});
+
+describe("referenced resources", () => {
+  const performer = (reference: string, display?: string) => ({ performer: [{ reference, ...(display ? { display } : {}) }] });
+  const clinician = { resourceType: "Practitioner", id: "pr-1", name: [{ text: "Dr. Ada Park" }] } as Resource;
+  const clinic = { resourceType: "Organization", id: "org-1", name: "Lakeside Clinic" } as Resource;
+  const referenced = async () =>
+    (await current()).filter((r) => r.category === null).map((r) => `${r.resourceType}/${r.fhirId}`).sort();
+
+  it("stores each clinician and organization a record points to once, without a category", async () => {
+    server.set(LAB, [lab("a", 5.4, undefined, performer("Practitioner/pr-1")), lab("b", 6.1, undefined, performer("https://fhir.example.org/R4/Practitioner/pr-1"))]);
+    server.set(CONDITION, [{ resourceType: "Condition", id: "c1", code: { text: "Asthma" }, asserter: { reference: "Organization/org-1" } } as Resource]);
+    server.binary("Practitioner/pr-1", clinician);
+    server.binary("Organization/org-1", clinic);
+    const { status, run } = await sync();
+
+    expect(status).toBe("ok");
+    expect(await referenced()).toEqual(["Organization/org-1", "Practitioner/pr-1"]);
+    expect(server.reads.sort()).toEqual(["Organization/org-1", "Practitioner/pr-1"]);
+    expect(run.stats["Reference:linked"]).toMatchObject({ fetched: 2, inserted: 2, optional: true });
+    expect(JSON.stringify(run.stats)).not.toMatch(/pr-1|Ada/);
+
+    later(1);
+    server.reads.length = 0;
+    await sync();
+    expect(server.reads).toEqual([]);
+  });
+
+  it("fetches references in records added later, and retries failed ones only on the weekly full pass", async () => {
+    server.set(LAB, [lab("a", 5.4, undefined, performer("Practitioner/gone"))]);
+    const first = await sync();
+    expect(first.status).toBe("ok");
+    expect(first.run.stats["Reference:linked"]).toMatchObject({ inserted: 0, errorCode: "references_failed" });
+
+    later(1);
+    server.reads.length = 0;
+    server.set(LAB, [lab("a", 5.4, undefined, performer("Practitioner/gone")), lab("b", 6.1, "2026-09-26T12:30:00Z", performer("Practitioner/pr-1"))]);
+    server.binary("Practitioner/pr-1", clinician);
+    await sync();
+    expect(server.reads).toEqual(["Practitioner/pr-1"]);
+
+    later(24 * 7);
+    server.reads.length = 0;
+    await sync();
+    expect(server.reads).toEqual(["Practitioner/gone"]);
+  });
+
+  it("skips types the connection wasn't granted, and anything that isn't what was asked for", async () => {
+    server.set(LAB, [lab("a", 5.4, undefined, { ...performer("Practitioner/pr-1"), specimen: { reference: "Location/loc-1" }, subject: { reference: "Patient/p1" } })]);
+    server.binary("Practitioner/pr-1", clinician);
+    server.binary("Location/loc-1", { resourceType: "Location", id: "someone-else", name: "Wrong place" } as Resource);
+    await sync({}, QUERIES, "openid patient/Observation.rs patient/Location.rs");
+    expect(server.reads).toEqual(["Location/loc-1"]);
+    expect(await referenced()).toEqual([]);
+  });
+
+  it("marks the source for reconnecting when access is refused while fetching them", async () => {
+    server.set(LAB, [lab("a", 5.4, undefined, performer("Practitioner/pr-1"))]);
+    server.binary("Practitioner/pr-1", new ReconnectRequiredError());
+    const { status } = await sync();
+    expect(status).toBe("failed");
+    const [source] = await db.select().from(healthSource).where(eq(healthSource.id, sourceId));
+    expect(source.status).toBe("reconnect_required");
   });
 });
 
