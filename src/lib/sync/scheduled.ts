@@ -1,8 +1,9 @@
-import { and, asc, eq, isNull, lt, notExists, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lt, notExists, or, sql } from "drizzle-orm";
 import { healthSource, syncRun } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import type { SyncRequest } from "./job";
 import { requestSync } from "./request";
+import { STALE_RUN_MS } from "./run";
 
 // The nightly background refresh: every connected organization not synced in the last
 // day gets a scheduled sync. Sources needing a reconnect or disconnected are skipped;
@@ -16,10 +17,17 @@ export const SCHEDULED_BATCH = 2000;
 export type DueSource = { userId: string; sourceId: string };
 
 export async function sourcesDueForRefresh(db: Db, now: Date, limit = SCHEDULED_BATCH): Promise<DueSource[]> {
+  // A run older than STALE_RUN_MS was lost; it doesn't block, and startRun fails it when this queues.
   const active = db
     .select({ one: sql`1` })
     .from(syncRun)
-    .where(and(eq(syncRun.sourceId, healthSource.id), sql`${syncRun.status} in ('queued', 'running')`));
+    .where(
+      and(
+        eq(syncRun.sourceId, healthSource.id),
+        sql`${syncRun.status} in ('queued', 'running')`,
+        gte(sql`coalesce(${syncRun.startedAt}, ${syncRun.queuedAt})`, new Date(now.getTime() - STALE_RUN_MS)),
+      ),
+    );
   return db
     .select({ userId: healthSource.userId, sourceId: healthSource.id })
     .from(healthSource)

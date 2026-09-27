@@ -5,7 +5,7 @@ import { healthSource, syncRun } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { saveConnection } from "@/lib/epic/connections";
 import { createTestDb, createTestUser } from "@/test/db";
-import { startRun } from "./run";
+import { STALE_RUN_MS, startRun } from "./run";
 import { queueScheduledRefreshes, REFRESH_AFTER_MS, sourcesDueForRefresh } from "./scheduled";
 
 const key = randomBytes(32);
@@ -51,6 +51,15 @@ describe("sourcesDueForRefresh", () => {
     const busy = await source({ lastSyncedAt: hoursAgo(30) });
     await startRun(db, { userId, sourceId: busy, trigger: "manual" }, now);
     expect(await sourcesDueForRefresh(db, now)).toEqual([]);
+  });
+
+  it("picks a source whose queued run was lost, so the nightly refresh replaces it", async () => {
+    const lost = await source({ lastSyncedAt: hoursAgo(30) });
+    await startRun(db, { userId, sourceId: lost, trigger: "manual" }, new Date(now.getTime() - STALE_RUN_MS - 60_000));
+    expect((await sourcesDueForRefresh(db, now)).map((s) => s.sourceId)).toEqual([lost]);
+
+    const counts = await queueScheduledRefreshes(db, [{ userId, sourceId: lost }], vi.fn(async () => {}), now);
+    expect(counts.queued).toBe(1);
   });
 
   it("returns IDs only, and at most the batch size", async () => {
