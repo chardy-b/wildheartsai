@@ -35,12 +35,12 @@ export const loadSyncJob: JobEnv["load"] = async ({ runId, userId, sourceId }) =
   };
 };
 
-async function send(request: SyncRequest): Promise<void> {
+export async function sendSyncRequest(request: SyncRequest): Promise<void> {
   await inngest.send(syncRequested.create(request));
 }
 
 export function requestSyncFor(userId: string, sourceId: string, trigger: SyncTrigger): Promise<RequestOutcome> {
-  return requestSync(db, { userId, sourceId, trigger }, send, new Date());
+  return requestSync(db, { userId, sourceId, trigger }, sendSyncRequest, new Date());
 }
 
 // Queues a first sync for connected sources that never had one (for example, those

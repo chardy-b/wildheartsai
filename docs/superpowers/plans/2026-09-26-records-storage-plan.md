@@ -172,3 +172,15 @@ The engine is plain functions with the database, keys, clock, token and FHIR sea
 - [x] Visit notes match on organization as well as connection, so two disconnected organizations' notes can't mix.
 - [x] Fixed a phone-width overflow in the app header (it predates this work): the brand and links now wrap onto two lines under 700px. Checked no horizontal scroll at 320, 390, 768 and 1100px on the dashboard, a category page and connections.
 - [x] Checked in a local production build: 114 records across two organizations page as 100 + 14, the organization filter narrows to 3, and an amended lab shows its new value with the earlier one kept.
+
+---
+
+## Stage 6: background refresh
+
+- [x] `src/lib/sync/scheduled.ts`: `sourcesDueForRefresh()` selects connected sources not synced in 20 hours (or never) with no active run, oldest first, capped at 2,000 per night and returning IDs only. `queueScheduledRefreshes()` queues `scheduled` runs through `requestSync`, which has no cooldown for scheduled runs. One failure doesn't stop the rest, and a run whose event can't be sent is closed.
+- [x] Inngest `refresh-sources` cron at 10:17 UTC (3:17am Pacific) runs one step to find due sources, then queues them in steps of 100. Step results hold IDs and counts only.
+- [x] `sync-source` gains a function-wide limit of 10 concurrent steps, alongside one run per source, so the nightly fan-out doesn't flood Epic.
+- [x] Sources that need reconnecting or are disconnected are never scheduled. A refused token during a scheduled run marks the source `reconnect_required` (stage 2), which stops future nightly runs until the person reconnects.
+- [x] Privacy notice: "once a day in the background while a health system is connected". The acknowledgement text doesn't mention refresh timing, so `CONSENT_VERSION` is unchanged.
+- [x] Verified the build registers 3 Inngest functions (sync, its failure handler, nightly refresh).
+- [ ] After merge: in Inngest → Functions, check `refresh-sources` shows its next scheduled run, and that the first night's run reports `queued` counts.

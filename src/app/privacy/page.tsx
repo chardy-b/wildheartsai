@@ -35,7 +35,7 @@ export default function PrivacyPage() {
           </h1>
           <p className="max-w-[62ch] text-xl text-text-2">
             Wild Hearts Health gathers the records you choose from your health systems so you can see them in one
-            place. This notice explains what that involves. Last updated September 26, 2026.
+            place. This notice explains what that involves. Last updated September 27, 2026.
           </p>
         </header>
 
@@ -69,7 +69,7 @@ export default function PrivacyPage() {
           <p>
             When you connect a health system, we import the records it shares and keep a copy in our database, so
             your dashboard loads quickly and shows your full history. We check for new and changed records when you
-            press Refresh. When a record changes, we keep the earlier
+            press Refresh, and once a day in the background while a health system is connected. When a record changes, we keep the earlier
             version too, marked as replaced. We don&apos;t write your records to our logs.
           </p>
           <p>
