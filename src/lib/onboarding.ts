@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Profile } from "./profile";
 
 // Bump this whenever ACKNOWLEDGEMENTS change; everyone re-acknowledges on their next visit.
-export const CONSENT_VERSION = "2026-09-notes-and-details";
+export const CONSENT_VERSION = "2026-09-stored-records";
 
 type Acknowledgement = { id: string; text: string; link?: { href: string; label: string } };
 
