@@ -46,6 +46,11 @@ describe("parseEnv", () => {
     );
   });
 
+  it("asks for the stage 8 scopes only when switched on", () => {
+    expect(parseEnv(valid).EPIC_EXPANDED_SCOPES).toBe(false);
+    expect(parseEnv({ ...valid, EPIC_EXPANDED_SCOPES: "true" }).EPIC_EXPANDED_SCOPES).toBe(true);
+  });
+
   it("treats blank values, as copied from .env.example, as unset", () => {
     const env = parseEnv({ ...valid, SMTP_PASS: "", EPIC_RETIRING_PUBLIC_JWK: "" });
     expect(env.SMTP_PASS).toBeUndefined();

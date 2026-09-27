@@ -1,3 +1,4 @@
+import { requestedScopes } from "@/lib/epic/authorize";
 import { randomBytes } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +13,9 @@ import { runSyncJob } from "./job";
 import { storedNoteText } from "./notes";
 import { startRun, type SyncDeps, type SyncSource } from "./run";
 import { openStoredRow } from "./store";
+
+// Every scope the app can ask for, as a fully granted connection would have.
+const ALL_SCOPES = requestedScopes(true).join(" ");
 
 const QUERIES = SYNC_QUERIES.filter((q) => ["Observation:lab", "Observation:vital", "Condition:condition"].includes(q.key));
 const kek = randomBytes(32);
@@ -111,7 +115,7 @@ function deps(overrides: Partial<SyncDeps> = {}): SyncDeps {
 
 async function sync(overrides: Partial<SyncDeps> = {}, queries = QUERIES) {
   const { runId } = await startRun(db, { userId, sourceId, trigger: "manual" }, clock);
-  const source: SyncSource = { runId, userId, sourceId, organizationName: "Example Health", fhirBaseUrl: "https://fhir.example.org/R4", patientId: "p1" };
+  const source: SyncSource = { runId, userId, sourceId, organizationName: "Example Health", fhirBaseUrl: "https://fhir.example.org/R4", patientId: "p1", scope: ALL_SCOPES };
   const status = await runSyncJob(
     { runId, userId, sourceId },
     (_id, work) => work(),
@@ -322,6 +326,25 @@ describe("note text", () => {
     await sync({}, withNotes);
     expect(await storedNoteText(db, keys, userId, sourceId, "Binary/b1")).toBeNull();
     expect(await storedNoteText(db, keys, userId, sourceId, "Binary/other")).toBeUndefined();
+  });
+});
+
+describe("scopes", () => {
+  it("skips a search the connection wasn't granted, without calling Epic or counting it against the run", async () => {
+    const appointments = SYNC_QUERIES.filter((q) => ["Observation:lab", "Appointment:appointment"].includes(q.key));
+    server.set(LAB, [lab("a", 5.4)]);
+    const { runId } = await startRun(db, { userId, sourceId, trigger: "manual" }, clock);
+    const source: SyncSource = {
+      runId, userId, sourceId, organizationName: "Example Health", fhirBaseUrl: "https://fhir.example.org/R4", patientId: "p1",
+      // Connected before the stage 8 scopes: no Appointment scope.
+      scope: "openid patient/Observation.rs",
+    };
+    const status = await runSyncJob({ runId, userId, sourceId }, (_id, work) => work(), { db, now: () => clock, load: async () => ({ deps: deps(), source }) }, appointments);
+    expect(status).toBe("ok");
+    expect(server.calls.some((c) => c.startsWith("Appointment"))).toBe(false);
+    const [run] = await db.select().from(syncRun).where(eq(syncRun.id, runId));
+    expect(run.stats["Appointment:appointment"]).toMatchObject({ errorCode: "not_granted", optional: true });
+    expect(run.stats["Binary:note"]).toMatchObject({ errorCode: "not_granted" });
   });
 });
 

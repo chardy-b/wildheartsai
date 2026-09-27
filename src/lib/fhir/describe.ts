@@ -228,6 +228,26 @@ const FIELDS: Record<string, Field[]> = {
   ],
   Device: [f("Device", ["deviceName.name", "type"]), f("Manufacturer", "manufacturer"), f("Model", "modelNumber"), f("Device ID", "udiCarrier.deviceIdentifier"), status],
   Coverage: [f("Payer", "payor"), f("Plan type", "type"), f("Relationship", "relationship"), f("Period", "period"), status],
+  Appointment: [
+    f("Type", ["serviceType", "appointmentType"]),
+    f("Description", "description"),
+    f("Starts", "start", { date: true }),
+    f("Ends", "end", { date: true }),
+    f("With", "participant.actor"),
+    f("Reason", ["reasonCode", "reasonReference"]),
+    f("Instructions", "patientInstruction"),
+    f("Comment", "comment"),
+    status,
+  ],
+  FamilyMemberHistory: [
+    f("Relative", ["relationship", "name"]),
+    f("Conditions", "condition.code"),
+    f("Onset", ["condition.onsetAge", "condition.onsetString"]),
+    f("Deceased", ["deceasedBoolean", "deceasedAge", "deceasedString"]),
+    f("Recorded", "date", { date: true }),
+    f("Note", "note.text"),
+    status,
+  ],
 };
 
 // The readable part of a record's expanded view. "All fields" shows the rest.

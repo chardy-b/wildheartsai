@@ -1,3 +1,4 @@
+import { requestedScopes } from "@/lib/epic/authorize";
 import { randomBytes } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +16,9 @@ import { runSyncJob } from "./job";
 import { storedNoteText } from "./notes";
 import { startRun, type SyncDeps } from "./run";
 
+// Every scope the app can ask for, as a fully granted connection would have.
+const ALL_SCOPES = requestedScopes(true).join(" ");
+
 // The real sync, end to end, over recorded Epic sandbox data (src/test/fixtures/epic-sandbox).
 // Record fresh data with `npm run qa:capture`; see AGENTS.md.
 
@@ -29,7 +33,7 @@ let clock: Date;
 async function sync(fixture: SandboxFixture, replay: ReturnType<typeof replayEpic>) {
   const { runId } = await startRun(db, { userId, sourceId, trigger: "manual" }, clock);
   const deps: SyncDeps = { db, keys, now: () => clock, accessToken: async () => "token", search: replay.search, read: replay.read };
-  const source = { runId, userId, sourceId, organizationName: "Epic sandbox", fhirBaseUrl: fixture.fhirBaseUrl, patientId: fixture.patientId };
+  const source = { runId, userId, sourceId, organizationName: "Epic sandbox", fhirBaseUrl: fixture.fhirBaseUrl, patientId: fixture.patientId, scope: ALL_SCOPES };
   const status = await runSyncJob({ runId, userId, sourceId }, (_id, work) => work(), { db, now: () => clock, load: async () => ({ deps, source }) });
   const [run] = await db.select().from(syncRun).where(eq(syncRun.id, runId));
   return { status, run };

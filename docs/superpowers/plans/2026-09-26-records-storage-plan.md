@@ -196,3 +196,19 @@ The engine is plain functions with the database, keys, clock, token and FHIR sea
 - [x] Copy: the privacy notice says note text and name and birth date are stored, and lists the new categories. Scope labels mention visit diagnoses, health concerns and assessments. `CONSENT_VERSION` left unchanged: there are no real users yet. Bump it before launch whenever what we collect changes, as the notice promises.
 - [x] `package-lock.json` resynced: `@emnapi/core` and `@emnapi/runtime` were missing, which made `npm ci` fail.
 - [ ] On the sandbox: see which of the new searches Epic answers (`sync_run.stats`), and that notes show text without a live fetch.
+
+---
+
+## Stage 8a: new scopes, appointments and family history
+
+- [x] `EXPANDED_SCOPES` (Appointment, FamilyMemberHistory, Medication, Practitioner, PractitionerRole, Organization, Location) are requested only with `EPIC_EXPANDED_SCOPES=true`, because a scope the Epic app registration doesn't allow could fail every sign-in. All seven are requested together, so one reconnect covers 8b too. `scopeLabels()` lists them on the connections page when on.
+- [x] New record types **Appointments** (`Appointment?patient&service-category=appointment`) and **Family history** (`FamilyMemberHistory?patient`): normalizers, detail sections, category pages. Both are optional until confirmed against Epic.
+- [x] Scope-aware sync: `SyncSource.scope` carries what the connection was granted. A search (or the notes step) the connection has no scope for is skipped without calling Epic and recorded as `not_granted` (optional). `grantsResource()` accepts SMART v1 and v2 names and wildcards.
+- [x] Connections page: a connected organization missing any requested scope shows "Reconnect to add appointments, family history and more detail on your records", and Reconnect becomes the primary button.
+- [x] Timeline: future-dated records (upcoming appointments) sit in an **Upcoming** group at the top, soonest first.
+- [x] Privacy notice lists appointments, family history, and the details records point to.
+- [ ] To turn on: enable the seven APIs in the Epic app registration (sandbox first), set `EPIC_EXPANDED_SCOPES=true` in Vercel, reconnect the sandbox, re-run `npm run qa:capture` to record the new searches.
+
+## Stage 8b (next): referenced resources
+
+Fetch the Medication, Practitioner, PractitionerRole, Organization and Location resources that stored records point to (by reference, once each), store them without a category, and use them to show names where records only carry a reference.

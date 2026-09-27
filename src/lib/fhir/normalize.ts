@@ -1,5 +1,6 @@
 import type {
   AllergyIntolerance,
+  Appointment,
   CarePlan,
   CareTeam,
   CodeableConcept,
@@ -9,6 +10,7 @@ import type {
   DiagnosticReport,
   DocumentReference,
   Encounter,
+  FamilyMemberHistory,
   Goal,
   Immunization,
   MedicationDispense,
@@ -43,7 +45,9 @@ export type RecordCategory =
   | "coverage"
   | "diagnosis"
   | "concern"
-  | "assessment";
+  | "assessment"
+  | "appointment"
+  | "familyHistory";
 
 // One row as shown in a list. Normalizers produce this from a FHIR resource.
 export type RecordSummary = {
@@ -252,6 +256,38 @@ export function normalizeAssessment(r: Observation, source: string): RecordSumma
     date: r.effectiveDateTime ?? r.issued ?? null,
     detail: observationValue(r),
     status: null,
+  });
+}
+
+// A visit booked, past or upcoming. Where it takes place and with whom come from its participants.
+export function normalizeAppointment(r: Appointment, source: string): RecordSummary {
+  const where = (r.participant ?? []).map((p) => p.actor?.reference?.startsWith("Location/") ? p.actor.display : undefined).find(Boolean);
+  const who = (r.participant ?? []).map((p) => p.actor?.reference?.startsWith("Practitioner/") ? p.actor.display : undefined).find(Boolean);
+  return item(r, source, {
+    category: "appointment",
+    title: textOf(r.serviceType?.[0]) ?? textOf(r.appointmentType) ?? r.description?.trim() ?? "Appointment",
+    date: r.start ?? null,
+    detail: [who && `With ${who}`, where && `At ${where}`].filter(Boolean).join(" · ") || null,
+    status: r.status ?? null,
+  });
+}
+
+// "Mother: Breast cancer (age 45)": a relative and what they had.
+export function normalizeFamilyHistory(r: FamilyMemberHistory, source: string): RecordSummary {
+  const relative = textOf(r.relationship) ?? r.name ?? "Relative";
+  const conditions = (r.condition ?? [])
+    .map((c) => {
+      const name = textOf(c.code);
+      const age = c.onsetAge?.value !== undefined ? ` (age ${c.onsetAge.value})` : c.onsetString ? ` (${c.onsetString})` : "";
+      return name ? `${name}${age}` : null;
+    })
+    .filter(Boolean);
+  return item(r, source, {
+    category: "familyHistory",
+    title: conditions.length ? `${relative}: ${conditions.join(", ")}` : relative,
+    date: r.date ?? null,
+    detail: null,
+    status: r.status === "completed" ? null : (r.status ?? null),
   });
 }
 

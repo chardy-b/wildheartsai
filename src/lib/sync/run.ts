@@ -29,6 +29,8 @@ export type SyncSource = {
   organizationName: string;
   fhirBaseUrl: string;
   patientId: string;
+  // What the connection was granted (space-separated). Searches it doesn't cover are skipped.
+  scope: string;
 };
 
 export type SyncDeps = {

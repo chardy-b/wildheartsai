@@ -33,6 +33,7 @@ async function main() {
   const { env } = await import("@/lib/env");
   const { CONSENT_VERSION } = await import("@/lib/onboarding");
   const { runSyncJob } = await import("@/lib/sync/job");
+  const { requestedScopes } = await import("@/lib/epic/authorize");
   const { startRun } = await import("@/lib/sync/run");
   type Db = import("@/lib/db/types").Db;
   type Resource = import("@/lib/fhir/types").Resource;
@@ -105,7 +106,7 @@ async function main() {
       throw new Error("No note text for seeded organizations");
     };
     const deps: SyncDeps = { db, keys, now: () => new Date(), accessToken: async () => "seed", search, read };
-    const source = { runId, userId: TEST_USER_ID, sourceId, organizationName, fhirBaseUrl: "https://seed.invalid", patientId: "seed-patient" };
+    const source = { runId, userId: TEST_USER_ID, sourceId, organizationName, fhirBaseUrl: "https://seed.invalid", patientId: "seed-patient", scope: requestedScopes(true).join(" ") };
     await runSyncJob({ runId, userId: TEST_USER_ID, sourceId }, (_id, work) => work(), {
       db,
       now: () => new Date(),

@@ -1,11 +1,13 @@
 import {
   normalizeAllergy,
+  normalizeAppointment,
   normalizeCarePlan,
   normalizeCareTeam,
   normalizeAssessment,
   normalizeCondition,
   normalizeConcern,
   normalizeDiagnosis,
+  normalizeFamilyHistory,
   normalizeCoverage,
   normalizeDevice,
   normalizeFill,
@@ -62,6 +64,9 @@ export const RECORD_QUERIES: Query[] = [
   { category: "fill", resourceType: "MedicationDispense", path: (p) => `MedicationDispense?${patient(p)}`, normalize: normalizeFill },
   { category: "device", resourceType: "Device", path: (p) => `Device?${patient(p)}`, normalize: normalizeDevice },
   { category: "coverage", resourceType: "Coverage", path: (p) => `Coverage?${patient(p)}`, normalize: normalizeCoverage },
+  // Stage 8: need EPIC_EXPANDED_SCOPES; skipped for connections without the scope.
+  { category: "appointment", resourceType: "Appointment", path: (p) => `Appointment?${patient(p)}&service-category=appointment`, normalize: normalizeAppointment, optional: true },
+  { category: "familyHistory", resourceType: "FamilyMemberHistory", path: (p) => `FamilyMemberHistory?${patient(p)}`, normalize: normalizeFamilyHistory, optional: true },
 ];
 
 // Something the person should know about one of their sources, shown above their records.

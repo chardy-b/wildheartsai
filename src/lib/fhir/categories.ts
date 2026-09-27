@@ -12,6 +12,7 @@ export const CATEGORIES: { category: RecordCategory; label: string; slug: string
   { category: "vital", label: "Vitals", slug: "vitals" },
   { category: "assessment", label: "Assessments", slug: "assessments" },
   { category: "immunization", label: "Immunizations", slug: "immunizations" },
+  { category: "appointment", label: "Appointments", slug: "appointments" },
   { category: "visit", label: "Visits", slug: "visits" },
   { category: "note", label: "Notes", slug: "notes" },
   { category: "procedure", label: "Procedures", slug: "procedures" },
@@ -21,6 +22,7 @@ export const CATEGORIES: { category: RecordCategory; label: string; slug: string
   { category: "carePlan", label: "Care plans", slug: "care-plans" },
   { category: "goal", label: "Goals", slug: "goals" },
   { category: "social", label: "Social history", slug: "social-history" },
+  { category: "familyHistory", label: "Family history", slug: "family-history" },
   { category: "device", label: "Devices", slug: "devices" },
   { category: "coverage", label: "Insurance", slug: "insurance" },
 ];
