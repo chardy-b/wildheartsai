@@ -148,6 +148,25 @@ export async function timelinePage(
   return { items, next };
 }
 
+// Every record matching the filters, across all pages, for export.
+export async function allMatching(
+  db: Db,
+  keys: UserKeys,
+  userId: string,
+  sources: SourceSummary[],
+  filters: TimelineFilters,
+  pageSize = 500,
+): Promise<RecordItem[]> {
+  const items: RecordItem[] = [];
+  let cursor: TimelineCursor | null = null;
+  do {
+    const page: TimelinePage = await timelinePage(db, keys, userId, sources, filters, cursor, pageSize);
+    items.push(...page.items);
+    cursor = page.next;
+  } while (cursor);
+  return items;
+}
+
 // Superseded versions of the given rows' resources, newest first, keyed source|type|id.
 async function earlierVersions(
   db: Db,

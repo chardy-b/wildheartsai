@@ -7,12 +7,14 @@ import type { Db } from "@/lib/db/types";
 import { deleteConnection, saveConnection } from "@/lib/epic/connections";
 import type { Resource } from "@/lib/fhir/types";
 import { createTestDb, createTestUser } from "@/test/db";
+import { exportBundle, exportFilename } from "./export";
 import { sourceProblems } from "./source-display";
 import { deleteSource, listSources, needingFirstSync, type SourceSummary } from "./sources";
 import { runSyncJob } from "./sync/job";
 import { SYNC_QUERIES } from "./sync/plan";
 import { STALE_RUN_MS, startRun, type SyncDeps } from "./sync/run";
 import {
+  allMatching,
   countsFor,
   encodeCursor,
   filterQuery,
@@ -246,6 +248,25 @@ describe("timeline filters and paging", () => {
     expect(items).toHaveLength(1);
     expect(items[0].history).toEqual([{ replacedAt: expect.any(String), resource: expect.objectContaining({ id: "n1" }) }]);
     expect((items[0].resource as { valueQuantity?: { value: number } }).valueQuantity?.value).toBe(6.1);
+  });
+
+  it("exports every record the filters select, across pages, as a FHIR Bundle", async () => {
+    const { north, sources } = await twoSources();
+    const labs = await allMatching(db, keys, userId, sources, { ...ALL, categories: ["lab"] }, 2);
+    expect(labs.map((i) => i.title)).toEqual(["Lipid panel", "TSH", "A1c", "Ferritin"]);
+
+    const northOnly = await allMatching(db, keys, userId, sources, { ...ALL, sourceIds: [north], from: "2024-01-01" }, 1);
+    const bundle = exportBundle(northOnly, sources, now);
+    expect(bundle).toMatchObject({ resourceType: "Bundle", type: "collection", timestamp: now.toISOString(), total: 2 });
+    expect(bundle.entry).toEqual([
+      { fullUrl: "https://north.example/R4/Observation/n2", resource: expect.objectContaining({ id: "n2", code: { text: "TSH" } }) },
+      { fullUrl: "https://north.example/R4/Observation/n1", resource: expect.objectContaining({ id: "n1" }) },
+    ]);
+  });
+
+  it("names the export by date, and says when it was filtered", () => {
+    expect(exportFilename(ALL, now)).toBe("wild-hearts-records-2026-09-26.json");
+    expect(exportFilename({ ...ALL, categories: ["lab"] }, now)).toBe("wild-hearts-records-filtered-2026-09-26.json");
   });
 
   it("counts records per type for the chosen health systems, and colors each system", async () => {

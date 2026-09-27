@@ -12,7 +12,7 @@ import { sourceProblems } from "@/lib/source-display";
 import { readNote, type NoteResult } from "@/lib/records-notes";
 import { listSources, type SourceSummary } from "@/lib/sources";
 import { startFirstSyncs } from "@/lib/sync/server";
-import { allNotes, timelinePage, type TimelineCursor, type TimelineFilters } from "@/lib/timeline";
+import { allMatching, allNotes, timelinePage, type TimelineCursor, type TimelineFilters } from "@/lib/timeline";
 
 export const loadSourcesFor = cache((userId: string): Promise<SourceSummary[]> => listSources(db, userId));
 
@@ -41,4 +41,11 @@ export async function loadTimelineFor(userId: string, filters: TimelineFilters, 
 export async function loadNoteFor(userId: string, connectionId: string, attachmentUrl: string): Promise<NoteResult> {
   const connections = await getConnectionSecrets(db, tokenKey(), userId);
   return readNote({ connections, connectionId, attachmentUrl }, { accessToken: accessTokenFor, read: (input) => fhirRead(input) });
+}
+
+// Every stored record the filters select, for the signed-in person to download.
+export async function loadExportFor(userId: string, filters: TimelineFilters): Promise<{ sources: SourceSummary[]; items: RecordItem[] }> {
+  const sources = await loadSourcesFor(userId);
+  const keys = await userKeysFor(db, recordsKey(), userId, new Date());
+  return { sources, items: await allMatching(db, keys, userId, sources, filters) };
 }
