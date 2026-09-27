@@ -174,3 +174,23 @@ export type Patient = Resource & {
   birthDate?: string;
   gender?: string;
 };
+
+export type Appointment = Resource & {
+  resourceType: "Appointment";
+  status?: string;
+  serviceType?: CodeableConcept[];
+  appointmentType?: CodeableConcept;
+  description?: string;
+  start?: string;
+  end?: string;
+  participant?: { actor?: Reference }[];
+};
+
+export type FamilyMemberHistory = Resource & {
+  resourceType: "FamilyMemberHistory";
+  status?: string;
+  date?: string;
+  name?: string;
+  relationship?: CodeableConcept;
+  condition?: { code?: CodeableConcept; onsetAge?: Quantity; onsetString?: string }[];
+};

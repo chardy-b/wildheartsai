@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RECORD_QUERIES } from "@/lib/records";
-import { buildAuthorizeUrl, EPIC_SCOPES, SCOPE_LABELS } from "./authorize";
+import { buildAuthorizeUrl, EPIC_SCOPES, EXPANDED_SCOPES, grantsResource, missingScopes, requestedScopes, SCOPE_LABELS, scopeLabels } from "./authorize";
 
 describe("buildAuthorizeUrl", () => {
   it("builds a SMART standalone launch request with PKCE and aud", () => {
@@ -43,9 +43,36 @@ describe("buildAuthorizeUrl", () => {
 
 describe("EPIC_SCOPES and the record queries", () => {
   it("requests a read-and-search scope for every resource type the dashboard reads, plus Binary for note text", () => {
-    const requested = new Set(EPIC_SCOPES.filter((s) => s.startsWith("patient/")).map((s) => s.slice("patient/".length, -".rs".length)));
+    // With the stage 8 scopes on; without them, those searches are skipped (see grantsResource).
+    const requested = new Set(requestedScopes(true).filter((s) => s.startsWith("patient/")).map((s) => s.slice("patient/".length, -".rs".length)));
     for (const query of RECORD_QUERIES) expect(requested).toContain(query.resourceType);
     expect(requested).toContain("Binary");
     expect(requested).toContain("Patient");
+  });
+});
+
+describe("expanded scopes", () => {
+  it("adds the stage 8 scopes only when switched on, each with a label", () => {
+    expect(requestedScopes(false)).toEqual(EPIC_SCOPES);
+    expect(requestedScopes(true)).toEqual([...EPIC_SCOPES, ...EXPANDED_SCOPES]);
+    expect(scopeLabels(false).map((l) => l.scope)).not.toContain("patient/Appointment.rs");
+    expect(scopeLabels(true).map((l) => l.scope)).toEqual(expect.arrayContaining([...EXPANDED_SCOPES]));
+    const labelled = SCOPE_LABELS.map((item) => item.scope);
+    for (const scope of EXPANDED_SCOPES) expect(labelled).toContain(scope);
+  });
+
+  it("reads granted scopes in SMART v1 or v2 form, and wildcards", () => {
+    expect(grantsResource("openid patient/Appointment.rs", "Appointment")).toBe(true);
+    expect(grantsResource("patient/Appointment.read", "Appointment")).toBe(true);
+    expect(grantsResource("patient/*.read", "FamilyMemberHistory")).toBe(true);
+    expect(grantsResource("patient/Condition.rs", "Appointment")).toBe(false);
+    expect(grantsResource("user/Appointment.rs", "Appointment")).toBe(false);
+  });
+
+  it("lists what a connection is missing, for the reconnect prompt", () => {
+    const original = EPIC_SCOPES.join(" ");
+    expect(missingScopes(original, false)).toEqual([]);
+    expect(missingScopes(original, true)).toEqual([...EXPANDED_SCOPES]);
+    expect(missingScopes(requestedScopes(true).join(" "), true)).toEqual([]);
   });
 });

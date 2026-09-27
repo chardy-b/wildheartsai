@@ -26,13 +26,15 @@ describe("RECORD_QUERIES", () => {
       "MedicationDispense?patient=p%201",
       "Device?patient=p%201",
       "Coverage?patient=p%201",
+      "Appointment?patient=p%201&service-category=appointment",
+      "FamilyMemberHistory?patient=p%201",
     ]);
   });
 });
 
 describe("optional searches", () => {
   it("marks only the searches not every organization supports", () => {
-    expect(RECORD_QUERIES.filter((q) => q.optional).map((q) => q.category)).toEqual(["diagnosis", "concern", "assessment"]);
+    expect(RECORD_QUERIES.filter((q) => q.optional).map((q) => q.category)).toEqual(["diagnosis", "concern", "assessment", "appointment", "familyHistory"]);
   });
 });
 
@@ -40,8 +42,8 @@ describe("optional searches", () => {
 describe("resource allowlist", () => {
   it("searches only the resource types the dashboard displays", () => {
     expect([...new Set(RECORD_QUERIES.map((q) => q.resourceType))].sort()).toEqual([
-      "AllergyIntolerance", "CarePlan", "CareTeam", "Condition", "Coverage", "Device", "DiagnosticReport", "DocumentReference",
-      "Encounter", "Goal", "Immunization", "MedicationDispense", "MedicationRequest", "Observation", "Procedure", "ServiceRequest",
+      "AllergyIntolerance", "Appointment", "CarePlan", "CareTeam", "Condition", "Coverage", "Device", "DiagnosticReport", "DocumentReference",
+      "Encounter", "FamilyMemberHistory", "Goal", "Immunization", "MedicationDispense", "MedicationRequest", "Observation", "Procedure", "ServiceRequest",
     ]);
     for (const q of RECORD_QUERIES) expect(q.path("p").startsWith(`${q.resourceType}?`)).toBe(true);
   });

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
-import { buildAuthorizeUrl } from "@/lib/epic/authorize";
+import { buildAuthorizeUrl, requestedScopes } from "@/lib/epic/authorize";
 import { findOrganization, loadConnectable } from "@/lib/epic/directory";
 import { encodeFlow, FLOW_COOKIE, FLOW_TTL_SECONDS } from "@/lib/epic/flow";
 import { createPkcePair, createState } from "@/lib/epic/pkce";
@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
       state,
       codeChallenge: challenge,
       aud: organization.fhirBaseUrl,
+      scopes: requestedScopes(env().EPIC_EXPANDED_SCOPES),
     }),
   );
   response.cookies.set(

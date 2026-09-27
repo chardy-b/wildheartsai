@@ -23,6 +23,12 @@ const schema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
+    // Ask for the stage 8 scopes (appointments, family history, referenced resources). Turn on only
+    // after enabling those APIs in the Epic app registration (src/lib/epic/authorize.ts).
+    EPIC_EXPANDED_SCOPES: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
     // Non-production client (Epic's sandbox), published at /api/epic/jwks.
     EPIC_CLIENT_ID: z.string().min(1),
     EPIC_REDIRECT_URI: z.url(),

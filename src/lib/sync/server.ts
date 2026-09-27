@@ -24,6 +24,7 @@ export const loadSyncJob: JobEnv["load"] = async ({ runId, userId, sourceId }) =
       organizationName: connection.organizationName,
       fhirBaseUrl: connection.fhirBaseUrl,
       patientId: connection.patientId,
+      scope: connection.scope,
     },
     deps: {
       db,

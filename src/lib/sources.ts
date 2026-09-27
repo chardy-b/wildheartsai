@@ -13,6 +13,8 @@ export type SourceSummary = {
   status: "connected" | "reconnect_required" | "disconnected";
   // The tokens row, when the source is still connected (needed to disconnect).
   connectionId: string | null;
+  // What the connection was granted (permission names, not secrets); null once disconnected.
+  grantedScope: string | null;
   lastSyncedAt: Date | null;
   lastSyncStatus: "ok" | "partial" | "failed" | null;
   syncing: boolean;
@@ -28,7 +30,10 @@ const ACTIVE: ("queued" | "running")[] = ["queued", "running"];
 export async function listSources(db: Db, userId: string, now = new Date()): Promise<SourceSummary[]> {
   const [sources, connections, active, lastFinished, counts] = await Promise.all([
     db.select().from(healthSource).where(eq(healthSource.userId, userId)).orderBy(asc(healthSource.createdAt)),
-    db.select({ id: epicConnection.id, sourceId: epicConnection.sourceId }).from(epicConnection).where(eq(epicConnection.userId, userId)),
+    db
+      .select({ id: epicConnection.id, sourceId: epicConnection.sourceId, scope: epicConnection.scope })
+      .from(epicConnection)
+      .where(eq(epicConnection.userId, userId)),
     // A run queued or started longer ago than STALE_RUN_MS was lost (startRun fails it on the
     // next request), so it doesn't count as importing.
     db
@@ -70,6 +75,7 @@ export async function listSources(db: Db, userId: string, now = new Date()): Pro
       fhirBaseUrl: source.fhirBaseUrl,
       status: source.status,
       connectionId: connections.find((c) => c.sourceId === source.id)?.id ?? null,
+      grantedScope: connections.find((c) => c.sourceId === source.id)?.scope ?? null,
       lastSyncedAt: source.lastSyncedAt,
       lastSyncStatus: source.lastSyncStatus,
       syncing: active.some((r) => r.sourceId === source.id),

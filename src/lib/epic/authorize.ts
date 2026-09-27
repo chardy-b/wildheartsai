@@ -24,6 +24,42 @@ export const EPIC_SCOPES = [
   "patient/Coverage.rs",
 ] as const;
 
+// Stage 8 scopes: appointments and family history as records, and the resources other
+// records point to (medications, clinicians, organizations, locations). Requested only with
+// EPIC_EXPANDED_SCOPES=true, once they're enabled in the Epic app registration; a scope Epic
+// doesn't allow for the app could fail every sign-in.
+export const EXPANDED_SCOPES = [
+  "patient/Appointment.rs",
+  "patient/FamilyMemberHistory.rs",
+  "patient/Medication.rs",
+  "patient/Practitioner.rs",
+  "patient/PractitionerRole.rs",
+  "patient/Organization.rs",
+  "patient/Location.rs",
+] as const;
+
+export function requestedScopes(expanded: boolean): readonly string[] {
+  return expanded ? [...EPIC_SCOPES, ...EXPANDED_SCOPES] : EPIC_SCOPES;
+}
+
+// Whether a granted scope string allows reading a resource type. Epic may answer with SMART v1
+// (".read") or v2 (".rs") names, or a wildcard.
+export function grantsResource(granted: string, resourceType: string): boolean {
+  return granted
+    .split(/\s+/)
+    .some((scope) => {
+      const match = /^patient\/([A-Za-z*]+)\.(read|rs|r|\*)$/.exec(scope);
+      return match !== null && (match[1] === resourceType || match[1] === "*");
+    });
+}
+
+// Resource scopes we'd ask for now that a connection wasn't granted: it needs a reconnect to get them.
+export function missingScopes(granted: string, expanded: boolean): string[] {
+  return requestedScopes(expanded)
+    .filter((scope) => scope.startsWith("patient/"))
+    .filter((scope) => !grantsResource(granted, scope.slice("patient/".length).split(".")[0]));
+}
+
 // Shown on the connections page: "what we ask for", in plain language.
 export const SCOPE_LABELS: { scope: string; label: string }[] = [
   { scope: "patient/Patient.rs", label: "Your name and date of birth, to match your record" },
@@ -44,8 +80,21 @@ export const SCOPE_LABELS: { scope: string; label: string }[] = [
   { scope: "patient/Goal.rs", label: "Health goals" },
   { scope: "patient/Device.rs", label: "Implanted devices" },
   { scope: "patient/Coverage.rs", label: "Insurance coverage" },
+  { scope: "patient/Appointment.rs", label: "Your appointments, including upcoming ones" },
+  { scope: "patient/FamilyMemberHistory.rs", label: "Family health history" },
+  { scope: "patient/Medication.rs", label: "Details of your medications, such as strength and form" },
+  { scope: "patient/Practitioner.rs", label: "The names of clinicians on your records" },
+  { scope: "patient/PractitionerRole.rs", label: "Your clinicians' roles and specialties" },
+  { scope: "patient/Organization.rs", label: "The organizations your records come from" },
+  { scope: "patient/Location.rs", label: "Where your visits took place" },
   { scope: "offline_access", label: "Staying connected, so you don't sign in to MyChart every time" },
 ];
+
+// The labels for what a connection asks for, in the order above.
+export function scopeLabels(expanded: boolean): { scope: string; label: string }[] {
+  const requested = new Set(requestedScopes(expanded));
+  return SCOPE_LABELS.filter((item) => requested.has(item.scope));
+}
 
 export function buildAuthorizeUrl(input: {
   authorizationEndpoint: string;

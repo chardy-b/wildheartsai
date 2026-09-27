@@ -78,8 +78,9 @@ export default function PrivacyPage() {
             Wild Hearts shows the parts of your record your health systems share through MyChart: conditions, visit
             diagnoses and health concerns, medications and pharmacy fills, allergies, lab results and reports
             (including imaging reports), vital signs, assessments such as questionnaire scores, immunizations,
-            visits and their notes, procedures, orders, your care team, care plans, goals, social history, implanted
-            devices and insurance. We only request those.
+            visits and their notes, appointments, procedures, orders, your care team, care plans, goals, social and
+            family history, implanted devices and insurance, along with the details those records point to, such as a
+            medication&apos;s strength, a clinician&apos;s name or where a visit took place. We only request those.
           </p>
           <p>
             Wild Hearts Health is not a medical provider and does not give medical advice. Records appear as your

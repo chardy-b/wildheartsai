@@ -51,3 +51,15 @@ export function vitalsSummary(items: RecordItem[], shown = 3): string {
   const more = parts.length - shown;
   return [...parts.slice(0, shown), ...(more > 0 ? [`and ${more} more`] : [])].join(" · ");
 }
+
+// Records dated after `now` (upcoming appointments), soonest first, apart from the rest.
+export function splitUpcoming(items: RecordItem[], now: Date): { upcoming: RecordItem[]; past: RecordItem[] } {
+  const upcoming: RecordItem[] = [];
+  const past: RecordItem[] = [];
+  for (const item of items) {
+    const time = item.date ? Date.parse(item.date) : NaN;
+    (time > now.getTime() ? upcoming : past).push(item);
+  }
+  upcoming.sort((a, b) => Date.parse(a.date!) - Date.parse(b.date!));
+  return { upcoming, past };
+}

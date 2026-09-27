@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RecordItem } from "@/lib/fhir/normalize";
-import { groupVitals, vitalsSummary } from "./timeline-groups";
+import { groupVitals, splitUpcoming, vitalsSummary } from "./timeline-groups";
 
 const item = (title: string, category: RecordItem["category"], date: string | null, detail: string | null = null, sourceId = "s1"): RecordItem => ({
   key: `${title}-${date}-${sourceId}`,
@@ -58,5 +58,22 @@ describe("vitalsSummary", () => {
       item("Height", "vital", "d", "165 cm"),
     ];
     expect(vitalsSummary(day)).toBe("Weight 68.5 kg · Temperature 37.2 °C · Pulse 64 /min · and 2 more");
+  });
+});
+
+describe("splitUpcoming", () => {
+  it("puts future-dated records first, soonest first, and leaves the rest in order", () => {
+    const now = new Date("2026-09-27T12:00:00Z");
+    const { upcoming, past } = splitUpcoming(
+      [
+        item("Later visit", "appointment", "2026-12-01T09:00:00Z"),
+        item("Next week", "appointment", "2026-10-04T09:00:00Z"),
+        item("Yesterday", "appointment", "2026-09-26T09:00:00Z"),
+        item("Undated", "condition", null),
+      ],
+      now,
+    );
+    expect(upcoming.map((i) => i.title)).toEqual(["Next week", "Later visit"]);
+    expect(past.map((i) => i.title)).toEqual(["Yesterday", "Undated"]);
   });
 });

@@ -1,3 +1,4 @@
+import { requestedScopes } from "@/lib/epic/authorize";
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -24,6 +25,9 @@ import {
   timelinePage,
   type TimelineFilters,
 } from "./timeline";
+
+// Every scope the app can ask for, as a fully granted connection would have.
+const ALL_SCOPES = requestedScopes(true).join(" ");
 
 const ALL: TimelineFilters = { sourceIds: [], categories: [], from: null, to: null };
 
@@ -69,7 +73,7 @@ async function importInto(sourceId: string, organizationName: string, byPath: Re
     throw new Error("no binaries here");
   };
   const deps: SyncDeps = { db, keys, now: () => now, accessToken: async () => "at", search, read };
-  const source = { runId, userId, sourceId, organizationName, fhirBaseUrl: "https://x", patientId: "p1" };
+  const source = { runId, userId, sourceId, organizationName, fhirBaseUrl: "https://x", patientId: "p1", scope: ALL_SCOPES };
   await runSyncJob({ runId, userId, sourceId }, (_id, work) => work(), { db, now: () => now, load: async () => ({ deps, source }) }, QUERIES);
 }
 
@@ -170,6 +174,7 @@ describe("sourceProblems", () => {
     fhirBaseUrl: "https://north.example/R4",
     status: "connected",
     connectionId: "c",
+    grantedScope: "patient/Observation.rs",
     lastSyncedAt: now,
     lastSyncStatus: "ok",
     syncing: false,

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { OrgSearch } from "@/components/app/OrgSearch";
 import { SyncWatcher } from "@/components/app/SyncWatcher";
-import { SCOPE_LABELS } from "@/lib/epic/authorize";
+import { missingScopes, scopeLabels } from "@/lib/epic/authorize";
 import { isSampleData, loadConnectable, organizationChoices } from "@/lib/epic/directory";
 import { connectErrorMessage } from "@/lib/epic/messages";
 import { enabledEpicEnvironment, env } from "@/lib/env";
@@ -34,6 +34,21 @@ function sourceStatus(source: SourceSummary, now: Date): string {
   return `${records} · updated ${ago(source.lastSyncedAt, now)}`;
 }
 
+// Short names for what reconnecting adds; the referenced-resource scopes read as one phrase.
+const GAINS: Record<string, string> = {
+  "patient/Appointment.rs": "appointments",
+  "patient/FamilyMemberHistory.rs": "family history",
+};
+const MORE_DETAIL = "more detail on your records";
+
+// What a connected source would gain from reconnecting: the scopes we now ask for that it
+// wasn't granted (for example after EPIC_EXPANDED_SCOPES), in a few words.
+function newPermissions(source: SourceSummary, expanded: boolean): string[] {
+  if (source.status !== "connected" || source.grantedScope === null) return [];
+  const names = missingScopes(source.grantedScope, expanded).map((scope) => GAINS[scope] ?? MORE_DETAIL);
+  return [...new Set(names)].sort((a, b) => Number(a === MORE_DETAIL) - Number(b === MORE_DETAIL));
+}
+
 function SourceIssues({ source }: { source: SourceSummary }) {
   if (source.syncing || source.status === "disconnected") return null;
   const { failed, truncated } = lastRunIssues(source.lastRunStats);
@@ -51,6 +66,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
   const { q, connected, error, refresh, deleted } = await searchParams;
   const query = typeof q === "string" ? q : "";
   const environment = enabledEpicEnvironment(env());
+  const expanded = env().EPIC_EXPANDED_SCOPES;
 
   const [sources, connectable] = await Promise.all([
     loadSourcesFor(session.user.id),
@@ -118,6 +134,11 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                     </ul>
                   ) : null}
                   <SourceIssues source={source} />
+                  {newPermissions(source, expanded).length ? (
+                    <p className="source-issue">
+                      Reconnect to add {listOf(newPermissions(source, expanded))}.
+                    </p>
+                  ) : null}
                 </div>
                 <div className="connection-actions">
                   {source.status === "connected" ? (
@@ -130,7 +151,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                   ) : null}
                   {/* Signing in again replaces the stored access and keeps the records already imported. */}
                   <a
-                    className={source.status === "connected" ? "btn btn-ghost" : "btn"}
+                    className={source.status === "connected" && !newPermissions(source, expanded).length ? "btn btn-ghost" : "btn"}
                     href={`/api/epic/authorize?iss=${encodeURIComponent(source.fhirBaseUrl)}`}
                   >
                     Reconnect
@@ -189,7 +210,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
       <div>
         <h2>What we ask for</h2>
         <ul className="scope-list">
-          {SCOPE_LABELS.map((item) => (
+          {scopeLabels(expanded).map((item) => (
             <li key={item.scope}>{item.label}</li>
           ))}
         </ul>
