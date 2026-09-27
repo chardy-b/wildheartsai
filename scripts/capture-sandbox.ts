@@ -131,7 +131,12 @@ async function main() {
 main().then(
   () => process.exit(0),
   (error: unknown) => {
-    console.error(error instanceof Error ? error.message : error);
+    // Database errors wrap the useful part ("connection refused", "relation does not exist") in `cause`.
+    const cause = error instanceof Error && error.cause instanceof Error ? `\n  Cause: ${error.cause.message}` : "";
+    console.error(`${error instanceof Error ? error.message : String(error)}${cause}`);
+    if (/Failed query/.test(String(error))) {
+      console.error("  Is the local database running (`npm run db:local`, in its own terminal) and migrated (`npm run db:migrate`)?");
+    }
     process.exit(1);
   },
 );
