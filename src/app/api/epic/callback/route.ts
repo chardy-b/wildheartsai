@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { asUser } from "@/lib/db/rls";
 import { completeAuthorization } from "@/lib/epic/callback";
 import { saveConnection } from "@/lib/epic/connections";
 import { FLOW_COOKIE } from "@/lib/epic/flow";
@@ -40,18 +41,8 @@ export async function GET(request: NextRequest) {
       });
     },
     save: async (flow, tokens) => {
-      ({ sourceId } = await saveConnection(
-        db,
-        key,
-        {
-          userId,
-          fhirBaseUrl: flow.fhirBaseUrl,
-          organizationName: flow.organizationName,
-          tokenEndpoint: flow.tokenEndpoint,
-          tokens,
-        },
-        new Date(),
-      ));
+      const input = { userId, fhirBaseUrl: flow.fhirBaseUrl, organizationName: flow.organizationName, tokenEndpoint: flow.tokenEndpoint, tokens };
+      ({ sourceId } = await asUser(db, userId, (tx) => saveConnection(tx, key, input, new Date())));
     },
   });
 

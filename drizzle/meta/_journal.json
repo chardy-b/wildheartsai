@@ -43,6 +43,13 @@
       "when": 1790544496744,
       "tag": "0005_audit_event",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790545046701,
+      "tag": "0006_row_level_security",
+      "breakpoints": true
     }
   ]
 }

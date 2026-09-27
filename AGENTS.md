@@ -21,6 +21,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Next.js app on Vercel (project `wildheartsai`, team `lichards-projects`), production at https://www.wildheartsai.com, deployed from `main` by the GitHub integration. Every branch push gets a preview deployment.
 - Postgres is Neon in Vercel. Drizzle ORM; schema in `src/lib/db/*-schema.ts`, migrations in `drizzle/`. Auth is Better Auth (email and password, verified email, optional invite code).
 - Records flow: Epic SMART on FHIR connection (`src/lib/epic/`) → Inngest job `sync-source` (`src/lib/inngest/`, `src/lib/sync/`) → encrypted rows in `fhir_resource` → dashboard timeline (`src/lib/timeline.ts`). Record fields are sealed with per-user data keys (`src/lib/crypto/user-keys.ts`) under `RECORDS_ENCRYPTION_KEY`; tokens are sealed under `TOKEN_ENCRYPTION_KEY`.
+- Row-level security (`src/lib/db/rls.ts`): code serving a signed-in person reads and writes through `asUser(db, userId, tx => ...)`, so the database only shows their rows. Keep network calls outside it. New tables holding a person's data get a policy in a migration and an entry in `RLS_TABLES`.
 - Plans and specs live in `docs/superpowers/`. The records storage plan (`plans/2026-09-26-records-storage-plan.md`) tracks what's done and what's next.
 
 # Deploying schema changes
