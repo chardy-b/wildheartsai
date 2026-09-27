@@ -10,7 +10,10 @@ const lab = SYNC_QUERIES.find((q) => q.key === "Observation:lab")!;
 
 describe("SYNC_QUERIES", () => {
   it("covers every record query with a unique, stable key", () => {
-    expect(SYNC_QUERIES).toHaveLength(RECORD_QUERIES.length);
+    // Every record search, plus the patient's own details.
+    expect(SYNC_QUERIES).toHaveLength(RECORD_QUERIES.length + 1);
+    expect(SYNC_QUERIES.find((q) => q.key === "Patient:self")).toMatchObject({ category: null, optional: true });
+    expect(SYNC_QUERIES.find((q) => q.key === "Patient:self")?.path("p 1")).toBe("Patient?_id=p%201");
     expect(new Set(SYNC_QUERIES.map((q) => q.key)).size).toBe(SYNC_QUERIES.length);
     expect(SYNC_QUERIES.map((q) => q.key)).toEqual(expect.arrayContaining(["Observation:lab", "Observation:vital", "Condition:condition"]));
   });

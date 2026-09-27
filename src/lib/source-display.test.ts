@@ -28,6 +28,8 @@ describe("lastRunIssues", () => {
       lastRunIssues({ "Observation:lab": stats("truncated"), "Condition:condition": stats("500"), "Encounter:visit": stats(), "Nope:x": stats("403") }),
     ).toEqual({ failed: ["condition"], truncated: ["lab"] });
     expect(lastRunIssues(null)).toEqual({ failed: [], truncated: [] });
+    // Not every organization supports these; a failure isn't news to the person.
+    expect(lastRunIssues({ "Condition:diagnosis": { ...stats("400"), optional: true } })).toEqual({ failed: [], truncated: [] });
   });
 });
 

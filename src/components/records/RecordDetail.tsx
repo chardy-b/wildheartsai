@@ -20,8 +20,8 @@ function FieldList({ nodes }: { nodes: FieldNode[] }) {
 
 function Note({ note }: { note: RecordItem }) {
   const attachment = noteAttachment(note.resource);
-  return attachment ? (
-    <NoteText connectionId={note.connectionId} attachmentUrl={attachment.url} />
+  return attachment && note.sourceId ? (
+    <NoteText sourceId={note.sourceId} attachmentUrl={attachment.url} />
   ) : (
     <p className="record-note">This document isn&apos;t text we can show here. You can open it in MyChart.</p>
   );

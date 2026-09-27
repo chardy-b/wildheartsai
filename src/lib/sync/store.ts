@@ -51,7 +51,7 @@ export async function currentRows(
   };
   const base = and(eq(fhirResource.sourceId, sourceId), eq(fhirResource.resourceType, query.resourceType), isNull(fhirResource.supersededAt));
   const found = new Map<string, Stored>();
-  if (includeCategory) {
+  if (includeCategory && query.category !== null) {
     for (const row of await db.select(columns).from(fhirResource).where(and(base, eq(fhirResource.category, query.category)))) {
       found.set(row.id, row);
     }

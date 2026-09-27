@@ -1,4 +1,4 @@
-import type { RecordCategory, RecordSummary } from "@/lib/fhir/normalize";
+import { normalizePatient, type RecordCategory, type StoredSummary } from "@/lib/fhir/normalize";
 import { RECORD_QUERIES } from "@/lib/records";
 
 // Which searches a sync runs, and for each whether to pull everything or only what
@@ -7,19 +7,33 @@ import { RECORD_QUERIES } from "@/lib/records";
 export type SyncQuery = {
   // Stable id for sync_cursor and run stats, such as 'Observation:lab'.
   key: string;
-  category: RecordCategory;
+  // Null for rows kept but not shown as records, such as the patient's own details.
+  category: RecordCategory | null;
   resourceType: string;
   path: (patientId: string) => string;
-  normalize: (resource: never, source: string) => RecordSummary;
+  normalize: (resource: never, source: string) => StoredSummary;
+  // A failure is kept in the stats but not reported to the person (see RECORD_QUERIES).
+  optional?: boolean;
 };
 
-export const SYNC_QUERIES: SyncQuery[] = RECORD_QUERIES.map((query) => ({
-  key: `${query.resourceType}:${query.category}`,
-  category: query.category,
-  resourceType: query.resourceType,
-  path: query.path,
-  normalize: query.normalize,
-}));
+const patient = (id: string) => encodeURIComponent(id);
+
+// Stored alongside the records, never listed as one.
+const SUPPORT_QUERIES: SyncQuery[] = [
+  { key: "Patient:self", category: null, resourceType: "Patient", path: (p) => `Patient?_id=${patient(p)}`, normalize: normalizePatient, optional: true },
+];
+
+export const SYNC_QUERIES: SyncQuery[] = [
+  ...RECORD_QUERIES.map((query) => ({
+    key: `${query.resourceType}:${query.category}`,
+    category: query.category,
+    resourceType: query.resourceType,
+    path: query.path,
+    normalize: query.normalize,
+    optional: query.optional,
+  })),
+  ...SUPPORT_QUERIES,
+];
 
 // Sync is off the request path, so it can page much further than the live view.
 export const SYNC_MAX_PAGES = 100;

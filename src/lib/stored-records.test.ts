@@ -28,7 +28,7 @@ const ALL: TimelineFilters = { sourceIds: [], categories: [], from: null, to: nu
 const tokenKey = randomBytes(32);
 const kek = randomBytes(32);
 const now = new Date("2026-09-26T12:00:00Z");
-const QUERIES = SYNC_QUERIES.filter((q) => ["Observation:lab", "Condition:condition"].includes(q.key));
+const QUERIES = SYNC_QUERIES.filter((q) => ["Observation:lab", "Condition:condition", "Patient:self"].includes(q.key));
 let db: Db;
 let userId: string;
 let keys: UserKeys;
@@ -63,7 +63,10 @@ async function connect(organizationName: string, fhirBaseUrl: string): Promise<s
 async function importInto(sourceId: string, organizationName: string, byPath: Record<string, Resource[]>): Promise<void> {
   const { runId } = await startRun(db, { userId, sourceId, trigger: "connect" }, now);
   const search: SyncDeps["search"] = async ({ path }) => ({ resources: byPath[path.split("&_lastUpdated=")[0]] ?? [], truncated: false });
-  const deps: SyncDeps = { db, keys, now: () => now, accessToken: async () => "at", search };
+  const read: SyncDeps["read"] = async () => {
+    throw new Error("no binaries here");
+  };
+  const deps: SyncDeps = { db, keys, now: () => now, accessToken: async () => "at", search, read };
   const source = { runId, userId, sourceId, organizationName, fhirBaseUrl: "https://x", patientId: "p1" };
   await runSyncJob({ runId, userId, sourceId }, (_id, work) => work(), { db, now: () => now, load: async () => ({ deps, source }) }, QUERIES);
 }
@@ -253,6 +256,20 @@ describe("timeline filters and paging", () => {
     expect(countsFor(sources, ALL)).toMatchObject({ lab: 4, condition: 1 });
     expect(countsFor(sources, { ...ALL, sourceIds: [south] })).toMatchObject({ lab: 1, condition: 1 });
     expect(sourceTones(sources)).toEqual({ [north]: 0, [south]: 1 });
+  });
+});
+
+describe("rows kept but not listed", () => {
+  it("keeps the patient's own details out of the timeline and the counts", async () => {
+    const north = await connect("North Clinic", "https://north.example/R4");
+    await importInto(north, "North Clinic", {
+      "Observation?patient=p1&category=laboratory": [lab("n1", "2024-01-05", "A1c")],
+      "Patient?_id=p1": [{ resourceType: "Patient", id: "p1", name: [{ text: "Sam Doe" }] } as Resource],
+    });
+    const sources = await listSources(db, userId);
+    expect(sources[0]).toMatchObject({ recordCount: 1, categoryCounts: { lab: 1 } });
+    const { items } = await timelinePage(db, keys, userId, sources, ALL, null);
+    expect(items.map((i) => i.title)).toEqual(["A1c"]);
   });
 });
 

@@ -104,6 +104,8 @@ export async function timelinePage(
     inArray(fhirResource.sourceId, sourceIds),
     isNull(fhirResource.supersededAt),
     isNull(fhirResource.removedAt),
+    // Rows without a category (the patient's own details) are kept, not listed.
+    isNotNull(fhirResource.category),
   ];
   if (filters.categories.length) conditions.push(inArray(fhirResource.category, filters.categories));
   if (filters.from) conditions.push(gte(fhirResource.effectiveAt, new Date(`${filters.from}T00:00:00Z`)));

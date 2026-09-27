@@ -2,7 +2,10 @@ import {
   normalizeAllergy,
   normalizeCarePlan,
   normalizeCareTeam,
+  normalizeAssessment,
   normalizeCondition,
+  normalizeConcern,
+  normalizeDiagnosis,
   normalizeCoverage,
   normalizeDevice,
   normalizeFill,
@@ -26,6 +29,9 @@ type Query = {
   resourceType: string;
   path: (patientId: string) => string;
   normalize: (resource: never, source: string) => RecordSummary;
+  // Searches not every Epic organization supports. A failure is kept in the sync stats
+  // but isn't reported to the person as missing records.
+  optional?: boolean;
 };
 
 const patient = (id: string) => `patient=${encodeURIComponent(id)}`;
@@ -35,6 +41,8 @@ const patient = (id: string) => `patient=${encodeURIComponent(id)}`;
 // Epic requires a category on Condition, Observation, DocumentReference and CarePlan searches.
 export const RECORD_QUERIES: Query[] = [
   { category: "condition", resourceType: "Condition", path: (p) => `Condition?${patient(p)}&category=problem-list-item`, normalize: normalizeCondition },
+  { category: "diagnosis", resourceType: "Condition", path: (p) => `Condition?${patient(p)}&category=encounter-diagnosis`, normalize: normalizeDiagnosis, optional: true },
+  { category: "concern", resourceType: "Condition", path: (p) => `Condition?${patient(p)}&category=health-concern`, normalize: normalizeConcern, optional: true },
   { category: "medication", resourceType: "MedicationRequest", path: (p) => `MedicationRequest?${patient(p)}`, normalize: normalizeMedication },
   { category: "allergy", resourceType: "AllergyIntolerance", path: (p) => `AllergyIntolerance?${patient(p)}`, normalize: normalizeAllergy },
   { category: "lab", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=laboratory`, normalize: normalizeLab },
@@ -45,6 +53,7 @@ export const RECORD_QUERIES: Query[] = [
   { category: "procedure", resourceType: "Procedure", path: (p) => `Procedure?${patient(p)}`, normalize: normalizeProcedure },
   { category: "vital", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=vital-signs`, normalize: normalizeVital },
   { category: "social", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=social-history`, normalize: normalizeSocial },
+  { category: "assessment", resourceType: "Observation", path: (p) => `Observation?${patient(p)}&category=survey`, normalize: normalizeAssessment, optional: true },
   { category: "careTeam", resourceType: "CareTeam", path: (p) => `CareTeam?${patient(p)}`, normalize: normalizeCareTeam },
   // 38717003: SNOMED "Longitudinal care plan", the category Epic supports for patients.
   { category: "carePlan", resourceType: "CarePlan", path: (p) => `CarePlan?${patient(p)}&category=38717003`, normalize: normalizeCarePlan },

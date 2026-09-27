@@ -7,6 +7,13 @@ export type NoteResult = { ok: true; text: string } | { ok: false; reason: "not_
 
 type Binary = Resource & { resourceType: "Binary"; contentType?: string; data?: string };
 
+// A Binary's content as sent (HTML, RTF or plain text), or null if it isn't a Binary with data.
+export function binaryContent(resource: unknown): { contentType: string | undefined; raw: string } | null {
+  const binary = resource as Binary;
+  if (binary?.resourceType !== "Binary" || typeof binary.data !== "string") return null;
+  return { contentType: binary.contentType, raw: Buffer.from(binary.data, "base64").toString("utf8") };
+}
+
 type Deps = {
   accessToken: (connection: ConnectionSecrets) => Promise<string>;
   read: (input: { baseUrl: string; path: string; accessToken: string }) => Promise<unknown>;
@@ -23,9 +30,9 @@ export async function readNote(
 
   try {
     const accessToken = await deps.accessToken(connection);
-    const resource = (await deps.read({ baseUrl: connection.fhirBaseUrl, path: input.attachmentUrl, accessToken })) as Binary;
-    if (resource?.resourceType !== "Binary" || typeof resource.data !== "string") return { ok: false, reason: "unavailable" };
-    const text = noteToText(resource.contentType, Buffer.from(resource.data, "base64").toString("utf8"));
+    const content = binaryContent(await deps.read({ baseUrl: connection.fhirBaseUrl, path: input.attachmentUrl, accessToken }));
+    if (!content) return { ok: false, reason: "unavailable" };
+    const text = noteToText(content.contentType, content.raw);
     return text === null ? { ok: false, reason: "unsupported" } : { ok: true, text };
   } catch (error) {
     if (error instanceof ReconnectRequiredError) return { ok: false, reason: "reconnect" };
