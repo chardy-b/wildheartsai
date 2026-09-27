@@ -6,7 +6,7 @@ import { SyncWatcher } from "@/components/app/SyncWatcher";
 import { ProblemNotices } from "@/components/records/ProblemNotices";
 import { RecordsLoading } from "@/components/records/RecordsLoading";
 import { Timeline } from "@/components/records/Timeline";
-import { TimelineFilterForm, TimelinePager } from "@/components/records/TimelineControls";
+import { ExportLink, TimelineFilterForm, TimelinePager } from "@/components/records/TimelineControls";
 import { CATEGORIES } from "@/lib/fhir/categories";
 import { requireOnboarded } from "@/lib/onboarding-guard";
 import { loadSourcesFor, loadTimelineFor } from "@/lib/records-server";
@@ -42,7 +42,10 @@ async function HomeRecords({ userId, params }: { userId: string; params: Params 
       {items.length === 0 ? (
         <p className="lede">{hasFilters(filters) ? "No records match these filters." : "No records yet."}</p>
       ) : (
-        <Timeline items={items} related={related} tones={tones} />
+        <>
+          <ExportLink filters={filters} />
+          <Timeline items={items} related={related} tones={tones} />
+        </>
       )}
       <TimelinePager path="/app" filters={filters} next={next} paged={cursor !== null} />
     </>
