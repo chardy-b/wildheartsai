@@ -16,7 +16,8 @@
     "db:migrate": "drizzle-kit migrate",
     "auth:schema": "npx auth@1.7.5 generate --config src/lib/auth-cli.ts --output src/lib/db/auth-schema.ts",
     "epic:key": "node scripts/generate-epic-key.mjs",
-    "db:seed": "tsx --conditions=react-server scripts/seed-local.ts"
+    "db:seed": "tsx --conditions=react-server scripts/seed-local.ts",
+    "qa:capture": "tsx --conditions=react-server scripts/capture-sandbox.ts"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.7.5",

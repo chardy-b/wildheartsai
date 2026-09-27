@@ -48,4 +48,11 @@ The Vercel CLI works through `npx vercel@latest` (not installed globally) and is
 - Background imports locally need `INNGEST_DEV=1` and the Inngest dev server: `npx inngest-cli@latest dev -u http://localhost:3000/api/inngest`.
 - Connecting the real Epic sandbox needs a person to sign in on Epic's hosted MyChart page with one of Epic's published sample patients (fhir.epic.com). Agents can't complete that sign-in.
 - `npm test` runs Vitest with in-memory PGlite (`src/test/db.ts`); no database server needed.
+
+# Recorded Epic sandbox data (QA fixtures)
+
+- `src/test/fixtures/epic-sandbox/*.json` are recordings of what Epic's sandbox returned for one sample patient: every sync search (or its error) and each note's Binary. `src/lib/sync/sandbox-replay.test.ts` replays each file through the real sync job, timeline and note storage (`src/test/epic-replay.ts` is the fake Epic). Agents can run these any time: no network, no sign-in.
+- `handmade-example.json` is a small hand-written fixture that keeps the replay tests meaningful before a real capture exists.
+- To record fresh data (a person must do the sign-in): run the app locally, connect "Epic sandbox (sample patients)" on Connections with one of Epic's sample patients, then `npm run qa:capture -- --name <patient-name>` and commit the file. The script refreshes an expired access token itself, refuses anything but Epic's sandbox (sample patients are made up, so the files are safe to commit), and writes nothing if every search failed.
+- If the capture says the connection has expired, reconnect the sandbox locally and run it again.
 - `.claude/launch.json` has `wildhearts-dev` (port 3000) and `wildhearts-prod` (`npm start` on 3100) for the browser preview.

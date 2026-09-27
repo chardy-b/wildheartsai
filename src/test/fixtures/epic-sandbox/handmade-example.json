@@ -1,0 +1,243 @@
+{
+  "capturedAt": "2026-09-27T00:00:00.000Z",
+  "fhirBaseUrl": "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4",
+  "patientId": "example-patient",
+  "searches": {
+    "Condition:condition": {
+      "resources": [
+        {
+          "resourceType": "Condition",
+          "id": "cond-1",
+          "clinicalStatus": {
+            "coding": [
+              {
+                "code": "active"
+              }
+            ]
+          },
+          "code": {
+            "text": "Mild intermittent asthma"
+          },
+          "onsetDateTime": "2015-04",
+          "meta": {
+            "versionId": "1",
+            "lastUpdated": "2026-09-01T12:00:00Z"
+          }
+        }
+      ],
+      "truncated": false
+    },
+    "Condition:diagnosis": {
+      "error": {
+        "status": 400
+      }
+    },
+    "Condition:concern": {
+      "resources": [],
+      "truncated": false
+    },
+    "MedicationRequest:medication": {
+      "resources": [],
+      "truncated": false
+    },
+    "AllergyIntolerance:allergy": {
+      "resources": [],
+      "truncated": false
+    },
+    "Observation:lab": {
+      "resources": [
+        {
+          "resourceType": "Observation",
+          "id": "lab-1",
+          "status": "final",
+          "category": [
+            {
+              "coding": [
+                {
+                  "code": "laboratory"
+                }
+              ]
+            }
+          ],
+          "code": {
+            "text": "Hemoglobin A1c"
+          },
+          "valueQuantity": {
+            "value": 5.6,
+            "unit": "%"
+          },
+          "effectiveDateTime": "2026-08-14T09:30:00Z",
+          "interpretation": [
+            {
+              "text": "Normal"
+            }
+          ],
+          "meta": {
+            "versionId": "1",
+            "lastUpdated": "2026-09-01T12:00:00Z"
+          }
+        },
+        {
+          "resourceType": "Observation",
+          "id": "lab-2",
+          "status": "entered-in-error",
+          "category": [
+            {
+              "coding": [
+                {
+                  "code": "laboratory"
+                }
+              ]
+            }
+          ],
+          "code": {
+            "text": "Potassium"
+          },
+          "valueQuantity": {
+            "value": 9.9,
+            "unit": "mmol/L"
+          },
+          "effectiveDateTime": "2026-08-14T09:30:00Z",
+          "meta": {
+            "versionId": "1",
+            "lastUpdated": "2026-09-01T12:00:00Z"
+          }
+        }
+      ],
+      "truncated": false
+    },
+    "Immunization:immunization": {
+      "resources": [],
+      "truncated": false
+    },
+    "Encounter:visit": {
+      "resources": [
+        {
+          "resourceType": "Encounter",
+          "id": "enc-1",
+          "status": "finished",
+          "type": [
+            {
+              "text": "Office visit"
+            }
+          ],
+          "period": {
+            "start": "2026-08-14T09:00:00Z"
+          },
+          "meta": {
+            "versionId": "1",
+            "lastUpdated": "2026-09-01T12:00:00Z"
+          }
+        }
+      ],
+      "truncated": false
+    },
+    "DiagnosticReport:report": {
+      "resources": [],
+      "truncated": false
+    },
+    "DocumentReference:note": {
+      "resources": [
+        {
+          "resourceType": "DocumentReference",
+          "id": "doc-1",
+          "status": "current",
+          "type": {
+            "text": "Progress note"
+          },
+          "date": "2026-08-14T10:00:00Z",
+          "context": {
+            "encounter": [
+              {
+                "reference": "Encounter/enc-1"
+              }
+            ]
+          },
+          "content": [
+            {
+              "attachment": {
+                "contentType": "text/html",
+                "url": "Binary/note-1"
+              }
+            }
+          ],
+          "meta": {
+            "versionId": "1",
+            "lastUpdated": "2026-09-01T12:00:00Z"
+          }
+        }
+      ],
+      "truncated": false
+    },
+    "Procedure:procedure": {
+      "resources": [],
+      "truncated": false
+    },
+    "Observation:vital": {
+      "resources": [],
+      "truncated": false
+    },
+    "Observation:social": {
+      "resources": [],
+      "truncated": false
+    },
+    "Observation:assessment": {
+      "resources": [],
+      "truncated": false
+    },
+    "CareTeam:careTeam": {
+      "resources": [],
+      "truncated": false
+    },
+    "CarePlan:carePlan": {
+      "resources": [],
+      "truncated": false
+    },
+    "Goal:goal": {
+      "resources": [],
+      "truncated": false
+    },
+    "ServiceRequest:order": {
+      "resources": [],
+      "truncated": false
+    },
+    "MedicationDispense:fill": {
+      "resources": [],
+      "truncated": false
+    },
+    "Device:device": {
+      "resources": [],
+      "truncated": false
+    },
+    "Coverage:coverage": {
+      "resources": [],
+      "truncated": false
+    },
+    "Patient:self": {
+      "resources": [
+        {
+          "resourceType": "Patient",
+          "id": "example-patient",
+          "name": [
+            {
+              "text": "Example Patient"
+            }
+          ],
+          "birthDate": "1990-02-03",
+          "meta": {
+            "versionId": "1",
+            "lastUpdated": "2026-09-01T12:00:00Z"
+          }
+        }
+      ],
+      "truncated": false
+    }
+  },
+  "reads": {
+    "Binary/note-1": {
+      "resourceType": "Binary",
+      "contentType": "text/html",
+      "data": "PHA+UGF0aWVudCBmZWVscyA8Yj53ZWxsPC9iPi4gQ29udGludWUgY3VycmVudCBwbGFuLjwvcD4="
+    }
+  }
+}
