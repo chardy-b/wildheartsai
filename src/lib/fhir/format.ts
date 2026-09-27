@@ -12,3 +12,29 @@ export function formatRecordDate(value: string | null): string {
 export function yearOf(value: string | null): string {
   return value && /^\d{4}/.test(value) ? value.slice(0, 4) : "Undated";
 }
+
+// UCUM unit codes as sent by health systems, shown the way people write them.
+const UNITS: Record<string, string> = {
+  Cel: "°C",
+  "[degF]": "°F",
+  "mm[Hg]": "mmHg",
+  "[lb_av]": "lb",
+  "[oz_av]": "oz",
+  "[in_i]": "in",
+  "[ft_i]": "ft",
+  "kg/m2": "kg/m²",
+  "/min": "/min",
+  "{beats}/min": "beats/min",
+  "{breaths}/min": "breaths/min",
+};
+
+export function readableUnit(unit: string | undefined): string {
+  return unit ? (UNITS[unit] ?? unit) : "";
+}
+
+// "37.2 °C", "68.5 kg", "5.1": a value with its unit, when there is one. °C and °F sit
+// right after the number would be closer to print style, but a space reads fine on screen.
+export function quantityText(quantity: { value?: number; unit?: string } | undefined): string | null {
+  if (quantity?.value === undefined) return null;
+  return `${quantity.value} ${readableUnit(quantity.unit)}`.trim();
+}

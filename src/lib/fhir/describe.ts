@@ -1,4 +1,4 @@
-import { formatRecordDate } from "./format";
+import { formatRecordDate, quantityText, readableUnit } from "./format";
 import type { Resource } from "./types";
 
 export type DetailSection = { label: string; values: string[] };
@@ -40,7 +40,8 @@ export function readableValue(value: unknown): string | null {
   }
   if (typeof value.display === "string") return value.display;
   if (typeof value.value === "number" || typeof value.value === "string") {
-    return `${value.value} ${typeof value.unit === "string" ? value.unit : ""}`.trim();
+    if (typeof value.value === "number") return quantityText({ value: value.value, unit: typeof value.unit === "string" ? value.unit : undefined });
+    return `${value.value} ${typeof value.unit === "string" ? readableUnit(value.unit) : ""}`.trim();
   }
   if ("low" in value || "high" in value) {
     const [low, high] = [readableValue(value.low), readableValue(value.high)];

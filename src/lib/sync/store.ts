@@ -7,10 +7,12 @@ import type { RecordSummary } from "@/lib/fhir/normalize";
 import type { Resource } from "@/lib/fhir/types";
 import { effectiveDate } from "./dates";
 import { isEnteredInError, withoutMeta, type Diff, type Fetched, type Stored } from "./diff";
-import type { Cursor, SyncQuery } from "./plan";
+import { SYNC_QUERIES, type Cursor, type SyncQuery } from "./plan";
 
-// Bump when normalize.ts changes what it produces, so stored summaries are rebuilt.
-export const NORMALIZER_VERSION = 1;
+// Bump when normalize.ts changes what it produces: rows stored under an older version have
+// their summary recomputed from the stored resource when read (openForDisplay).
+// 2: readable units ("37.2 °C"), and no-allergy placeholders ("No allergies on file").
+export const NORMALIZER_VERSION = 2;
 
 const BATCH = 100;
 
@@ -165,4 +167,19 @@ export function openStoredRow(
     resource: JSON.parse(unsealField(keys, row.sealedResource, resourceField(row.id))) as Resource,
     summary: JSON.parse(unsealField(keys, row.sealedSummary, summaryField(row.id))) as RecordSummary,
   };
+}
+
+const NORMALIZERS = new Map(SYNC_QUERIES.map((q) => [q.category, q.normalize]));
+
+// A stored row as the timeline shows it. A summary made by an older normalizer is recomputed
+// from the stored resource, so display fixes reach records imported before them.
+export function openForDisplay(
+  keys: UserKeys,
+  row: Pick<typeof fhirResource.$inferSelect, "id" | "sealedResource" | "sealedSummary" | "normalizerVersion" | "category">,
+): StoredRecord {
+  const opened = openStoredRow(keys, row);
+  if (row.normalizerVersion >= NORMALIZER_VERSION) return opened;
+  const normalize = NORMALIZERS.get(row.category as SyncQuery["category"]);
+  if (!normalize) return opened;
+  return { ...opened, summary: normalize(opened.resource as never, opened.summary.source) as RecordSummary };
 }

@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/types";
 import { CATEGORIES, categoryForSlug } from "@/lib/fhir/categories";
 import type { RecordCategory, RecordItem } from "@/lib/fhir/normalize";
 import type { SourceSummary } from "@/lib/sources";
-import { openStoredRow } from "@/lib/sync/store";
+import { openForDisplay, openStoredRow } from "@/lib/sync/store";
 
 // The unified timeline: every stored record from every source, newest first, read one
 // page at a time with keyset pagination on (effective_at desc nulls last, id desc).
@@ -121,6 +121,8 @@ export async function timelinePage(
       effectiveAt: fhirResource.effectiveAt,
       sealedResource: fhirResource.sealedResource,
       sealedSummary: fhirResource.sealedSummary,
+      normalizerVersion: fhirResource.normalizerVersion,
+      category: fhirResource.category,
     })
     .from(fhirResource)
     .where(and(...conditions))
@@ -135,7 +137,7 @@ export async function timelinePage(
   const items = page.flatMap((row): RecordItem[] => {
     const source = bySource.get(row.sourceId);
     if (!source) return [];
-    const { resource, summary } = openStoredRow(keys, row);
+    const { resource, summary } = openForDisplay(keys, row);
     return [
       {
         ...summary,

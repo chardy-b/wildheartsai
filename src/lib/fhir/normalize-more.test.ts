@@ -48,7 +48,7 @@ describe("normalizers for the remaining record types", () => {
         { resourceType: "Observation", id: "v1", code: { text: "Blood Pressure" }, effectiveDateTime: "2023-06-02", component: [{ code: { text: "Systolic" }, valueQuantity: { value: 120, unit: "mm[Hg]" } }, { code: { text: "Diastolic" }, valueQuantity: { value: 80, unit: "mm[Hg]" } }] },
         source,
       ),
-    ).toMatchObject({ category: "vital", title: "Blood Pressure", detail: "120/80 mm[Hg]" });
+    ).toMatchObject({ category: "vital", title: "Blood Pressure", detail: "120/80 mmHg" });
     expect(normalizeVital({ resourceType: "Observation", id: "v2", code: { text: "Pulse" }, valueQuantity: { value: 72, unit: "/min" } }, source).detail).toBe("72 /min");
     expect(normalizeSocial({ resourceType: "Observation", id: "o1", code: { text: "Tobacco use" }, valueCodeableConcept: { text: "Never smoker" } }, source)).toMatchObject({ category: "social", detail: "Never smoker" });
   });
