@@ -25,8 +25,8 @@ function at(root: unknown, path: string): unknown[] {
   return current;
 }
 
-// Plain text for the FHIR data types that appear in records: codes, references,
-// quantities, ranges, periods and notes. Anything else is left to "All fields".
+// Plain text for the FHIR data types that appear in records: codes, references, names,
+// addresses, quantities, ratios, ranges, periods and notes. Anything else is left to "All fields".
 export function readableValue(value: unknown): string | null {
   if (typeof value === "string") return value.trim() || null;
   if (typeof value === "number") return String(value);
@@ -39,6 +39,21 @@ export function readableValue(value: unknown): string | null {
     return shown ? String(shown.display ?? shown.code) : null;
   }
   if (typeof value.display === "string") return value.display;
+  // A person's name: prefix, given names, family name.
+  if (Array.isArray(value.given) || typeof value.family === "string") {
+    const parts = [...(Array.isArray(value.prefix) ? value.prefix : []), ...(Array.isArray(value.given) ? value.given : []), value.family];
+    return parts.filter((p): p is string => typeof p === "string" && p.trim() !== "").join(" ") || null;
+  }
+  // An address, one line.
+  if (Array.isArray(value.line) || typeof value.city === "string" || typeof value.postalCode === "string") {
+    const parts = [...(Array.isArray(value.line) ? value.line : []), value.city, [value.state, value.postalCode].filter(Boolean).join(" ")];
+    return parts.filter((p): p is string => typeof p === "string" && p.trim() !== "").join(", ") || null;
+  }
+  // A ratio, such as a medication's strength: "500 mg per 1 tablet".
+  if ("numerator" in value) {
+    const [numerator, denominator] = [readableValue(value.numerator), readableValue(value.denominator)];
+    return numerator && denominator ? `${numerator} per ${denominator}` : numerator;
+  }
   if (typeof value.value === "number" || typeof value.value === "string") {
     if (typeof value.value === "number") return quantityText({ value: value.value, unit: typeof value.unit === "string" ? value.unit : undefined });
     return `${value.value} ${typeof value.unit === "string" ? readableUnit(value.unit) : ""}`.trim();
@@ -239,6 +254,24 @@ const FIELDS: Record<string, Field[]> = {
     f("Comment", "comment"),
     status,
   ],
+  Medication: [
+    f("Medication", "code"),
+    f("Form", "form"),
+    f("Ingredients", "ingredient.itemCodeableConcept"),
+    f("Strength", "ingredient.strength"),
+    f("Amount", "amount"),
+  ],
+  Practitioner: [f("Name", "name"), f("Qualifications", "qualification.code"), f("Contact", "telecom")],
+  PractitionerRole: [
+    f("Clinician", "practitioner"),
+    f("Role", "code"),
+    f("Specialty", "specialty"),
+    f("Organization", "organization"),
+    f("Where", "location"),
+    f("Contact", "telecom"),
+  ],
+  Organization: [f("Name", "name"), f("Type", "type"), f("Address", "address"), f("Contact", "telecom")],
+  Location: [f("Name", "name"), f("Description", "description"), f("Address", "address"), f("Contact", "telecom")],
   FamilyMemberHistory: [
     f("Relative", ["relationship", "name"]),
     f("Conditions", "condition.code"),

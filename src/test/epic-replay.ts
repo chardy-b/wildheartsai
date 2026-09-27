@@ -17,7 +17,8 @@ export type SandboxFixture = {
   patientId: string;
   // By sync query key ('Observation:lab'), what the search returned or how it failed.
   searches: Record<string, { resources: Resource[]; truncated: boolean } | RecordedError>;
-  // By attachment address, the Binary read or how it failed.
+  // By address, what each read returned or how it failed: notes' Binary attachments
+  // ('Binary/…') and the resources records point to ('Practitioner/…').
   reads: Record<string, Resource | RecordedError>;
 };
 

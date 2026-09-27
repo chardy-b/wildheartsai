@@ -306,6 +306,41 @@
       "resourceType": "Binary",
       "contentType": "text/html",
       "data": "PHA+UGF0aWVudCBmZWVscyA8Yj53ZWxsPC9iPi4gQ29udGludWUgY3VycmVudCBwbGFuLjwvcD4="
+    },
+    "Practitioner/pr-1": {
+      "resourceType": "Practitioner",
+      "id": "pr-1",
+      "name": [
+        {
+          "text": "Dr. Example Rivera",
+          "prefix": [
+            "Dr."
+          ],
+          "given": [
+            "Example"
+          ],
+          "family": "Rivera"
+        }
+      ],
+      "telecom": [
+        {
+          "system": "phone",
+          "value": "555-0100"
+        }
+      ]
+    },
+    "Location/loc-1": {
+      "resourceType": "Location",
+      "id": "loc-1",
+      "name": "Example Clinic",
+      "address": {
+        "line": [
+          "1 Example Way"
+        ],
+        "city": "Exampleton",
+        "state": "WI",
+        "postalCode": "00000"
+      }
     }
   }
 }

@@ -8,6 +8,7 @@ import type { Db } from "@/lib/db/types";
 import { describeResource } from "@/lib/fhir/describe";
 import { fieldTree } from "@/lib/fhir/fields";
 import { noteAttachment } from "@/lib/fhir/links";
+import { referenceKey } from "@/lib/fhir/references";
 import { listSources } from "@/lib/sources";
 import { timelinePage } from "@/lib/timeline";
 import { loadFixtures, recordedResults, replayEpic, type SandboxFixture } from "@/test/epic-replay";
@@ -63,6 +64,11 @@ describe.each(loadFixtures())("recorded sandbox: $name", ({ fixture }) => {
         .filter((r) => r.id)
         .map((r) => `${r.resourceType}/${r.id}`),
     );
+    // Plus each clinician, place, organization and medication the records point to that the sandbox served.
+    for (const address of Object.keys(fixture.reads)) {
+      const served = fixture.reads[address];
+      if (referenceKey(address) && !("error" in served)) expected.add(address);
+    }
     expect(new Set(rows.map((r) => `${r.resourceType}/${r.fhirId}`))).toEqual(expected);
   });
 

@@ -15,6 +15,10 @@ describe("readableValue", () => {
     expect(readableValue({ text: "Patient reports improvement." })).toBe("Patient reports improvement.");
     expect(readableValue(3)).toBe("3");
     expect(readableValue(true)).toBe("Yes");
+    expect(readableValue({ prefix: ["Dr."], given: ["Ada", "M."], family: "Park" })).toBe("Dr. Ada M. Park");
+    expect(readableValue({ line: ["12 Elm St", "Suite 4"], city: "Madison", state: "WI", postalCode: "53703" })).toBe("12 Elm St, Suite 4, Madison, WI 53703");
+    expect(readableValue({ system: "phone", value: "608-555-0100" })).toBe("608-555-0100");
+    expect(readableValue({ numerator: { value: 500, unit: "mg" }, denominator: { value: 1, unit: "tablet" } })).toBe("500 mg per 1 tablet");
     expect(readableValue({ unknownShape: 1 })).toBeNull();
   });
 });
@@ -111,6 +115,27 @@ describe("describeResource", () => {
         { label: "Category", values: ["Imaging"] },
       ]),
     );
+  });
+
+  it("lays out what records point to: a medication, a clinician and a place", () => {
+    expect(
+      describeResource(
+        r({
+          resourceType: "Medication",
+          code: { text: "Metformin 500 MG tablet" },
+          form: { text: "Tablet" },
+          ingredient: [{ itemCodeableConcept: { text: "Metformin" }, strength: { numerator: { value: 500, unit: "mg" }, denominator: { value: 1, unit: "tablet" } } }],
+        }),
+      ),
+    ).toEqual(expect.arrayContaining([{ label: "Form", values: ["Tablet"] }, expect.objectContaining({ values: ["500 mg per 1 tablet"] })]));
+    expect(describeResource(r({ resourceType: "Practitioner", name: [{ prefix: ["Dr."], given: ["Ada"], family: "Park" }], telecom: [{ system: "phone", value: "608-555-0100" }] }))).toEqual([
+      { label: "Name", values: ["Dr. Ada Park"] },
+      { label: "Contact", values: ["608-555-0100"] },
+    ]);
+    expect(describeResource(r({ resourceType: "Location", name: "Lakeside Clinic", address: { line: ["12 Elm St"], city: "Madison", state: "WI" } }))).toEqual([
+      { label: "Name", values: ["Lakeside Clinic"] },
+      { label: "Address", values: ["12 Elm St, Madison, WI"] },
+    ]);
   });
 
   it("leaves out anything the health system didn't send", () => {

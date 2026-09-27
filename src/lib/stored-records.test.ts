@@ -66,15 +66,22 @@ async function connect(organizationName: string, fhirBaseUrl: string): Promise<s
 }
 
 // Imports resources for a source through the real sync job, with a fake FHIR server.
-async function importInto(sourceId: string, organizationName: string, byPath: Record<string, Resource[]>): Promise<void> {
+async function importInto(
+  sourceId: string,
+  organizationName: string,
+  byPath: Record<string, Resource[]>,
+  reads: Record<string, Resource> = {},
+  queries = QUERIES,
+): Promise<void> {
   const { runId } = await startRun(db, { userId, sourceId, trigger: "connect" }, now);
   const search: SyncDeps["search"] = async ({ path }) => ({ resources: byPath[path.split("&_lastUpdated=")[0]] ?? [], truncated: false });
-  const read: SyncDeps["read"] = async () => {
-    throw new Error("no binaries here");
+  const read: SyncDeps["read"] = async ({ path }) => {
+    if (reads[path]) return reads[path];
+    throw new Error("not served here");
   };
   const deps: SyncDeps = { db, keys, now: () => now, accessToken: async () => "at", search, read };
   const source = { runId, userId, sourceId, organizationName, fhirBaseUrl: "https://x", patientId: "p1", scope: ALL_SCOPES };
-  await runSyncJob({ runId, userId, sourceId }, (_id, work) => work(), { db, now: () => now, load: async () => ({ deps, source }) }, QUERIES);
+  await runSyncJob({ runId, userId, sourceId }, (_id, work) => work(), { db, now: () => now, load: async () => ({ deps, source }) }, queries);
 }
 
 const lab = (id: string, date: string, title: string): Resource =>
@@ -296,6 +303,48 @@ describe("rows kept but not listed", () => {
     expect(sources[0]).toMatchObject({ recordCount: 1, categoryCounts: { lab: 1 } });
     const { items } = await timelinePage(db, keys, userId, sources, ALL, null);
     expect(items.map((i) => i.title)).toEqual(["A1c"]);
+  });
+});
+
+describe("referenced resources", () => {
+  const withOrders = SYNC_QUERIES.filter((q) => q.category === "order" || q.key === "Observation:lab");
+  const clinician = { resourceType: "Practitioner", id: "pr-1", name: [{ prefix: ["Dr."], given: ["Ada"], family: "Park" }] } as Resource;
+
+  it("shows what a record points to, and fills in a name the record didn't carry", async () => {
+    const north = await connect("North Clinic", "https://north.example/R4");
+    const order = { resourceType: "ServiceRequest", id: "o1", status: "active", code: { text: "MRI knee" }, authoredOn: "2024-02-01", requester: { reference: "Practitioner/pr-1" } };
+    await importInto(
+      north,
+      "North Clinic",
+      { "ServiceRequest?patient=p1": [order as Resource], "Observation?patient=p1&category=laboratory": [lab("n1", "2024-01-05", "A1c")] },
+      { "Practitioner/pr-1": clinician },
+      withOrders,
+    );
+
+    const sources = await listSources(db, userId);
+    // The clinician is stored to support the order, not listed or counted as a record.
+    expect(sources[0].recordCount).toBe(2);
+    const { items } = await timelinePage(db, keys, userId, sources, ALL, null);
+    const shown = items.find((i) => i.title === "MRI knee")!;
+    expect(shown.detail).toBe("Ordered by Dr. Ada Park");
+    expect(shown.linked).toEqual([{ key: "Practitioner/pr-1", resource: clinician }]);
+    // The record itself stays as the health system sent it.
+    expect(shown.resource).toEqual(order);
+    expect(items.find((i) => i.title === "A1c")!.linked).toEqual([]);
+  });
+
+  it("links only to what the same health system sent", async () => {
+    const north = await connect("North Clinic", "https://north.example/R4");
+    const south = await connect("South Clinic", "https://south.example/R4");
+    const byClinician = { ...lab("n1", "2024-01-05", "A1c"), performer: [{ reference: "Practitioner/pr-1" }] } as Resource;
+    await importInto(north, "North Clinic", { "Observation?patient=p1&category=laboratory": [byClinician] }, { "Practitioner/pr-1": clinician }, withOrders);
+    const order = { resourceType: "ServiceRequest", id: "o1", code: { text: "MRI knee" }, requester: { reference: "Practitioner/pr-1" } };
+    await importInto(south, "South Clinic", { "ServiceRequest?patient=p1": [order as Resource] }, {}, withOrders);
+
+    const { items } = await timelinePage(db, keys, userId, await listSources(db, userId), ALL, null);
+    expect(items.find((i) => i.title === "A1c")!.linked).toEqual([{ key: "Practitioner/pr-1", resource: clinician }]);
+    // South's pr-1 is a different clinician: nothing South sent says who.
+    expect(items.find((i) => i.title === "MRI knee")).toMatchObject({ detail: null, linked: [] });
   });
 });
 

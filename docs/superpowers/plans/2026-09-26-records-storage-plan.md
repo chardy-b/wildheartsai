@@ -209,6 +209,13 @@ The engine is plain functions with the database, keys, clock, token and FHIR sea
 - [x] Privacy notice lists appointments, family history, and the details records point to.
 - [ ] To turn on: enable the seven APIs in the Epic app registration (sandbox first), set `EPIC_EXPANDED_SCOPES=true` in Vercel, reconnect the sandbox, re-run `npm run qa:capture` to record the new searches.
 
-## Stage 8b (next): referenced resources
+## Stage 8b: referenced resources
 
 Fetch the Medication, Practitioner, PractitionerRole, Organization and Location resources that stored records point to (by reference, once each), store them without a category, and use them to show names where records only carry a reference.
+
+- [x] Sync step `references` (`src/lib/sync/references.ts`), after the searches and before notes: collects references from the source's current records, skips ones already stored and types the connection wasn't granted, reads up to 200 per sync (4 at a time), and stores each as a support row (`category` null, never listed or counted). A read that returns a different type or id is dropped. Stats go under `Reference:linked` (optional; `references_failed` or `truncated`); a refused token marks the source for reconnecting.
+- [x] Incremental like the searches: a cursor under `Reference:linked` means most passes only look at records first stored since the last pass; a full pass at least weekly (`FULL_PULL_EVERY_MS`) also retries references that failed.
+- [x] Timeline: each record gets `linked` (the referenced resources stored from the same source only; ids aren't comparable across health systems). A reference without a `display` gets the stored resource's name filled in before the summary is built ("Ordered by Dr. Ada Park"); the stored record itself is unchanged.
+- [x] Record detail: a "Linked details" section lays out each linked resource (medication form and strength, clinician name and contact, specialty, address). `readableValue` reads names, addresses and ratios.
+- [x] QA: `qa:capture` also records the referenced reads; the replay counts them. `handmade-example.json` serves a Practitioner and a Location.
+- [ ] Epic's sandbox already sends a `display` on every reference seen so far, so there the gain is the linked details. Nothing is fetched until stage 8a's switch is on and the connection reconnected; until then the step fetches nothing.
