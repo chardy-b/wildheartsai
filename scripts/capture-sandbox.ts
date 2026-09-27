@@ -55,12 +55,24 @@ async function main() {
   // Belt and braces: never record a real health system.
   if (!isSampleData(connection)) throw new Error("Refusing to capture a connection that isn't Epic's sandbox");
 
+  // Facts about the connection, never the tokens themselves: enough to tell why access can't be renewed.
+  const scopes = connection.scope.split(/\s+/).filter(Boolean);
+  const expired = connection.accessTokenExpiresAt.getTime() <= Date.now();
+  console.log(`Sandbox connection: access token ${expired ? "expired" : "valid until"} ${connection.accessTokenExpiresAt.toISOString()}`);
+  console.log(`  refresh token: ${connection.refreshToken ? "yes" : "no"}; offline_access granted: ${scopes.includes("offline_access") ? "yes" : "no"}\n`);
+
   let accessToken: string;
   try {
     accessToken = await accessTokenFor(connection);
   } catch (error) {
-    if (error instanceof ReconnectRequiredError) throw new Error("The sandbox connection has expired. Reconnect it on the local Connections page, then run this again.");
-    throw error;
+    if (!(error instanceof ReconnectRequiredError)) throw error;
+    throw new Error(
+      connection.refreshToken
+        ? "Epic refused to renew access (the refresh token has expired or was revoked). Reconnect the sandbox on the local Connections page, then run this again."
+        : "Access has expired and Epic didn't issue a refresh token for this connection, so it can't be renewed. " +
+            "Reconnect the sandbox and run this within the hour. For connections that stay usable, the Epic app registration " +
+            "needs refresh tokens enabled and the offline_access scope granted.",
+    );
   }
 
   const recordError = (error: unknown) => {
@@ -119,7 +131,12 @@ async function main() {
 main().then(
   () => process.exit(0),
   (error: unknown) => {
-    console.error(error instanceof Error ? error.message : error);
+    // Database errors wrap the useful part ("connection refused", "relation does not exist") in `cause`.
+    const cause = error instanceof Error && error.cause instanceof Error ? `\n  Cause: ${error.cause.message}` : "";
+    console.error(`${error instanceof Error ? error.message : String(error)}${cause}`);
+    if (/Failed query/.test(String(error))) {
+      console.error("  Is the local database running (`npm run db:local`, in its own terminal) and migrated (`npm run db:migrate`)?");
+    }
     process.exit(1);
   },
 );
