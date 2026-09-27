@@ -207,7 +207,7 @@ The engine is plain functions with the database, keys, clock, token and FHIR sea
 - [x] Connections page: a connected organization missing any requested scope shows "Reconnect to add appointments, family history and more detail on your records", and Reconnect becomes the primary button.
 - [x] Timeline: future-dated records (upcoming appointments) sit in an **Upcoming** group at the top, soonest first.
 - [x] Privacy notice lists appointments, family history, and the details records point to.
-- [ ] To turn on: enable the seven APIs in the Epic app registration (sandbox first), set `EPIC_EXPANDED_SCOPES=true` in Vercel, reconnect the sandbox, re-run `npm run qa:capture` to record the new searches.
+- [ ] To turn on: see **To do: a new Epic app with more access** below. Until then `EPIC_EXPANDED_SCOPES` stays off.
 
 ## Stage 8b: referenced resources
 
@@ -219,3 +219,12 @@ Fetch the Medication, Practitioner, PractitionerRole, Organization and Location 
 - [x] Record detail: a "Linked details" section lays out each linked resource (medication form and strength, clinician name and contact, specialty, address). `readableValue` reads names, addresses and ratios.
 - [x] QA: `qa:capture` also records the referenced reads; the replay counts them. `handmade-example.json` serves a Practitioner and a Location.
 - [ ] Epic's sandbox already sends a `display` on every reference seen so far, so there the gain is the linked details. Nothing is fetched until stage 8a's switch is on and the connection reconnected; until then the step fetches nothing.
+
+## To do: a new Epic app with more access (deferred)
+
+Stages 8a and 8b are merged but dormant. The current Epic app registration is marked ready for production, and Epic doesn't allow adding incoming APIs to it. So appointments, family history and the linked details (medication form and strength, clinician specialty, addresses) can't be fetched yet. Everything else syncs as before; medications already come through MedicationRequest, named by the reference's `display`.
+
+- [ ] Register a new Epic app (fhir.epic.com → Build Apps) with the current APIs plus these R4 ones: Appointment Read and Search, FamilyMemberHistory Read and Search, Medication Read, Practitioner Read, PractitionerRole Read, Organization Read, Location Read. Same settings as today: confidential client, JWK set URL, refresh tokens and `offline_access`. First check with Epic whether an existing app can be revised instead, which would keep the client IDs.
+- [ ] Put the new non-production and production client IDs in `.env.local` and Vercel (Preview first), and set `EPIC_EXPANDED_SCOPES=true` in the same place. Never turn the switch on for an app that lacks the APIs: sign-ins would request scopes it can't grant.
+- [ ] Reconnect the sandbox locally, Refresh, check `sync_run.stats` for the new searches and `Reference:linked`, then `npm run qa:capture -- --name sandbox-tester` and commit the fixture.
+- [ ] Before production: everyone reconnects once (Connections prompts for it), and each health system has to enable the new app. Connections that aren't granted the new scopes keep working and skip the new searches (`not_granted`).
