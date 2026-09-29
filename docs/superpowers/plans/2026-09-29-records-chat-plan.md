@@ -20,19 +20,19 @@
 
 | # | Stage | Ships |
 | --- | --- | --- |
-| 0 | Infrastructure prep (by hand, no PR) | Tailscale on the VPS, tailnet ACL, llama-swap API key and logging off, DNS for `agent.wildheartsai.com`, a model chosen and its tool calling checked |
+| 0 | Infrastructure prep (by hand, no PR) | Tailscale on the VPS, tailnet ACL, llama-swap API key and logging off, Funnel allowed for the VPS, a model chosen and its tool calling checked |
 | 1 | Chat storage | `chat`, `chat_message` tables, migration with RLS, sealed read and write helpers. No behaviour change. |
 | 2 | Tokens and tools API | Env vars, key script, `/api/agent/token`, `/api/agent/jwks`, service-secret check, chat and tool endpoints, audit action. Still no UI. |
 | 3 | Agent service | `agent/` package: core, Node adapter, SSE, pi tools, context trimming, queue, tests with pi's faux provider, local dev |
 | 4 | Chat UI | Chat list and chat pages, streaming client, safe Markdown, cancel, CSP, feature flag. Works end to end locally. |
-| 5 | VPS deploy and consent | systemd unit, reverse proxy vhost, env files, smoke test, privacy and consent copy, `CONSENT_VERSION` bump. Turned on in production. |
+| 5 | VPS deploy and consent | systemd unit, Tailscale Funnel, env files, smoke test, privacy and consent copy, `CONSENT_VERSION` bump. Turned on in production. |
 | 6 | Hardening and quality | Rate limits, re-attach, evaluations on sandbox recordings, deploy automation, better search |
 
 ---
 
 ## Stage 0: infrastructure prep (by hand)
 
-- [ ] **VPS:** install Tailscale and tag the machine (e.g. `tag:agent`). Create a system user `wildhearts-agent` with no login shell. Install Node 22 LTS.
+- [ ] **VPS:** Tailscale is already installed; tag the machine (e.g. `tag:agent`). Create a system user `wildhearts-agent` with no login shell. Install Node 22 LTS.
 - [ ] **Tailnet ACL:** allow `tag:agent` to reach only the GPU machine's llama-swap port. Nothing else, and nothing the other way.
 - [ ] **GPU machine:**
   - bind llama-swap to the tailnet interface;
@@ -44,7 +44,7 @@
   - fits the context size we plan for.
 
   Write down its id, context window and any `compat` quirks.
-- [ ] **DNS:** `agent.wildheartsai.com` → VPS. Add a TLS vhost on the existing reverse proxy that returns 503 until stage 5.
+- [ ] **Funnel:** in the tailnet policy, grant the `funnel` node attribute to the VPS only. Note the VPS's `ts.net` name; it becomes `AGENT_URL`. Don't turn Funnel on until stage 5.
 - [ ] Record the outcomes (model id, context window, ports; no secrets) in the stage 3 PR description.
 
 ## Stage 1: chat storage
@@ -187,7 +187,7 @@ agent/
   - `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`;
   - `MemoryMax=400M`, `Restart=on-failure`;
   - `ExecStart=node --max-old-space-size=256 dist/server.js`.
-- [ ] **Reverse proxy:** the `agent.wildheartsai.com` vhost forwards to `127.0.0.1:PORT`. Turn off response buffering (SSE), set timeouts of at least 10 minutes, and don't log request bodies.
+- [ ] **Funnel:** `tailscale funnel --bg <PORT>` (check flags with `tailscale funnel --help`). Confirm with `tailscale funnel status` that only this port is published, and that a 5-minute streamed answer arrives without being cut off.
 - [ ] **Vercel, Production scope only:** set `AGENT_TOKEN_PRIVATE_JWK`, `AGENT_SERVICE_SECRET` and `AGENT_URL`.
 - [ ] **Consent:** update the privacy page and consent text (spec §8) and bump `CONSENT_VERSION` in the same PR that turns chat on.
 - [ ] **Smoke test on production** with the Epic sandbox account:
