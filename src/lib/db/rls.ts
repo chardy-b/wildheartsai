@@ -19,6 +19,8 @@ export const RLS_TABLES = [
   "sync_cursor",
   "audit_event",
   "profile",
+  "chat",
+  "chat_message",
 ] as const;
 
 export async function setUser(tx: Pick<Db, "execute">, userId: string): Promise<void> {

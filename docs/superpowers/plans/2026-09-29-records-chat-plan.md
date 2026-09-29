@@ -54,24 +54,24 @@
 | File | Responsibility |
 | --- | --- |
 | `src/lib/db/chat-schema.ts` | `chat`, `chat_message` as in spec §3, exported from `schema.ts` |
-| `drizzle/00xx_chat.sql` | Generated migration, plus hand-added `ENABLE`/`FORCE ROW LEVEL SECURITY` and `owner_only` policies copied from `0006_row_level_security.sql` |
+| `drizzle/0007_chat.sql` | Generated migration, plus hand-added `ENABLE`/`FORCE ROW LEVEL SECURITY` and `owner_only` policies copied from `0006_row_level_security.sql` |
 | `src/lib/db/rls.ts` | Add `chat`, `chat_message` to `RLS_TABLES` |
-| `src/lib/chats.ts` | `createChat`, `listChats`, `renameChat`, `deleteChat`, `loadMessages`, `appendMessages`, `setTitle`. All take a `tx` from `asUser` plus the person's keys. |
+| `src/lib/chats.ts` | `createChat`, `listChats`, `getChat`, `setChatTitle` (rename and first-answer title), `deleteChat`, `loadMessages`, `appendMessages`. All take a `tx` from `asUser` plus the person's keys. |
 
 ### Tasks
 
-- [ ] Schema and migration (`npm run db:generate`, then add the RLS statements by hand). `npm run db:check-rls` stays clean.
-- [ ] Sealing:
+- [x] Schema and migration (`npm run db:generate`, then add the RLS statements by hand). `npm run db:check-rls` needs a live database, so it runs against local Postgres, not in tests; the RLS test checks the flags instead.
+- [x] Sealing:
   - `sealed_title` at `{ table: "chat", field: "title", rowId: chat.id }`;
   - `sealed_content` at `{ table: "chat_message", field: "content", rowId: message.id }`.
 
   Message ids are generated before insert, so the location is known when sealing.
-- [ ] `appendMessages(tx, keys, chatId, messages[{ seq, role, content, model?, usage? }])`:
+- [x] `appendMessages(tx, keys, chatId, messages[{ seq, role, content, model?, usage? }])`:
   - inserts with `ON CONFLICT (chat_id, seq) DO NOTHING`;
   - rejects a first `seq` that isn't the current count;
   - bumps `chat.updated_at`.
-- [ ] `listChats` returns id, title (unsealed, or null), updated_at, newest first. `loadMessages` returns messages in `seq` order.
-- [ ] Tests (PGlite):
+- [x] `listChats` returns id, title (unsealed, or null), updated_at, newest first. `loadMessages` returns messages in `seq` order.
+- [x] Tests (PGlite):
   - round trip of sealed content;
   - another user sees nothing, through RLS and through the helpers;
   - a duplicate `seq` is ignored, a gap is rejected;
