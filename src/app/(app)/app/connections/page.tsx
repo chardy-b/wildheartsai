@@ -100,6 +100,11 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
         </p>
       ) : null}
 
+      <div className="panel-light">
+        <h2>Add a health system</h2>
+        <OrgSearch environment={environment} query={query} results={results} sample={sample} formAction="/app/connections" />
+      </div>
+
       <div>
         <div className="sources-head">
           <h2>Your health systems</h2>
@@ -200,11 +205,6 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
             ))}
           </ul>
         )}
-      </div>
-
-      <div className="panel-light">
-        <h2>Add a health system</h2>
-        <OrgSearch environment={environment} query={query} results={results} sample={sample} formAction="/app/connections" />
       </div>
 
       <div>
