@@ -1,10 +1,11 @@
 import "server-only";
 import { db } from "@/lib/db";
+import { importEpicDirectory } from "@/lib/epic/directory-import";
 import { runSyncJob } from "@/lib/sync/job";
 import { failRun } from "@/lib/sync/run";
 import { queueScheduledRefreshes, sourcesDueForRefresh } from "@/lib/sync/scheduled";
 import { loadSyncJob, sendSyncRequest } from "@/lib/sync/server";
-import { inngest, syncRequested } from "./client";
+import { directoryRefreshRequested, inngest, syncRequested } from "./client";
 
 // Syncs one source. One run per source at a time; each query is its own retried step.
 export const syncSource = inngest.createFunction(
@@ -51,4 +52,17 @@ export const refreshSources = inngest.createFunction(
   },
 );
 
-export const functions = [syncSource, refreshSources];
+// Daily at 08:41 UTC, or on request: replace the stored directory of Epic health systems and
+// their clinics (src/lib/epic/brands.ts). One step: the download is ~95 MB, too big to pass
+// between steps, and the import is a single transaction. A failure keeps yesterday's directory.
+export const refreshEpicDirectory = inngest.createFunction(
+  {
+    id: "refresh-epic-directory",
+    triggers: [{ cron: "41 8 * * *" }, directoryRefreshRequested],
+    concurrency: { limit: 1 },
+    retries: 2,
+  },
+  async ({ step }) => step.run("import directory", () => importEpicDirectory(db)),
+);
+
+export const functions = [syncSource, refreshSources, refreshEpicDirectory];

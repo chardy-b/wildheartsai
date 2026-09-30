@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { buildAuthorizeUrl, requestedScopes } from "@/lib/epic/authorize";
-import { findOrganization, loadConnectable } from "@/lib/epic/directory";
+import { db } from "@/lib/db";
+import { findConnectable } from "@/lib/epic/directory-store";
 import { encodeFlow, FLOW_COOKIE, FLOW_TTL_SECONDS } from "@/lib/epic/flow";
 import { createPkcePair, createState } from "@/lib/epic/pkce";
 import { credentialsForOrganization, tokenKey } from "@/lib/epic/server";
@@ -16,7 +17,15 @@ export async function GET(request: NextRequest) {
   const { EPIC_REDIRECT_URI } = config;
   const environment = enabledEpicEnvironment(config);
   const iss = request.nextUrl.searchParams.get("iss") ?? "";
-  const organization = findOrganization(await loadConnectable(environment), iss);
+  // `org` names which of the address's listed systems the person picked; only a listed name is used.
+  const org = request.nextUrl.searchParams.get("org") ?? undefined;
+  let organization;
+  try {
+    organization = await findConnectable(db, environment, iss, org);
+  } catch (error) {
+    console.error("[epic] directory lookup failed", error instanceof Error ? error.message : "unknown");
+    return NextResponse.redirect(new URL("/app/connections?error=unavailable", request.url));
+  }
   const credentials = organization && credentialsForOrganization(organization.fhirBaseUrl);
   if (!organization || !credentials) return NextResponse.json({ error: "unknown_organization" }, { status: 400 });
 

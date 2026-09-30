@@ -7,3 +7,7 @@ import type { SyncRequest } from "@/lib/sync/job";
 export const inngest = new Inngest({ id: "wild-hearts-health" });
 
 export const syncRequested = eventType("records/sync.requested", { schema: staticSchema<SyncRequest>() });
+
+// Imports Epic's health system directory now instead of waiting for the daily run: send it from
+// the Inngest dashboard after the first deploy, or whenever the directory looks stale.
+export const directoryRefreshRequested = eventType("epic/directory.refresh-requested");

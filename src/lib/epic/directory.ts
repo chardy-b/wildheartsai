@@ -3,7 +3,15 @@ import { hasUnsafePathSyntax } from "@/lib/url-security";
 
 // Epic sometimes lists several names for one FHIR address (for example a health
 // system and its children's hospital). `name` is the shortest; the rest stay searchable.
-export type Organization = { name: string; fhirBaseUrl: string; otherNames?: string[] };
+// From the stored directory (directory-store.ts), `name` may be a clinic or hospital that is
+// `partOf` a health system, and `location` is its city or the system's states.
+export type Organization = {
+  name: string;
+  fhirBaseUrl: string;
+  otherNames?: string[];
+  partOf?: string;
+  location?: string;
+};
 
 export const EPIC_SANDBOX: Organization = {
   name: "Epic sandbox (sample patients)",
@@ -28,11 +36,11 @@ const bundleSchema = z.object({
   ),
 });
 
-function normalize(url: string): string {
+export function normalize(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
-function safeEndpointBase(value: string): string | undefined {
+export function safeEndpointBase(value: string): string | undefined {
   const candidate = value.trim();
   if (!/^https:\/\//i.test(candidate) || hasUnsafePathSyntax(candidate)) return undefined;
 
@@ -118,9 +126,16 @@ export function organizationChoices(
   };
 }
 
-// Words are lowercased, apostrophes dropped ("Luke's" -> "lukes") and split on anything else.
-function wordsOf(text: string): string[] {
-  return text.toLowerCase().replace(/['’]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
+// Words are lowercased, accents and apostrophes dropped ("Luke's" -> "lukes", "Clínica" ->
+// "clinica") and split on anything else.
+export function wordsOf(text: string): string[] {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
 }
 
 // Every query word must start a word in one of the organization's names, so
