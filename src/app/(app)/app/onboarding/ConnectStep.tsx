@@ -1,13 +1,16 @@
 import { FinishLater } from "@/components/app/FinishLater";
 import { OrgSearch } from "@/components/app/OrgSearch";
-import { loadConnectable, organizationChoices } from "@/lib/epic/directory";
+import { db } from "@/lib/db";
+import { connectChoices } from "@/lib/epic/directory-store";
 import { enabledEpicEnvironment, env } from "@/lib/env";
 import "@/components/app/connections.css";
 
 export async function ConnectStep({ query, error }: { query: string; error?: string }) {
   const environment = enabledEpicEnvironment(env());
-  const connectable = await loadConnectable(environment).catch(() => []);
-  const { results, sample } = organizationChoices(environment, connectable, new Set(), query);
+  const { results, sample } = await connectChoices(db, environment, query, new Set()).catch(() => ({
+    results: [],
+    sample: null,
+  }));
   return (
     <div className="auth-form">
       {error ? (

@@ -50,6 +50,13 @@
       "when": 1790545046701,
       "tag": "0006_row_level_security",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790810516118,
+      "tag": "0007_epic_directory",
+      "breakpoints": true
     }
   ]
 }

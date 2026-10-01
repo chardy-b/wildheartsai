@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { OrgSearch } from "@/components/app/OrgSearch";
 import { SyncWatcher } from "@/components/app/SyncWatcher";
 import { missingScopes, scopeLabels } from "@/lib/epic/authorize";
-import { isSampleData, loadConnectable, organizationChoices } from "@/lib/epic/directory";
+import { db } from "@/lib/db";
+import { isSampleData } from "@/lib/epic/directory";
+import { connectChoices } from "@/lib/epic/directory-store";
 import { connectErrorMessage } from "@/lib/epic/messages";
 import { enabledEpicEnvironment, env } from "@/lib/env";
 import { requireOnboarded } from "@/lib/onboarding-guard";
@@ -68,15 +70,13 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
   const environment = enabledEpicEnvironment(env());
   const expanded = env().EPIC_EXPANDED_SCOPES;
 
-  const [sources, connectable] = await Promise.all([
-    loadSourcesFor(session.user.id),
-    loadConnectable(environment).catch(() => null),
-  ]);
+  const sources = await loadSourcesFor(session.user.id);
   const now = new Date();
   const connectedUrls = new Set(sources.filter((s) => s.status !== "disconnected").map((s) => s.fhirBaseUrl));
+  const choices = await connectChoices(db, environment, query, connectedUrls).catch(() => null);
+  const { results, sample } = choices ?? { results: [], sample: null };
   const refreshMessage = typeof refresh === "string" ? REFRESH_MESSAGES[refresh] : undefined;
-  const { results, sample } = organizationChoices(environment, connectable ?? [], connectedUrls, query);
-  const errorMessage = connectErrorMessage(error) ?? (connectable ? undefined : connectErrorMessage("unavailable"));
+  const errorMessage = connectErrorMessage(error) ?? (choices ? undefined : connectErrorMessage("unavailable"));
 
   return (
     <section className="app-page connections">
@@ -157,7 +157,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                   {/* Signing in again replaces the stored access and keeps the records already imported. */}
                   <a
                     className={source.status === "connected" && !newPermissions(source, expanded).length ? "btn btn-ghost" : "btn"}
-                    href={`/api/epic/authorize?iss=${encodeURIComponent(source.fhirBaseUrl)}`}
+                    href={`/api/epic/authorize?${new URLSearchParams({ iss: source.fhirBaseUrl, org: source.organizationName })}`}
                   >
                     Reconnect
                   </a>
