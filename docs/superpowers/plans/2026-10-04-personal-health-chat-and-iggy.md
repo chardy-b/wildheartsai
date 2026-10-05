@@ -242,3 +242,17 @@ Synthetic Docker acceptance passed on the authorized shared VPS: Iggy sandbox ch
 The web feature remains disabled until its optional `CHAT_API_URL` and `CHAT_SIGNING_KEY` are configured. Production role provisioning, actual inference-server/model/template compatibility, TLS routing and deployment are still operator steps. No production migration, merge, registry publish or deployment was performed. The future GitHub research/wiki corpus remains outside this implementation.
 
 Final integrated validation: npm run lint, npm run typecheck, npm test (374 tests / 57 files), and npm run build passed. Standalone service typecheck, tests (9 tests / 5 files), and both bundle builds passed. Linux Iggy regression packages and both real-Docker acceptance paths passed. Independent subagent reviews approved delivery.
+
+
+## Local account and actual inference QA — 2026-10-05
+
+Tested the documented local seeded account through the actual Next.js chat UI, using an isolated Postgres/service/gateway/Iggy deployment on the approved shared VPS and the operator's local OpenAI-compatible inference endpoint. The model alias was qwen3.8-flash-next-q2_0. Only synthetic seed records were used; existing databases and Matrix/Element resources were untouched.
+
+- Found and fixed the page CSP blocking cross-origin chat requests. Tickets and CSP now share canonical origin validation; the policy permits only the configured API origin, and rejects wildcard/directive injection, credentials, paths, queries and fragments. Missing/weak signing configuration keeps chat disabled and the policy self-only. Independent review approved the fix; lint, typecheck, 376 tests across 58 files, and production build passed. Commit: 34b0e4e.
+- The actual model called get_data_coverage, find_records, read_records and save_summary, returned the amended stored A1c with its collection date and source, and explicitly described incomplete coverage. The response and one encrypted summary were persisted.
+- Closed the browser tab during generation. The worker completed in the background, and reopening restored the answer and replayed tool activity. The real-model run took approximately 114 seconds.
+- A separate conversation called find_saved_summaries and correctly reused the saved summary and its data-gap explanation. It completed in approximately 37 seconds without creating an additional summary.
+- A temporary SSH-socket inference relay initially omitted Content-Length; the local inference server rejected the chunked request body. Correcting that test-only relay restored real inference, and the UI retry path worked. The initial failed run remains in test history; it was not automatically replayed.
+- Matrix/Element remained running and healthy. Test containers use a separate namespace, their own data directory, bounded resources and loopback-only published database/API ports. No production merge, schema migration or deployment was performed.
+
+The 114-second query is close to the fixed 120-second worker/sandbox budget. Longer reasoning or colder model prompts may time out; deployment should evaluate an operator-controlled bounded timeout or a faster/less-reasoning model configuration. This test establishes protocol and workflow compatibility for the configured server/model, not clinical accuracy. Live Epic note refresh was not tested because seeded sources intentionally contain placeholder tokens. Local test services and SSH tunnels remain running so the operator can revisit the chat.
