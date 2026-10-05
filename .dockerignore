@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/.env*
+**/.next
+**/dist
+**/coverage
+.implementation
+.vercel
+.pglite
+src/test/fixtures

@@ -5,7 +5,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
-      // `server-only` throws outside Next's server runtime; tests run in plain Node.
       "server-only": fileURLToPath(new URL("./src/test/empty.ts", import.meta.url)),
     },
   },
@@ -13,8 +12,10 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
     setupFiles: ["./src/test/setup.ts"],
-    // Database tests start an in-process Postgres (PGlite); the first one in each file also
-    // runs migrations, which takes several seconds on a busy machine.
+    // Each database test worker starts an in-process Postgres. Bound simultaneous
+    // migrations so larger suites do not time out under local/CI memory pressure.
+    maxWorkers: 2,
+    hookTimeout: 30_000,
     testTimeout: 15_000,
   },
 });

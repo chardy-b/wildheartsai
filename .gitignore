@@ -19,6 +19,7 @@
 
 # production
 /build
+/services/chat/dist
 
 # misc
 .DS_Store
