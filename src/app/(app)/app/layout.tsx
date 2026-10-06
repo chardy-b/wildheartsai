@@ -5,6 +5,7 @@ import "@/components/app/app.css";
 const LINKS = [
   { href: "/app", label: "Your record" },
   { href: "/app/connections", label: "Connections" },
+  { href: "/app/chat", label: "Chat" },
 ];
 
 export default async function AppLayout({ children }: LayoutProps<"/app">) {

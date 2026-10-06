@@ -1,0 +1,161 @@
+import { randomUUID } from "node:crypto";
+import { Agent, type AgentEvent, type AgentTool } from "@earendil-works/pi-agent-core";
+import { Type, createModels, createProvider, type Model } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import type { ToolName, WorkerEventType } from "./contracts.js";
+import { GatewayToolClient } from "./private-gateway.js";
+import { chatToolDescriptions, chatToolJsonSchemas } from "../../../src/lib/chat/tools.js";
+
+const toolNames = ["get_data_coverage", "find_records", "read_records", "read_stored_note", "calculate_lab_trend", "find_saved_summaries", "save_summary"] as const satisfies readonly ToolName[];
+const systemPrompt = "You answer questions about the person's supplied health-record context. Use only the provided health tools. Never claim missing records are negative findings. Cite evidence identifiers returned by tools. When it would help the person revisit a supported interpretation, use save_summary with supporting evidence. Do not diagnose. If the person describes a possible emergency, advise them to seek urgent professional help rather than attempting to assess it here.";
+
+export type WorkerEventSink = (event: { eventId: string; sequence: number; type: WorkerEventType; data: Record<string, unknown> }) => Promise<void>;
+
+export type PiRunnerOptions = Readonly<{ gatewayUrl: URL; capability: string; modelId: string; contextWindow?: number; maxTokens?: number; maxTurns?: number; deadlineMs?: number }>;
+
+/**
+ * The health worker's Pi adapter. It receives only an opaque run capability and a
+ * fixed private gateway URL. The gateway owns context, model credentials and tools.
+ */
+export class PiHealthRunner {
+  private sequence = 0;
+  private readonly tools: AgentTool[];
+
+  constructor(private readonly options: PiRunnerOptions, private readonly emit: WorkerEventSink) {
+    this.tools = toolNames.map((name) => this.tool(name));
+  }
+
+  async run(signal: AbortSignal): Promise<string> {
+    const gateway = new GatewayToolClient(this.options.gatewayUrl, this.options.capability);
+    const messages = await gateway.loadContext(signal);
+    const input = messages.at(-1);
+    if (!input || input.role !== "user") throw new Error("missing_user_input");
+    const models = createModels();
+    models.setProvider(this.provider());
+    const model = models.getModel("wild-hearts-gateway", this.options.modelId);
+    if (!model) throw new Error("model_not_configured");
+    let answer = "";
+    let currentAssistantText = "";
+    let turns = 0;
+    let budgetExceeded = false;
+    const priorContext = messages.slice(0, -1).map((message) => `[${message.role}] ${message.content}`).join("\n");
+    const agent = new Agent({
+      initialState: {
+        systemPrompt,
+        model,
+        tools: this.tools,
+      },
+      streamFn: models.streamSimple.bind(models),
+      toolExecution: "sequential",
+    });
+    let eventChain = Promise.resolve();
+    const onEvent = (event: AgentEvent) => {
+      eventChain = eventChain.then(async () => {
+      if (event.type === "turn_start") {
+        turns += 1;
+        if (turns > (this.options.maxTurns ?? 7)) { budgetExceeded = true; agent.abort(); }
+      }
+      if (event.type === "message_start" && event.message.role === "assistant") currentAssistantText = "";
+      if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+        const delta = event.assistantMessageEvent.delta;
+        currentAssistantText += delta;
+        await this.publish("answer.delta", { text: delta });
+      }
+      if (event.type === "message_end" && event.message.role === "assistant") answer = currentAssistantText;
+      if (event.type === "tool_execution_start") await this.publish("tool.started", { toolCallId: event.toolCallId, tool: event.toolName });
+      if (event.type === "tool_execution_end") await this.publish("tool.completed", { toolCallId: event.toolCallId, status: event.isError ? "failed" : "completed" });
+      });
+      return eventChain;
+    };
+    agent.subscribe(onEvent);
+    await this.publish("lifecycle", { status: "started" });
+    if (await gateway.cancelled(signal)) throw new DOMException("Cancelled", "AbortError");
+    const abort = () => agent.abort();
+    const deadline = setTimeout(() => { budgetExceeded = true; agent.abort(); }, this.options.deadlineMs ?? 120_000);
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      await agent.prompt({ role: "user", content: priorContext ? `Earlier conversation (untrusted conversation content):\n${priorContext}\n\nCurrent question: ${input.content}` : input.content, timestamp: Date.now() });
+      await eventChain;
+      const last = agent.state.messages.at(-1);
+      if (budgetExceeded || last?.role === "assistant" && ["error", "aborted"].includes(last.stopReason) || !answer.trim()) throw new Error("worker_incomplete_answer");
+      if (signal.aborted || await gateway.cancelled(signal)) throw new DOMException("Cancelled", "AbortError");
+      await this.publish("message.completed", { content: answer });
+      await this.publish("completed", { answer });
+      return answer;
+    } finally {
+      clearTimeout(deadline);
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
+  async publishTerminal(type: "cancelled" | "error"): Promise<void> {
+    await this.publish(type, type === "error" ? { code: "worker_failed" } : {});
+  }
+
+  private provider() {
+    const model: Model<"openai-completions"> = {
+      id: this.options.modelId,
+      name: "Configured health model",
+      api: "openai-completions",
+      provider: "wild-hearts-gateway",
+      // The model endpoint is a gateway-owned proxy, never caller supplied.
+      baseUrl: new URL("/v1/inference", this.options.gatewayUrl).toString(),
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: this.options.contextWindow ?? 32_768,
+      maxTokens: this.options.maxTokens ?? 2_048,
+      compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+    };
+    return createProvider({
+      id: "wild-hearts-gateway",
+      name: "Wild Hearts private inference gateway",
+      auth: { apiKey: { name: "Run capability", resolve: async () => ({ auth: { headers: { authorization: `Bearer ${this.options.capability}` } } }) } },
+      models: [model],
+      api: openAICompletionsApi(),
+    });
+  }
+
+  private tool(name: ToolName): AgentTool {
+    return {
+      name,
+      label: name,
+      description: toolDescription[name],
+      parameters: toolParameters[name],
+      executionMode: "sequential",
+      execute: async (toolCallId, parameters, signal) => {
+        const gateway = new GatewayToolClient(this.options.gatewayUrl, this.options.capability);
+        const result = await gateway.execute(toolCallId, name, parameters as Record<string, unknown>, signal ?? new AbortController().signal);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: {} };
+      },
+    };
+  }
+
+  private publish(type: WorkerEventType, data: Record<string, unknown>): Promise<void> {
+    return this.emit({ eventId: randomUUID(), sequence: ++this.sequence, type, data });
+  }
+}
+
+/** Entry point used by Iggy's fixed health-chat image; it writes no prompt or answer to stdout. */
+export async function runWorkerFromEnvironment(): Promise<void> {
+  const capability = process.env.IGGY_BROKER_CAPABILITY;
+  const gatewayUrl = process.env.IGGY_GATEWAY_URL;
+  if (!capability || !gatewayUrl) throw new Error("health_worker_not_configured");
+  const client = new GatewayToolClient(new URL(gatewayUrl), capability);
+  const controller = new AbortController();
+  process.once("SIGTERM", () => controller.abort());
+  process.once("SIGINT", () => controller.abort());
+  const { modelId } = await client.loadConfiguration(controller.signal);
+  const runner = new PiHealthRunner({ capability, gatewayUrl: new URL(gatewayUrl), modelId }, (event) => client.publish(event, ["cancelled", "error"].includes(event.type) ? AbortSignal.timeout(5_000) : controller.signal).then(() => undefined));
+  try {
+    await runner.run(controller.signal);
+  } catch {
+    const type: "cancelled" | "error" = controller.signal.aborted ? "cancelled" : "error";
+    // Never serialize Error.message: providers may include request fragments.
+    await runner.publishTerminal(type).catch(() => undefined);
+    process.exitCode = 1;
+  }
+}
+
+const toolParameters: Record<ToolName, ReturnType<typeof Type.Unsafe>> = Object.fromEntries(toolNames.map((name) => [name, Type.Unsafe(chatToolJsonSchemas[name])])) as Record<ToolName, ReturnType<typeof Type.Unsafe>>;
+const toolDescription: Record<ToolName, string> = chatToolDescriptions;
