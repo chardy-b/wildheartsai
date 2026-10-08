@@ -2,7 +2,7 @@
 
 Date: October 7, 2026
 
-Status: Approved architectural direction from the user; implementation and production rollout remain pending. This supersedes the direct-Neon VPS topology in the October 4 plan and the existing chat deployment instructions.
+Status: Implemented on `codex/web-owned-chat` with independent Sol review. Production rollout remains pending; follow the October 8 rollout guide. This supersedes the direct-Neon VPS topology in the October 4 plan and the existing chat deployment instructions.
 
 ## Decision
 
@@ -10,7 +10,7 @@ Wild Hearts' web backend owns all database access, record decryption, identity r
 
 Bitwarden may supply secrets to trusted deployment processes, but does not change this boundary. A VPS deployment machine account must not have access to the web backend's database or encryption secrets.
 
-## Current implementation and its limits
+## Previous implementation and its limits
 
 The isolated Pi worker currently receives one short-lived run capability. The private gateway derives user, conversation, run, attempt, and lease owner from the verified credential. Strict tool schemas reject model-supplied identity fields. Tool queries use transaction-local `asUser` context plus explicit owner predicates. Record IDs, note IDs, conversation IDs, and summary evidence are checked for ownership. Run/lease fencing and cancellation prevent ordinary access after a run ends or its lease changes. Disposable container networks restrict workers to their fixed gateway and exclude database, host-service, other-worker, shell, filesystem, and internet tools.
 

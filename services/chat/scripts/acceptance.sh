@@ -19,7 +19,9 @@ coordinator="$prefix-coordinator"
 gateway="$prefix-gateway"
 model="$prefix-model"
 manager="$prefix-iggy"
+worker_probe="$prefix-worker-import"
 network="$prefix-service"
+browser_network="$prefix-browser"
 port=${CHAT_TEST_PORT:-18083}
 [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] || { echo 'Invalid CHAT_TEST_PORT'; exit 1; }
 python3 - "$port" <<'PY'
@@ -29,14 +31,31 @@ try: s.bind(('127.0.0.1',int(sys.argv[1])))
 except OSError: raise SystemExit('CHAT_TEST_PORT is already in use')
 finally: s.close()
 PY
-for name in "$web" "$coordinator" "$gateway" "$manager" "$model" "$db"; do
+for name in "$web" "$coordinator" "$gateway" "$manager" "$model" "$db" "$worker_probe"; do
   if docker container inspect "$name" >/dev/null 2>&1; then echo "Refusing existing container: $name"; exit 1; fi
 done
 if docker network inspect "$network" >/dev/null 2>&1; then echo 'Refusing existing network'; exit 1; fi
+if docker network inspect "$browser_network" >/dev/null 2>&1; then echo 'Refusing existing browser network'; exit 1; fi
+capture_web_diagnostic() {
+  local raw_line
+  raw_line=$(docker logs --tail 100 "$web" 2>&1 | grep -E '^synthetic_web_fixture_failed phase=[a-z_]+ code=[A-Z0-9_]+ slug=[a-z0-9_]+$' | tail -n 1) || true
+  if [[ "$raw_line" =~ ^synthetic_web_fixture_failed\ phase=(validate_synthetic_environment|connect_and_seed_synthetic_database|preflight_restricted_data_and_queue_roles|preflight_restricted_data_role|preflight_restricted_queue_role|initialize_web_authority|read_test_tls_material|start_test_http_listener|listen_with_test_tls|listen_test_http)\ code=([A-Z0-9_]+)\ slug=([a-z0-9_]+)$ ]]; then
+    printf '%s\n' "$raw_line" >"$test_dir/web-startup-diagnostic.txt"
+  else
+    printf '%s\n' 'synthetic_web_fixture_diagnostic_unavailable' >"$test_dir/web-startup-diagnostic.txt"
+  fi
+}
 cleanup() {
-  for name in "$web" "$coordinator" "$gateway" "$manager" "$model" "$db"; do docker rm -f "$name" >/dev/null 2>&1 || true; done
+  if docker container inspect "$web" >/dev/null 2>&1; then
+    capture_web_diagnostic
+  fi
+  for name in "$web" "$coordinator" "$gateway" "$manager" "$model" "$db" "$worker_probe"; do docker rm -f "$name" >/dev/null 2>&1 || true; done
+  docker network rm "$browser_network" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   rm -f "$test_dir"/*.env "$test_dir"/iggy-token
+  if [ -f "$test_dir/web-startup-diagnostic.txt" ]; then
+    echo "Synthetic web startup diagnostic retained at $test_dir/web-startup-diagnostic.txt" >&2
+  fi
 }
 trap cleanup EXIT
 
@@ -48,7 +67,17 @@ chmod 644 "$test_dir/tls.pem"
 DOCKER_BUILDKIT=0 docker build --memory=256m --cpu-period=100000 --cpu-quota=50000 -f services/chat/Dockerfile --target worker -t "$prefix-pi-worker:local" . >"$test_dir/worker-build.log" 2>&1
 DOCKER_BUILDKIT=0 docker build --memory=256m --cpu-period=100000 --cpu-quota=50000 -f services/chat/Dockerfile --target service -t "$prefix-chat-service:local" . >"$test_dir/service-build.log" 2>&1
 DOCKER_BUILDKIT=0 docker build --memory=256m --cpu-period=100000 --cpu-quota=50000 -f scripts/chat-acceptance/Dockerfile -t "$prefix-chat-web:local" . >"$test_dir/web-build.log" 2>&1
+# Import the built worker and real SDK dependencies before creating any queued job.
+# Empty worker settings prevent configuration/context access; network none is an extra fence.
+worker_import=$(timeout --kill-after=2s 10s docker run --rm --name "$worker_probe" --network none --read-only --memory=128m --cpus=.25 --cap-drop=ALL --security-opt=no-new-privileges --env IGGY_BROKER_CAPABILITY= --env IGGY_GATEWAY_URL= --entrypoint node "$prefix-pi-worker:local" --input-type=module -e 'setTimeout(() => { console.log("synthetic_worker_import failed"); process.exit(1); }, 5000); try { await import("file:///app/dist/worker-entry.js"); console.log("synthetic_worker_import ready"); process.exit(0); } catch { console.log("synthetic_worker_import failed"); process.exit(1); }' 2>&1 | grep -E '^synthetic_worker_import (ready|failed)$' | tail -n 1) || true
+if [ "$worker_import" != 'synthetic_worker_import ready' ]; then
+  printf '%s\n' 'synthetic_worker_import failed' >"$test_dir/worker-import-diagnostic.txt"
+  echo "Synthetic worker import failed; safe diagnostic retained at $test_dir/worker-import-diagnostic.txt" >&2
+  exit 1
+fi
+printf '%s\n' 'synthetic_worker_import ready' >"$test_dir/worker-import-diagnostic.txt"
 docker network create --internal "$network" >/dev/null
+docker network create "$browser_network" >/dev/null
 mkdir -p "$test_dir/postgres"
 docker run -d --name "$db" --network "$network" --memory=128m --cpus=.5 -v "$test_dir/postgres:/var/lib/postgresql" -e POSTGRES_PASSWORD=synthetic-only -e POSTGRES_DB=chat postgres:18.6-alpine -c shared_buffers=16MB -c max_connections=30 >/dev/null
 for _ in $(seq 1 60); do docker exec "$db" pg_isready -h 127.0.0.1 -U postgres -d chat >/dev/null 2>&1 && break; sleep .5; done
@@ -123,10 +152,54 @@ JS
 
 docker run -d --name "$model" --network "$network" --memory=64m --cpus=.25 --read-only --cap-drop=ALL --security-opt=no-new-privileges -v "$test_dir/model.mjs:/fixture.mjs:ro" --entrypoint node "$prefix-chat-service:local" /fixture.mjs >/dev/null
 docker run -d --name "$web" --network "$network" --memory=256m --cpus=.5 --read-only --cap-drop=ALL --security-opt=no-new-privileges --mount "type=bind,src=$test_dir/tls.key,dst=/fixture/tls.key,readonly" --mount "type=bind,src=$test_dir/tls.pem,dst=/fixture/tls.pem,readonly" --env-file "$test_dir/web.env" -p "127.0.0.1:$port:8080" "$prefix-chat-web:local" >/dev/null
+docker network connect "$browser_network" "$web"
 web_url="https://127.0.0.1:$port"
-web_curl() { curl --cacert "$test_dir/tls.pem" -fsS "$@"; }
-for _ in $(seq 1 60); do web_curl "$web_url/health" >/dev/null 2>&1 && break; sleep .5; done
-web_curl "$web_url/health" >/dev/null
+web_curl() { curl --cacert "$test_dir/tls.pem" --connect-timeout 2 --max-time 3 -fsS "$@"; }
+capture_run_diagnostic() {
+  local run_id event_summary tool_count
+  run_id=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["runId"])' "$test_dir/run.json")
+  event_summary=$(web_curl -H "Cookie: $cookie" "$web_url/api/chat/v1/runs/$run_id/events" 2>/dev/null | python3 -c '
+import json,sys
+try:
+    data=json.load(sys.stdin)
+    allowed={"run.started","answer.delta","tool.started","tool.completed","answer.completed","run.completed","run.cancelled","run.failed"}
+    safe_codes={"worker_failed","worker_timeout","inference_unavailable","runner_start_failed","runner_failed","coordinator_stopped"}
+    kinds=[event.get("kind") for event in data.get("events",[]) if event.get("kind") in allowed]
+    codes=sorted({event.get("payload",{}).get("code") for event in data.get("events",[]) if isinstance(event.get("payload"),dict) and event["payload"].get("code") in safe_codes})
+    print("events="+(",".join(kinds) if kinds else "none")+" codes="+(",".join(codes) if codes else "none"))
+except Exception:
+    print("events=unavailable codes=none")
+' 2>/dev/null) || event_summary='events=unavailable codes=none'
+  [[ "$event_summary" =~ ^events=[a-z.,]+\ codes=[a-z_,]+$ ]] || event_summary='events=unavailable codes=none'
+  tool_count=$(docker exec "$db" psql -XAt -U postgres -d chat -c 'select count(*) from chat_tool_call' 2>/dev/null || true)
+  [[ "$tool_count" =~ ^[0-9]{1,6}$ ]] || tool_count=unavailable
+  printf 'synthetic_run_diagnostic state=%s %s tool_calls=%s\n' "$state" "$event_summary" "$tool_count" >"$test_dir/run-diagnostic.txt"
+}
+probe_internal_web() {
+  local line
+  line=$(timeout 5s docker exec -e NODE_EXTRA_CA_CERTS=/fixture/tls.pem "$web" node --input-type=module -e 'let response; try { response = await fetch(process.argv[1], { redirect: "error", signal: AbortSignal.timeout(2000) }); console.log(`synthetic_internal_health status=${response.status}`); } catch { console.log("synthetic_internal_health error"); process.exitCode = 1; } finally { await response?.body?.cancel().catch(() => {}); }' "https://127.0.0.1:8080/health" 2>&1 | grep -E '^synthetic_internal_health (status=[0-9]{3}|error)$' | tail -n 1) || true
+  if [[ "$line" =~ ^synthetic_internal_health\ status=([0-9]{3})$ ]]; then printf '%s' "${BASH_REMATCH[1]}"; else printf '%s' "000"; fi
+}
+internal_status=000
+for _ in $(seq 1 60); do
+  internal_status=$(probe_internal_web)
+  [ "$internal_status" = 200 ] && break
+  sleep .5
+done
+ready=0
+external_status=000
+for _ in $(seq 1 60); do
+  external_status=$(curl --cacert "$test_dir/tls.pem" --connect-timeout 2 --max-time 3 -sS -o /dev/null -w '%{http_code}' "$web_url/health" 2>/dev/null || true)
+  [[ "$external_status" =~ ^[0-9]{3}$ ]] || external_status=000
+  if [ "$external_status" = 200 ]; then ready=1; break; fi
+  sleep .5
+done
+printf 'synthetic_web_health internal_status=%s external_status=%s\n' "$internal_status" "$external_status" >"$test_dir/web-health-diagnostic.txt"
+if [ "$ready" != 1 ]; then
+  capture_web_diagnostic
+  echo "Synthetic web fixture readiness failed; safe diagnostics retained at $test_dir/web-health-diagnostic.txt and $test_dir/web-startup-diagnostic.txt" >&2
+  exit 1
+fi
 docker run -d --name "$gateway" --network "$network" --memory=128m --cpus=.5 --read-only --cap-drop=ALL --security-opt=no-new-privileges --mount "type=bind,src=$test_dir/tls.pem,dst=/fixture/tls.pem,readonly" --env-file "$test_dir/gateway.env" "$prefix-chat-service:local" >/dev/null
 worker_image_id=$(docker image inspect --format '{{.Id}}' "$prefix-pi-worker:local")
 docker run -d --name "$manager" --network "$network" --memory=64m --cpus=.25 -v /var/run/docker.sock:/var/run/docker.sock -v "$iggy:/iggyd:ro" -v "$test_dir:/fixture" --entrypoint /iggyd busybox:1.37.0 -bind 0.0.0.0:8417 -runs-dir /fixture/runs -cache-dir /fixture/cache -token-file /fixture/iggy-token -health-image "$worker_image_id" -health-gateway-container "$gateway" -health-gateway-alias "$gateway" -health-gateway-port 8080 >/dev/null
@@ -144,11 +217,15 @@ for _ in $(seq 1 240); do
   web_curl -H "Cookie: $cookie" "$web_url/api/chat/v1/conversations/$conversation" >"$test_dir/detail.json"
   state=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d["runs"][-1]["status"] if d.get("runs") else "missing")' "$test_dir/detail.json")
   [ "$state" = completed ] && break
-  if [ "$state" = failed ] || [ "$state" = interrupted ] || [ "$state" = missing ]; then echo "Synthetic chat run ended as $state"; exit 1; fi
+  if [ "$state" = failed ] || [ "$state" = interrupted ] || [ "$state" = missing ]; then
+    capture_run_diagnostic
+    echo "Synthetic chat run ended as $state; safe diagnostic retained at $test_dir/run-diagnostic.txt"
+    exit 1
+  fi
   sleep .5
 done
 [ "$state" = completed ]
-other_user_status=$(curl --cacert "$test_dir/tls.pem" -sS -o /dev/null -w '%{http_code}' -H 'Cookie: whchat-test=bob' "$web_url/api/chat/v1/conversations/$conversation")
+other_user_status=$(curl --cacert "$test_dir/tls.pem" --connect-timeout 2 --max-time 3 -sS -o /dev/null -w '%{http_code}' -H 'Cookie: whchat-test=bob' "$web_url/api/chat/v1/conversations/$conversation")
 [ "$other_user_status" = 404 ]
 web_curl -H "Cookie: $cookie" "$web_url/api/chat/v1/summaries" >"$test_dir/summaries.json"
 python3 - "$test_dir" <<'PY'

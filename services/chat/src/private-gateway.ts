@@ -192,8 +192,7 @@ export class GatewayToolClient {
   async loadContext(signal: AbortSignal): Promise<Readonly<{ messages: ReadonlyArray<ChatMessage>; modelId: string }>> {
     if (!this.contextPromise) {
       const request = this.fetchContext(signal);
-      let cached!: Promise<Readonly<{ messages: ReadonlyArray<ChatMessage>; modelId: string }>>;
-      cached = request.catch((error: unknown) => {
+      const cached = request.catch((error: unknown) => {
         if (this.contextPromise === cached) this.contextPromise = undefined;
         throw error;
       });

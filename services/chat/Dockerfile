@@ -6,6 +6,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY services/chat/build.mjs services/chat/tsconfig.json ./
 COPY services/chat/src ./src
 COPY src/lib/chat/tools.ts /app/src/lib/chat/tools.ts
+COPY src/lib/fhir/categories.ts /app/src/lib/fhir/categories.ts
 RUN npm run build
 
 FROM node:22-alpine AS dependencies

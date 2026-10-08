@@ -26,6 +26,7 @@ The browser calls `/api/chat/v1` on the same origin with its Better Auth session
 4. Put the restricted role URLs, existing record key, new grant key, and model alias in the web backend's **Production** server environment. Configure preview branches separately. Register the new `reap-chat-runs` minute job with the existing Inngest deployment. It interrupts expired begun work independently of VPS health; it never reruns a question.
 5. Deploy the coordinator, private relay, Iggy, and worker image using `services/chat/README.md` and its Compose configuration. Use a durable private inference endpoint reachable from the VPS, such as a fixed Tailscale hostname; a developer SSH tunnel is not a production dependency. Configure the matching model alias. Iggy controls Docker and is a trusted host component; its control endpoint/socket must stay private.
 6. Remove obsolete direct-DB and signer settings from the VPS's old runtime file. Inventory variable **names only** before editing `/opt/wildhearts-chat-prod/runtime.env`; do not print existing values. If database/encryption credentials were previously placed there, remove them deliberately and assess exposure. Changing the record encryption key requires a data/key migration; do not blindly rotate it.
+   If the old direct-DB service was actually deployed, stop and remove its verified legacy chat containers before enabling this design. A Compose update alone can leave the removed `chat-api` service running as an orphan. Check the exact chat project and retire only its legacy resources; do not remove unrelated Matrix/Element containers. Deleting an environment file does not remove credentials from existing containers or revoke established database connections. Replace the restricted role passwords through the trusted operator, update the web-only URLs, and terminate only positively identified obsolete role connections before acceptance; retire the old ticket/capability signers too.
 7. Set `CHAT_ENABLED=1` on the acceptance deployment and redeploy. API runtime initialization verifies the restricted roles, RLS policies, and fixed metadata-only session-lock function; unsafe configuration fails closed. Test with two synthetic accounts before enabling real health-data use.
 
 ## Acceptance
@@ -37,6 +38,14 @@ The browser calls `/api/chat/v1` on the same origin with its Better Auth session
 - Summaries require records or notes actually read in the same run and remain unavailable to future conversations until that run completes. Changed/deleted evidence makes them stale. Persistent content and tool trace payloads are encrypted with the owner's key.
 - Inspect images and Compose for absence of database, encryption, and grant-minting secrets. Repeat real Docker isolation checks, verify generic logs/errors, and confirm Matrix/Element stays healthy on the shared test VPS.
 - Run app lint, typecheck, tests and build, service tests/typecheck/build, and an independent Sol review before committing delivery changes.
+
+## Implementation verification (October 8)
+
+Independent Sol reviews approved the web authorization boundary, browser, VPS adapter, and Docker packaging fix. App lint, typecheck, 415 tests, and production build passed; service typecheck, build, and 28 tests passed.
+
+The isolated VPS acceptance passed against real PostgreSQL restricted roles and the web-owned APIs: a credential-free worker import check, a synthetic question processed through four tool calls, current-run read evidence, an encrypted saved summary and answer, a second user's denied conversation access, and removal of the worker network. Matrix/Element remained healthy. This used synthetic authentication and a deterministic inference stub; actual model weights and production authentication still need rollout acceptance.
+
+The Vercel preview was blocked before its build because Neon reached its 10-branch limit. No production deployment, secret change, or production database migration was performed during implementation.
 
 ## Revocation, rollback, and portability
 
