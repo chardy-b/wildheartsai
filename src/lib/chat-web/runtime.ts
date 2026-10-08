@@ -44,7 +44,7 @@ async function initialize(): Promise<WebChatRuntime> {
     await assertChatDatabaseRoles(dataPool, queuePool);
     const dataDb = drizzle(dataPool, { schema }) as unknown as Db;
     const queueDb = drizzle(queuePool, { schema }) as unknown as Db;
-    return { dataDb, queueDb, authority: new ChatAuthority({ dataDb, queueDb, grantKey: key, modelId }) };
+    return { dataDb, queueDb, authority: new ChatAuthority({ dataDb, queueDb, grantKey: key, modelId, researchGatewayTokenHash: process.env.CHAT_RESEARCH_GATEWAY_TOKEN_HASH || undefined }) };
   } catch {
     await Promise.all([dataPool.end(), queuePool.end()]);
     throw new ChatUnavailableError("chat_unavailable");

@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
-import { CHAT_MAX_CONTEXT_BYTES, CHAT_MAX_EVENT_BYTES, CHAT_MAX_REQUEST_BYTES, CHAT_MAX_TOOL_OUTPUT_BYTES, protocolEventSchema, toolInputSchema } from "./protocol.js";
+import { CHAT_MAX_CONTEXT_BYTES, CHAT_MAX_EVENT_BYTES, CHAT_MAX_REQUEST_BYTES, CHAT_MAX_RESEARCH_OUTPUT_BYTES, CHAT_MAX_TOOL_OUTPUT_BYTES, agentToolInputSchema, protocolEventSchema, researchErrorCodeSchema, researchOutputSchema } from "./protocol.js";
 import { CHAT_MAX_TOOL_REPLY_BYTES, ChatWebApi, ChatWebApiError } from "./web-api.js";
 import type { ChatMessage, ToolName, WorkerEvent } from "./contracts.js";
+import type { ResearchBeginReply, ResearchErrorCode, ResearchOutput } from "./protocol.js";
 
 const executionGrantPattern = /^whchat1\.execution\.[A-Za-z0-9_-]{43}$/;
 const inferenceRequestLimit = 512 * 1024;
@@ -16,13 +17,23 @@ export type PrivateGatewayOptions = Readonly<{
   modelId: string;
   maxTokens: number;
   apiKey?: string;
+  researchCorpus?: OfflineResearchCorpus;
+  researchGatewayToken?: string;
   fetcher?: typeof fetch;
+}>;
+
+export type OfflineResearchCorpus = Readonly<{
+  captureSnapshot(): Promise<Readonly<{ snapshotId: string }>>;
+  search(snapshotId: unknown, input: unknown): unknown;
+  read(snapshotId: unknown, input: unknown): unknown;
 }>;
 
 /** Private worker relay: execution grants authorize only web-owned run operations. */
 export function createPrivateToolGateway(options: PrivateGatewayOptions) {
   const inferenceUrl = validateInferenceUrl(options.inferenceUrl);
   const fetcher = options.fetcher ?? fetch;
+  const loadedSnapshots = new Map<string, true>();
+  const runSnapshots = new Map<string, string>();
   return createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
       if (response.headersSent) { response.end(); return; }
@@ -41,8 +52,10 @@ export function createPrivateToolGateway(options: PrivateGatewayOptions) {
       return sendJson(response, 200, { cancelled: await options.api.isCancelled(executionGrant) });
     }
     if (request.url === "/v1/tools" && request.method === "POST") {
-      const body = toolInputSchema.parse(await readJsonBody(request, CHAT_MAX_REQUEST_BYTES));
-      const result = await options.api.invokeTool(executionGrant, body);
+      const body = agentToolInputSchema.parse(await readJsonBody(request, CHAT_MAX_REQUEST_BYTES));
+      const result = body.tool === "search_research" || body.tool === "read_research"
+        ? await invokeResearch(executionGrant, body)
+        : await options.api.invokeTool(executionGrant, body);
       return sendBoundedJson(response, 200, result, CHAT_MAX_TOOL_REPLY_BYTES);
     }
     if (request.url === "/v1/worker/events" && request.method === "POST") {
@@ -126,6 +139,129 @@ export function createPrivateToolGateway(options: PrivateGatewayOptions) {
       response.off("close", stop);
     }
   }
+
+  async function invokeResearch(executionGrant: string, body: Extract<ReturnType<typeof agentToolInputSchema.parse>, { tool: "search_research" | "read_research" }>): Promise<ResearchWorkerReply> {
+    const corpus = options.researchCorpus;
+    const gatewayToken = options.researchGatewayToken;
+    await requireActive(executionGrant);
+    if (!corpus || !gatewayToken) return { status: "failed", errorCode: "research_unavailable" };
+
+    let proposedSnapshotId: string | null = null;
+    let captureFailed = false;
+    if (body.tool === "search_research") {
+      // Loading and hashing the bounded whole snapshot is not a query. Query-specific
+      // search remains behind the web authority's begin operation below.
+      try {
+        const current = await corpus.captureSnapshot();
+        rememberSnapshot(current.snapshotId);
+        proposedSnapshotId = current.snapshotId;
+      } catch {
+        const pinnedInThisGateway = runSnapshots.get(executionGrant);
+        if (pinnedInThisGateway) proposedSnapshotId = pinnedInThisGateway;
+        else captureFailed = true;
+      }
+    } else {
+      proposedSnapshotId = body.input.snapshotId;
+      // Best-effort capture helps distinguish an unknown source in the current
+      // snapshot from a pinned snapshot absent after a gateway restart. It never
+      // changes the read's requested/pinned snapshot.
+      try { rememberSnapshot((await corpus.captureSnapshot()).snapshotId); } catch { /* use only retained immutable snapshots */ }
+    }
+
+    // A null proposal lets the web authority either durably fail a new unavailable
+    // search or execute against this run's already-persisted snapshot pin. The
+    // returned snapshotId is authoritative in both cases.
+    let beginInput: Parameters<ChatWebApi["researchBegin"]>[2];
+    if (captureFailed) {
+      if (body.tool !== "search_research") throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+      beginInput = { ...body, proposedSnapshotId: null, failureCode: "research_unavailable" };
+    } else {
+      if (!proposedSnapshotId) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+      beginInput = { ...body, proposedSnapshotId };
+    }
+    const begin = await options.api.researchBegin(executionGrant, gatewayToken, beginInput);
+    if (begin.status === "completed") {
+      await requireActive(executionGrant);
+      return { status: "completed", output: begin.output };
+    }
+    if (begin.status === "failed") {
+      if (proposedSnapshotId) rememberRunSnapshot(executionGrant, proposedSnapshotId);
+      await requireActive(executionGrant);
+      return { status: "failed", errorCode: begin.errorCode };
+    }
+
+    rememberRunSnapshot(executionGrant, begin.snapshotId);
+
+    if (begin.snapshotId !== (body.tool === "read_research" ? body.input.snapshotId : begin.snapshotId)) {
+      return persistFailure(begin, executionGrant, gatewayToken, "snapshot_unavailable");
+    }
+
+    let output: ResearchOutput;
+    try {
+      const rawOutput = body.tool === "search_research"
+        ? corpus.search(begin.snapshotId, body.input)
+        : corpus.read(begin.snapshotId, body.input);
+      output = researchOutputSchema.parse(rawOutput);
+      if (output.snapshotId !== begin.snapshotId) throw new Error("snapshot_mismatch");
+      if (body.tool === "search_research" ? !isResearchSearchOutput(output) : !isResearchReadOutput(output)) throw new Error("output_shape_mismatch");
+      if (Buffer.byteLength(JSON.stringify(output), "utf8") > CHAT_MAX_RESEARCH_OUTPUT_BYTES) {
+        return persistFailure(begin, executionGrant, gatewayToken, "result_too_large");
+      }
+    } catch (error) {
+      const code = researchErrorCode(error, body.tool === "read_research" && loadedSnapshots.has(begin.snapshotId));
+      return persistFailure(begin, executionGrant, gatewayToken, code);
+    }
+
+    // Persistence is deliberately outside the lookup catch: an uncertain web write
+    // must never be mistaken for a completed result or followed by an output reply.
+    await options.api.researchResult(executionGrant, gatewayToken, { operationId: begin.operationId, status: "completed", output });
+    await requireActive(executionGrant);
+    return { status: "completed", output };
+  }
+
+  function rememberSnapshot(snapshotId: string): void {
+    loadedSnapshots.delete(snapshotId);
+    loadedSnapshots.set(snapshotId, true);
+    while (loadedSnapshots.size > 2) loadedSnapshots.delete(loadedSnapshots.keys().next().value as string);
+  }
+
+  function rememberRunSnapshot(executionGrant: string, snapshotId: string): void {
+    if (!snapshotId) return;
+    runSnapshots.delete(executionGrant);
+    runSnapshots.set(executionGrant, snapshotId);
+    while (runSnapshots.size > 1_000) runSnapshots.delete(runSnapshots.keys().next().value as string);
+  }
+
+  async function persistFailure(begin: Extract<ResearchBeginReply, { status: "execute" }>, executionGrant: string, gatewayToken: string, errorCode: ResearchErrorCode): Promise<ResearchWorkerReply> {
+    const code = researchErrorCodeSchema.parse(errorCode);
+    await options.api.researchResult(executionGrant, gatewayToken, { operationId: begin.operationId, status: "failed", errorCode: code });
+    await requireActive(executionGrant);
+    return { status: "failed", errorCode: code };
+  }
+
+  async function requireActive(executionGrant: string): Promise<void> {
+    if (await options.api.isCancelled(executionGrant)) throw new ChatWebApiError(409, "run_not_active");
+  }
+}
+
+export type ResearchWorkerReply = { status: "completed"; output: ResearchOutput } | { status: "failed"; errorCode: ResearchErrorCode };
+
+function isResearchSearchOutput(output: ResearchOutput): output is Extract<ResearchOutput, { hits: unknown }> { return "hits" in output; }
+function isResearchReadOutput(output: ResearchOutput): output is Extract<ResearchOutput, { sourceId: unknown }> { return "sourceId" in output; }
+
+function researchErrorCode(error: unknown, snapshotKnown: boolean): ResearchErrorCode {
+  if (error instanceof ChatWebApiError) return "research_failed";
+  if (error && typeof error === "object" && "code" in error && typeof error.code === "string") {
+    switch (error.code) {
+      // The web authority has already issued this operation against a specific
+      // snapshot pin. If that immutable snapshot is absent after restart (or
+      // unreadable), fail this call closed instead of implying a current snapshot.
+      case "unavailable": case "invalid_snapshot": return "snapshot_unavailable";
+      case "not_found": return snapshotKnown ? "source_not_found" : "snapshot_unavailable";
+      case "invalid_request": return "research_failed";
+    }
+  }
+  return "research_failed";
 }
 
 function validateInferenceUrl(input: URL): URL {
@@ -177,9 +313,27 @@ export class GatewayToolClient {
   constructor(private readonly url: URL, private readonly executionGrant: string) {}
 
   async execute(toolCallId: string, tool: ToolName, input: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
-    const response = await this.post("/v1/tools", { toolCallId, tool, input }, signal);
+    const request = agentToolInputSchema.parse({ toolCallId, tool, input });
+    const response = await this.post("/v1/tools", request, signal);
     if (!response.ok) throw new Error("tool_gateway_rejected");
-    return response.json();
+    const raw = await readBoundedResponse(response, CHAT_MAX_TOOL_REPLY_BYTES);
+    const replySchema = z.union([
+      z.object({ status: z.literal("completed"), output: z.record(z.string(), z.unknown()) }).strict(),
+      z.object({ status: z.literal("failed"), errorCode: researchErrorCodeSchema }).strict(),
+    ]);
+    const parsed = replySchema.safeParse(raw);
+    if (!parsed.success) throw new Error("tool_gateway_rejected");
+    if (parsed.data.status === "failed") {
+      if (tool !== "search_research" && tool !== "read_research") throw new Error("tool_gateway_rejected");
+      return parsed.data;
+    }
+    if (Buffer.byteLength(JSON.stringify(parsed.data.output), "utf8") > CHAT_MAX_TOOL_OUTPUT_BYTES) throw new Error("tool_gateway_rejected");
+    if (tool === "search_research" || tool === "read_research") {
+      const output = researchOutputSchema.safeParse(parsed.data.output);
+      if (!output.success || Buffer.byteLength(JSON.stringify(output.data), "utf8") > CHAT_MAX_RESEARCH_OUTPUT_BYTES) throw new Error("tool_gateway_rejected");
+      if (tool === "search_research" ? !isResearchSearchOutput(output.data) : !isResearchReadOutput(output.data)) throw new Error("tool_gateway_rejected");
+    }
+    return parsed.data;
   }
 
   async cancelled(signal: AbortSignal): Promise<boolean> {
@@ -224,4 +378,26 @@ export class GatewayToolClient {
   }
 
   private headers(): Record<string, string> { return { authorization: `Bearer ${this.executionGrant}` }; }
+}
+
+async function readBoundedResponse(response: Response, maxBytes: number): Promise<unknown> {
+  if (!response.body) throw new Error("tool_gateway_rejected");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("tool_gateway_rejected");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  catch { throw new Error("tool_gateway_rejected"); }
 }

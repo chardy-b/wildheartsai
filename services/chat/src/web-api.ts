@@ -6,17 +6,28 @@ import {
   claimInputSchema,
   eventsInputSchema,
   finalizeInputSchema,
+  CHAT_MAX_RESEARCH_OUTPUT_BYTES,
+  RESEARCH_GATEWAY_HEADER,
+  researchBeginInputSchema,
+  researchErrorCodeSchema,
+  researchOutputSchema,
+  researchResultInputSchema,
   toolInputSchema,
   type ClaimInput,
   type ClaimReply,
   type FinalizeInput,
   type HeartbeatReply,
   type OperationAck,
+  type ResearchBeginInput,
+  type ResearchBeginReply,
+  type ResearchOutput,
+  type ResearchResultInput,
   type ToolReply,
 } from "./protocol.js";
 import type { ChatMessage, ClaimedWebRun, WorkerEvent } from "./contracts.js";
 
 const grantPattern = /^whchat1\.(execution|control)\.[A-Za-z0-9_-]{43}$/;
+const researchGatewayTokenPattern = /^[A-Za-z0-9_-]{43}$/;
 export const CHAT_MAX_TOOL_REPLY_BYTES = CHAT_MAX_TOOL_OUTPUT_BYTES + 1_024;
 
 export class ChatWebApiError extends Error {
@@ -115,6 +126,34 @@ export class ChatWebApi {
     return { status: "completed", output: value.output as Record<string, unknown> };
   }
 
+  async researchBegin(executionGrant: string, gatewayToken: string, input: ResearchBeginInput): Promise<ResearchBeginReply> {
+    const request = researchBeginInputSchema.parse(input);
+    const reply = await this.researchPost("execution/research/begin", executionGrant, gatewayToken, request);
+    if (!reply || typeof reply !== "object" || Array.isArray(reply)) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+    const value = reply as Record<string, unknown>;
+    if (value.status === "execute" && hasExactKeys(reply, ["status", "operationId", "snapshotId", "deadlineAt"])) {
+      if (!validUuid(value.operationId) || typeof value.snapshotId !== "string" || !/^[a-f0-9]{64}$/.test(value.snapshotId) || !validDate(value.deadlineAt)) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+      return { status: "execute", operationId: value.operationId, snapshotId: value.snapshotId, deadlineAt: value.deadlineAt };
+    }
+    if (value.status === "completed" && hasExactKeys(reply, ["status", "operationId", "output"])) {
+      if (!validUuid(value.operationId)) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+      const output = parseResearchOutput(value.output);
+      return { status: "completed", operationId: value.operationId, output };
+    }
+    if (value.status === "failed" && hasExactKeys(reply, ["status", "operationId", "errorCode"])) {
+      const errorCode = researchErrorCodeSchema.safeParse(value.errorCode);
+      if (!validUuid(value.operationId) || !errorCode.success) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+      return { status: "failed", operationId: value.operationId, errorCode: errorCode.data };
+    }
+    throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+  }
+
+  async researchResult(executionGrant: string, gatewayToken: string, input: ResearchResultInput): Promise<OperationAck> {
+    const request = researchResultInputSchema.parse(input);
+    if (request.status === "completed" && byteLength(JSON.stringify(request.output)) > CHAT_MAX_RESEARCH_OUTPUT_BYTES) throw new ChatWebApiError(413, "chat_research_result_too_large");
+    return parseAck(await this.researchPost("execution/research/result", executionGrant, gatewayToken, request));
+  }
+
   async publishEvents(executionGrant: string, events: ReadonlyArray<WorkerEvent>): Promise<OperationAck> {
     const request = eventsInputSchema.parse({ events });
     return parseAck(await this.post("execution/events", this.executionGrant(executionGrant), request, CHAT_MAX_EVENT_BYTES, "execution"));
@@ -124,7 +163,13 @@ export class ChatWebApi {
     return this.request(path, token, "POST", value, maxBytes, kind);
   }
 
-  private async request(path: string, token: string, method: "GET" | "POST", value: unknown, maxBytes: number, kind: "coordinator" | "control" | "execution"): Promise<unknown> {
+  private researchPost(path: "execution/research/begin" | "execution/research/result", executionGrant: string, gatewayToken: string, value: ResearchBeginInput | ResearchResultInput) {
+    if (!researchGatewayTokenPattern.test(gatewayToken)) throw new ChatWebApiError(401, "invalid_research_gateway_token");
+    return this.request(path, this.executionGrant(executionGrant), "POST", value, CHAT_MAX_REQUEST_BYTES, "execution", gatewayToken);
+  }
+
+  private async request(path: string, token: string, method: "GET" | "POST", value: unknown, maxBytes: number, kind: "coordinator" | "control" | "execution", researchGatewayToken?: string): Promise<unknown> {
+    if (researchGatewayToken && (!path.startsWith("execution/research/") || !researchGatewayTokenPattern.test(researchGatewayToken))) throw new ChatWebApiError(401, "invalid_research_gateway_token");
     const body = value === undefined ? undefined : JSON.stringify(value);
     if (body !== undefined && byteLength(body) > maxBytes) throw new ChatWebApiError(413, "chat_web_api_request_too_large");
     const url = new URL(path, this.baseUrl);
@@ -134,7 +179,7 @@ export class ChatWebApi {
       try {
         response = await this.fetcher(url, {
           method,
-          headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+          headers: { authorization: `Bearer ${token}`, ...(researchGatewayToken ? { [RESEARCH_GATEWAY_HEADER]: researchGatewayToken } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
           ...(body === undefined ? {} : { body }),
           redirect: "error",
           signal: AbortSignal.timeout(this.timeoutMs),
@@ -153,7 +198,7 @@ export class ChatWebApi {
         continue;
       }
       if (!response.ok) throw new ChatWebApiError(response.status);
-      const maxResponseBytes = path === "execution/context" ? CHAT_MAX_CONTEXT_BYTES : path === "execution/tools" ? CHAT_MAX_TOOL_REPLY_BYTES : path === "execution/events" ? CHAT_MAX_EVENT_BYTES : CHAT_MAX_REQUEST_BYTES;
+      const maxResponseBytes = path === "execution/context" ? CHAT_MAX_CONTEXT_BYTES : path === "execution/tools" ? CHAT_MAX_TOOL_REPLY_BYTES : path === "execution/events" ? CHAT_MAX_EVENT_BYTES : path.startsWith("execution/research/") ? CHAT_MAX_REQUEST_BYTES : CHAT_MAX_REQUEST_BYTES;
       return await readBoundedJson(response, maxResponseBytes);
     }
     throw new ChatWebApiError(lastStatus || 503);
@@ -187,6 +232,12 @@ export function validateWebApiUrl(input: URL): URL {
   if (!/^https?:$/.test(url.protocol) || (url.protocol === "http:" && !loopback) || url.username || url.password || url.search || url.hash || url.pathname.replace(/\/$/, "") !== "/api/chat/worker/v1") throw new Error("invalid_chat_web_api_url");
   url.pathname = `${url.pathname.replace(/\/$/, "")}/`;
   return url;
+}
+
+function parseResearchOutput(value: unknown): ResearchOutput {
+  const parsed = researchOutputSchema.safeParse(value);
+  if (!parsed.success || byteLength(JSON.stringify(parsed.data)) > CHAT_MAX_RESEARCH_OUTPUT_BYTES) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+  return parsed.data;
 }
 
 async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
@@ -229,6 +280,7 @@ function parseAck(value: unknown): OperationAck {
 }
 
 function validDate(value: unknown): value is string { return typeof value === "string" && Number.isFinite(Date.parse(value)); }
+function validUuid(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }
 function retryableStatus(status: number): boolean { return status === 408 || status === 429 || status >= 500; }
 function parseRetryAfter(value: string | null): number | undefined {

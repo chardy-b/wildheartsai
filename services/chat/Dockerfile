@@ -20,6 +20,12 @@ FROM dependencies AS service
 COPY --from=build /app/services/chat/dist/index.js ./dist/index.js
 CMD ["node", "dist/index.js"]
 
+# Offline snapshot publisher receives only a read-only source checkout and one
+# dedicated writable publication parent; it has no network or service credentials.
+FROM dependencies AS publisher
+COPY --from=build /app/services/chat/dist/research-publisher.js ./dist/research-publisher.js
+ENTRYPOINT ["node", "dist/research-publisher.js"]
+
 # Worker receives no service bundle, database connection, signing key, or record key.
 FROM dependencies AS worker
 COPY --from=build /app/services/chat/dist/worker-entry.js ./dist/worker-entry.js

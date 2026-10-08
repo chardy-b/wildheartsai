@@ -1,6 +1,6 @@
 import "server-only";
 import { createHmac, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { canonicalJson, sealField, unsealField, userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
 import {
   chatConversation,
@@ -19,6 +19,7 @@ import type { Db } from "@/lib/db/types";
 import { chatScopeSchema, summaryContentSchema, workerEventSchema, type ChatScope, type SummaryContent, type WorkerEvent } from "./contracts";
 import { chatRecordsKey } from "./key";
 import { CHAT_MAX_TOOL_CALLS } from "./tools";
+import { CHAT_MAX_RESEARCH_OUTPUT_BYTES, ChatAuthorityError, researchReadOutputSchema, researchSearchOutputSchema, type ResearchBeginInput, type ResearchOutput, type ResearchResultInput, type ResearchErrorCode } from "../chat-web/protocol";
 
 const DEFAULT_TITLE = "Health chat";
 const MAX_EVENT_BYTES = 32_000;
@@ -551,6 +552,7 @@ export async function requestRunCancellation(db: Db, scope: ChatScope, now = new
       )
       .where(and(eq(chatRun.id, parsed.runId), eq(chatRun.userId, parsed.userId), eq(chatRun.conversationId, parsed.conversationId), eq(chatRun.status, run.status)))
       .returning({ id: chatRun.id });
+    if (updated.length) await closePendingResearchCalls(tx, parsed, now);
     return updated.length === 1;
   });
 }
@@ -814,6 +816,7 @@ export async function finishRun(
       .set({ status: input.status, assistantMessageId, completedAt: now, leaseOwner: null, leaseExpiresAt: null, updatedAt: now })
       .where(and(eq(chatRun.id, parsed.runId), eq(chatRun.userId, parsed.userId), eq(chatRun.conversationId, parsed.conversationId), eq(chatRun.leaseOwner, parsed.workerId), eq(chatRun.attempt, parsed.runAttempt)))
       .returning();
+    if (finished) await closePendingResearchCalls(tx, parsed, now);
     return finished ? viewRun(finished) : undefined;
   });
 }
@@ -1100,7 +1103,8 @@ export async function finishToolCall(
     const run = await ownedRun(tx, parsed);
     if (run.status !== "running" || run.attempt !== parsed.runAttempt || run.leaseOwner !== parsed.workerId || !run.leaseExpiresAt || run.leaseExpiresAt <= now) return false;
     const keys = await keysFor(tx, parsed.userId, now);
-    const [existing] = await tx.select({ sealedContext: chatToolCall.sealedContext }).from(chatToolCall).where(and(eq(chatToolCall.id, input.toolCallId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.userId, parsed.userId))).limit(1);
+    const [existing] = await tx.select({ sealedContext: chatToolCall.sealedContext, toolName: chatToolCall.toolName }).from(chatToolCall).where(and(eq(chatToolCall.id, input.toolCallId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.userId, parsed.userId))).limit(1);
+    if (existing && researchNames.includes(existing.toolName)) throw new ChatAuthorityError("invalid_request", 400);
     const context = existing?.sealedContext ? decrypted<Record<string, unknown>>(keys, "chat_tool_call", "context", input.toolCallId, existing.sealedContext) : {};
     const updated = await tx
       .update(chatToolCall)
@@ -1114,6 +1118,132 @@ export async function finishToolCall(
       .where(and(eq(chatToolCall.id, input.toolCallId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.conversationId, parsed.conversationId), eq(chatToolCall.userId, parsed.userId)))
       .returning({ id: chatToolCall.id });
     return updated.length === 1;
+  });
+}
+
+// These helpers are used only inside the web authority's coordinator/session/run fence.
+// Arguments, snapshot bindings and completion digests share the existing encrypted tool trace.
+type ResearchContext = { providerToolCallId: string; readEvidence: []; research: { snapshotId: string | null; proposedSnapshotId: string | null; attempt: number; completionDigest?: string; errorCode?: ResearchErrorCode } };
+type ResearchBegun = { status: "pending" | "started"; operationId: string } | { status: "completed"; operationId: string; output: ResearchOutput } | { status: "failed"; operationId: string; errorCode: ResearchErrorCode };
+const researchNames = ["search_research", "read_research"];
+function requireActiveResearchRun(run: typeof chatRun.$inferSelect, scope: ReturnType<typeof requireWorkerScope>, now: Date): void {
+  if (run.status !== "running" || run.attempt !== scope.runAttempt || run.leaseOwner !== scope.workerId || !run.leaseExpiresAt || run.leaseExpiresAt <= now || !run.deadlineAt || run.deadlineAt <= now || run.cancellationRequestedAt || run.grantsRevokedAt) throw new ChatAuthorityError("run_not_active");
+}
+
+export async function beginRecordedResearchCall(db: Db, scope: ChatScope, input: ResearchBeginInput, snapshotId: string | null, now = new Date()): Promise<ResearchBegun> {
+  const parsed = requireWorkerScope(scope);
+  return asUser(db, parsed.userId, async tx => {
+    const run = await ownedRun(tx, parsed);
+    requireActiveResearchRun(run, parsed, now);
+    const keys = await keysFor(tx, parsed.userId, now);
+    const calls = await tx.select().from(chatToolCall).where(and(eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.conversationId, parsed.conversationId))).orderBy(asc(chatToolCall.callOrder)).limit(CHAT_MAX_TOOL_CALLS + 1);
+    const digest = requestDigest(keys, { tool: input.tool, arguments: input.input, snapshotId, proposedSnapshotId: input.proposedSnapshotId, attempt: parsed.runAttempt, ...("failureCode" in input ? { failureCode: input.failureCode } : {}) });
+    for (const call of calls) {
+      if (!call.sealedContext) continue;
+      const context = decrypted<ResearchContext>(keys, "chat_tool_call", "context", call.id, call.sealedContext);
+      if (context.providerToolCallId !== input.toolCallId) continue;
+      const unpinnedFailure = context.research?.snapshotId === null && context.research.proposedSnapshotId === null && context.research.errorCode === "research_unavailable" && call.status === "failed" && "failureCode" in input;
+      const retryDigest = unpinnedFailure ? requestDigest(keys, { tool: input.tool, arguments: input.input, snapshotId: null, proposedSnapshotId: input.proposedSnapshotId, attempt: parsed.runAttempt, failureCode: input.failureCode }) : digest;
+      if (call.toolName !== input.tool || call.requestDigest !== retryDigest || (!unpinnedFailure && context.research?.snapshotId !== snapshotId) || context.research.proposedSnapshotId !== input.proposedSnapshotId || context.research.attempt !== parsed.runAttempt) throw new ChatAuthorityError("invalid_request", 409);
+      if (call.status === "completed" && call.sealedResult) return { status: "completed", operationId: call.id, output: decrypted<ResearchOutput>(keys, "chat_tool_call", "result", call.id, call.sealedResult) };
+      if (call.status === "failed") return { status: "failed", operationId: call.id, errorCode: context.research.errorCode ?? "research_failed" };
+      if (call.status !== "pending") throw new ChatAuthorityError("run_not_active");
+      return { status: "pending", operationId: call.id };
+    }
+    if (calls.length >= CHAT_MAX_TOOL_CALLS) throw new ChatAuthorityError("quota_exceeded", 429);
+    if (calls.some(call => call.status === "pending")) throw new ChatAuthorityError("invalid_request", 409);
+    const id = randomUUID();
+    const unavailable = "failureCode" in input && snapshotId === null;
+    const failure = { operationId: id, status: "failed" as const, errorCode: "research_unavailable" as const };
+    const context: ResearchContext = { providerToolCallId: input.toolCallId, readEvidence: [], research: { snapshotId, proposedSnapshotId: input.proposedSnapshotId, attempt: parsed.runAttempt, ...(unavailable ? { completionDigest: requestDigest(keys, failure), errorCode: failure.errorCode } : {}) } };
+    await tx.insert(chatToolCall).values({ id, userId: parsed.userId, conversationId: parsed.conversationId, runId: parsed.runId, callOrder: calls.length, toolName: input.tool, requestDigest: digest,
+      status: unavailable ? "failed" : "pending", sealedArguments: encrypted(keys, "chat_tool_call", "arguments", id, input.input),
+      sealedContext: encrypted(keys, "chat_tool_call", "context", id, context), sealedResult: unavailable ? encrypted(keys, "chat_tool_call", "result", id, { errorCode: failure.errorCode }) : null,
+      resultMeta: unavailable ? { research: true, errorCode: failure.errorCode } : {}, startedAt: now, completedAt: unavailable ? now : null });
+    return unavailable ? { status: "failed", operationId: id, errorCode: failure.errorCode } : { status: "started", operationId: id };
+  });
+}
+
+export async function finishRecordedResearchCall(db: Db, scope: ChatScope, input: ResearchResultInput, now = new Date()): Promise<{ status: "accepted" | "duplicate"; outputBytes: number }> {
+  const parsed = requireWorkerScope(scope);
+  return asUser(db, parsed.userId, async tx => {
+    const run = await ownedRun(tx, parsed);
+    requireActiveResearchRun(run, parsed, now);
+    const [call] = await tx.select().from(chatToolCall).where(and(eq(chatToolCall.id, input.operationId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.conversationId, parsed.conversationId), inArray(chatToolCall.toolName, researchNames))).limit(1).for("update");
+    if (!call?.sealedContext) throw new ChatAuthorityError("invalid_request", 409);
+    const keys = await keysFor(tx, parsed.userId, now);
+    const context = decrypted<ResearchContext>(keys, "chat_tool_call", "context", call.id, call.sealedContext);
+    const unpinnedFailure = context.research?.snapshotId === null && context.research.proposedSnapshotId === null && context.research.errorCode === "research_unavailable" && call.status === "failed";
+    if (context.research?.attempt !== parsed.runAttempt || (!unpinnedFailure && context.research.snapshotId !== (run.executionMeta.researchSnapshotId ?? null))) throw new ChatAuthorityError("invalid_request", 409);
+    const digest = requestDigest(keys, input);
+    // A completed/failed result is immutable; only an exact active-run retry can acknowledge it.
+    if (call.status !== "pending") {
+      if (call.status !== input.status || context.research.completionDigest !== digest) throw new ChatAuthorityError("invalid_request", 409);
+      return { status: "duplicate", outputBytes: 0 };
+    }
+    const args = decrypted<Record<string, unknown>>(keys, "chat_tool_call", "arguments", call.id, call.sealedArguments);
+    if (input.status === "completed") {
+      const schema = call.toolName === "search_research" ? researchSearchOutputSchema : researchReadOutputSchema;
+      const checked = schema.safeParse(input.output);
+      if (!checked.success || input.output.snapshotId !== context.research.snapshotId) throw new ChatAuthorityError("invalid_request", 400);
+      if (call.toolName === "search_research") {
+        if (!("hits" in input.output) || input.output.hits.length > Number(args.limit)) throw new ChatAuthorityError("invalid_request", 400);
+      } else if (!("sourceId" in input.output) || input.output.sourceId !== args.sourceId || input.output.offset !== args.offset || Array.from(input.output.excerpt).length > Number(args.limit) || input.output.snapshotId !== args.snapshotId) throw new ChatAuthorityError("invalid_request", 400);
+    }
+    const result = input.status === "completed" ? input.output : { errorCode: input.errorCode };
+    const outputBytes = input.status === "completed" ? Buffer.byteLength(JSON.stringify(result), "utf8") : 0;
+    if (outputBytes > CHAT_MAX_RESEARCH_OUTPUT_BYTES) throw new ChatAuthorityError("quota_exceeded", 413);
+    const rows = await tx.update(chatToolCall).set({ status: input.status, sealedResult: encrypted(keys, "chat_tool_call", "result", call.id, result),
+      sealedContext: encrypted(keys, "chat_tool_call", "context", call.id, { ...context, readEvidence: [], research: { ...context.research, completionDigest: digest, ...(input.status === "failed" ? { errorCode: input.errorCode } : {}) } }),
+      resultMeta: { research: true, outputBytes, ...(input.status === "failed" ? { errorCode: input.errorCode } : {}) }, completedAt: now,
+    }).where(and(eq(chatToolCall.id, call.id), eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.status, "pending"))).returning({ id: chatToolCall.id });
+    if (!rows.length) throw new ChatAuthorityError("invalid_request", 409);
+    return { status: "accepted", outputBytes };
+  });
+}
+
+/** Monotonic metadata cleanup; never decrypts sources or changes completed results. */
+export async function closePendingResearchCalls(db: Db, scope: ChatScope, now = new Date()): Promise<number> {
+  const parsed = requireRunScope(scope);
+  return asUser(db, parsed.userId, async tx => {
+    const run = await ownedRun(tx, parsed);
+    const cancelled = !!run.cancellationRequestedAt || run.status === "cancelled";
+    const inactive = run.status !== "running" && run.status !== "queued";
+    const expired = !!run.grantsRevokedAt || (!!run.leaseExpiresAt && run.leaseExpiresAt <= now) || (!!run.deadlineAt && run.deadlineAt <= now);
+    if (!cancelled && !inactive && !expired) return 0;
+    const rows = await tx.update(chatToolCall).set({ status: cancelled ? "cancelled" : "failed", resultMeta: { research: true, errorCode: cancelled ? "run_cancelled" : "run_interrupted" }, completedAt: now })
+      .where(and(eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.conversationId, parsed.conversationId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.status, "pending"), inArray(chatToolCall.toolName, researchNames))).returning({ id: chatToolCall.id });
+    return rows.length;
+  });
+}
+
+export type ResearchToolPage = { calls: { callOrder: number; tool: "search_research" | "read_research"; output: ResearchOutput }[]; hasMore: boolean; nextAfter: number | null };
+/** Public callOrder/cursor are one-based; arguments and patient receipts are never exposed. */
+export async function listResearchToolPage(db: Db, scope: ChatScope, input: { after?: number; limit?: number } = {}): Promise<ResearchToolPage> {
+  const parsed = requireRunScope(scope);
+  const limit = input.limit ?? 1;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 2 || (input.after !== undefined && (!Number.isInteger(input.after) || input.after < 1 || input.after > CHAT_MAX_TOOL_CALLS))) throw new ChatPageCursorError();
+  return asUser(db, parsed.userId, async tx => {
+    await ownedRun(tx, parsed);
+    const rows = await tx.select({ callOrder: chatToolCall.callOrder, toolName: chatToolCall.toolName, id: chatToolCall.id, sealedResult: chatToolCall.sealedResult }).from(chatToolCall)
+      .where(and(eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.conversationId, parsed.conversationId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.status, "completed"), inArray(chatToolCall.toolName, researchNames), ...(input.after === undefined ? [] : [gte(chatToolCall.callOrder, input.after)])))
+      .orderBy(asc(chatToolCall.callOrder)).limit(limit + 1);
+    const calls: ResearchToolPage["calls"] = [];
+    if (rows.length) {
+      const keys = await keysFor(tx, parsed.userId, new Date());
+      for (const row of rows.slice(0, limit)) {
+        if (!row.sealedResult || row.sealedResult.length > 64 * 1024) throw new ChatPageSizeError();
+        const output = decrypted<ResearchOutput>(keys, "chat_tool_call", "result", row.id, row.sealedResult);
+        if (Buffer.byteLength(JSON.stringify(output), "utf8") > CHAT_MAX_RESEARCH_OUTPUT_BYTES) throw new ChatPageSizeError();
+        const validated = (row.toolName === "search_research" ? researchSearchOutputSchema : researchReadOutputSchema).parse(output);
+        const candidate = { callOrder: row.callOrder + 1, tool: row.toolName as "search_research" | "read_research", output: validated };
+        if (Buffer.byteLength(JSON.stringify({ calls: [...calls, candidate], hasMore: true, nextAfter: candidate.callOrder }), "utf8") > 64 * 1024) break;
+        calls.push(candidate);
+      }
+    }
+    if (rows.length && !calls.length) throw new ChatPageSizeError();
+    const hasMore = rows.length > calls.length;
+    return { calls, hasMore, nextAfter: hasMore ? calls.at(-1)!.callOrder : null };
   });
 }
 

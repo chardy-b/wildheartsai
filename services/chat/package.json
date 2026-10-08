@@ -11,7 +11,8 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "research:publish": "node dist/research-publisher.js"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.0.0",
