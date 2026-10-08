@@ -1,5 +1,7 @@
 # Chat database role deployment gate
 
+Update: the two restricted roles now run exclusively in the web backend. After additive migration 0009, existing roles use `scripts/upgrade-chat-roles.sql`; new environments use the provisioning script. Follow the [current rollout guide](../plans/2026-10-08-web-owned-chat-rollout.md); do not put either database connection on the VPS.
+
 The automatic Drizzle migration creates chat tables with fail-closed owner policies. It does
 not create a privileged queue policy or database role. An operator must review and apply the
 following setup atomically in each environment before starting the chat service.

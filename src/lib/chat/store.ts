@@ -1,6 +1,6 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { createHmac, randomUUID } from "node:crypto";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { canonicalJson, sealField, unsealField, userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
 import {
   chatConversation,
@@ -27,6 +27,9 @@ const MAX_RUN_CONTEXT_CHARS = 32_000;
 
 type ConversationScope = ChatScope & { conversationId: string };
 type RunScope = ConversationScope & { runId: string };
+
+export type ReadReceipt = { kind: "record" | "note"; targetId: string; version: string };
+function requestDigest(keys: UserKeys, value: unknown): string { return createHmac("sha256", keys.macKey).update(canonicalJson(value)).digest("hex"); }
 
 const field = (table: string, name: string, rowId: string) => ({ table, field: name, rowId });
 
@@ -75,7 +78,8 @@ async function ownedRun(tx: Db, scope: RunScope) {
     .select()
     .from(chatRun)
     .where(and(eq(chatRun.id, scope.runId), eq(chatRun.conversationId, scope.conversationId), eq(chatRun.userId, scope.userId)))
-    .limit(1);
+    .limit(1)
+    .for("update");
   if (!row) throw new Error("Chat run was not found");
   return row;
 }
@@ -251,7 +255,7 @@ export async function listMessages(db: Db, scope: ChatScope): Promise<MessageVie
 export async function createRun(
   db: Db,
   scope: ChatScope,
-  input: { parentMessageId: string; idempotencyKey: string; executionMeta?: Record<string, number | string | boolean | null>; now?: Date },
+  input: { parentMessageId: string; idempotencyKey: string; executionMeta?: Record<string, number | string | boolean | null>; initiatingSessionId?: string; now?: Date },
 ): Promise<RunView> {
   const parsed = requireConversationScope(scope);
   const now = input.now ?? new Date();
@@ -289,6 +293,7 @@ export async function createRun(
         parentMessageId: parent.id,
         idempotencyKey: input.idempotencyKey,
         executionMeta: input.executionMeta ?? {},
+        initiatingSessionId: input.initiatingSessionId ?? null,
         createdAt: now,
         updatedAt: now,
         nextAttemptAt: now,
@@ -304,13 +309,14 @@ export async function createRun(
 export async function submitQuestionAndRun(
   db: Db,
   scope: ChatScope,
-  input: { message: string; idempotencyKey: string; executionMeta?: Record<string, number | string | boolean | null>; now?: Date },
+  input: { message: string; idempotencyKey: string; executionMeta?: Record<string, number | string | boolean | null>; initiatingSessionId?: string; now?: Date },
 ): Promise<{ run: RunView; message: MessageView; duplicate: boolean }> {
   const parsed = requireConversationScope(scope);
   const now = input.now ?? new Date();
   if (!input.message.trim() || input.message.length > 100_000) throw new Error("Chat message is invalid");
   if (!input.idempotencyKey || input.idempotencyKey.length > 200) throw new Error("Run idempotency key is invalid");
   return asUser(db, parsed.userId, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${parsed.userId}))`);
     const [conversation] = await tx
       .select({ id: chatConversation.id })
       .from(chatConversation)
@@ -363,6 +369,8 @@ export async function submitQuestionAndRun(
       )
       .limit(1);
     if (active) throw new ChatRunBusyError();
+    const queued = await tx.select({ id: chatRun.id }).from(chatRun).where(and(eq(chatRun.userId, parsed.userId), inArray(chatRun.status, ["queued", "running"]))).limit(3);
+    if (input.initiatingSessionId && queued.length >= 3) throw new ChatRunBusyError();
     const parent = await addMessage(tx, keys, parsed, { role: "user", status: "completed", content: input.message, now });
     const [run] = await tx
       .insert(chatRun)
@@ -373,6 +381,7 @@ export async function submitQuestionAndRun(
         parentMessageId: parent.id,
         idempotencyKey: input.idempotencyKey,
         executionMeta: input.executionMeta ?? {},
+        initiatingSessionId: input.initiatingSessionId ?? null,
         createdAt: now,
         updatedAt: now,
         nextAttemptAt: now,
@@ -595,25 +604,24 @@ export async function appendWorkerEvent(
   const encoded = JSON.stringify(event.data);
   if (Buffer.byteLength(encoded, "utf8") > MAX_EVENT_BYTES) throw new Error("Chat event payload is too large");
   return asUser(db, parsed.userId, async (tx) => {
+    const run = await ownedRun(tx, parsed);
+    const keys = await keysFor(tx, parsed.userId, now);
+    const digest = requestDigest(keys, event);
     const [existing] = await tx
-      .select({ id: chatEvent.id })
+      .select({ id: chatEvent.id, requestDigest: chatEvent.requestDigest })
       .from(chatEvent)
       .where(and(eq(chatEvent.runId, parsed.runId), eq(chatEvent.attempt, parsed.runAttempt), eq(chatEvent.eventId, event.eventId), eq(chatEvent.userId, parsed.userId)))
       .limit(1);
-    if (existing) return { status: "duplicate" as const };
+    if (existing) {
+      if (existing.requestDigest !== digest) throw new Error("Worker event id was reused");
+      return { status: "duplicate" as const };
+    }
 
-    const [run] = await tx
-      .select()
-      .from(chatRun)
-      .where(and(eq(chatRun.id, parsed.runId), eq(chatRun.userId, parsed.userId), eq(chatRun.conversationId, parsed.conversationId)))
-      .limit(1)
-      .for("update");
     if (!run || run.status !== "running" || run.attempt !== parsed.runAttempt || run.leaseOwner !== parsed.workerId || !run.leaseExpiresAt || run.leaseExpiresAt <= now || run.nextWorkerSequence !== event.sequence - 1) {
       return { status: "out_of_order" as const };
     }
     await tx.update(chatRun).set({ nextEventSequence: run.nextEventSequence + 1, nextWorkerSequence: event.sequence, updatedAt: now }).where(eq(chatRun.id, run.id));
     const id = randomUUID();
-    const keys = await keysFor(tx, parsed.userId, now);
     await tx.insert(chatEvent).values({
       id,
       userId: parsed.userId,
@@ -624,6 +632,7 @@ export async function appendWorkerEvent(
       workerSequence: event.sequence,
       sequence: run.nextEventSequence + 1,
       kind: event.type,
+      requestDigest: digest,
       sealedPayload: encrypted(keys, "chat_event", "payload", id, event.data),
       createdAt: now,
     });
@@ -809,41 +818,41 @@ export async function finishRun(
   });
 }
 
-export async function listSummaries(db: Db, scope: ChatScope): Promise<SummaryView[]> {
+async function refreshSummaryFreshness(tx: Db, keys: UserKeys, userId: string, rows: (typeof userSummary.$inferSelect)[]): Promise<string[]> {
+  if (!rows.length) return [];
+    const evidence = await tx.select().from(summaryEvidence).where(and(eq(summaryEvidence.userId, userId), inArray(summaryEvidence.summaryId, rows.map(row => row.id))));
+    const noteIds = evidence.flatMap(row => row.attachmentId ? [row.attachmentId] : []);
+    const notes = noteIds.length ? await tx.select({ id: fhirAttachment.id, resourceId: fhirAttachment.resourceId, sealedText: fhirAttachment.sealedText }).from(fhirAttachment).where(and(eq(fhirAttachment.userId, userId), inArray(fhirAttachment.id, noteIds))) : [];
+    const recordIds = [...evidence.flatMap(row => row.recordId ? [row.recordId] : []), ...notes.map(note => note.resourceId)];
+    const records = recordIds.length ? await tx.select({ id: fhirResource.id, version: fhirResource.contentHmac }).from(fhirResource).where(and(eq(fhirResource.userId, userId), inArray(fhirResource.id, recordIds), isNull(fhirResource.supersededAt), isNull(fhirResource.removedAt))) : [];
+    const recordVersions = new Map(records.map(row => [row.id, row.version]));
+    const noteVersions = new Map(notes.filter(note => note.sealedText && recordVersions.has(note.resourceId)).map(note => [note.id, noteReadVersion(keys, note.sealedText!)]));
+    const stale = rows.filter(row => {
+      const supported = evidence.filter(item => item.summaryId === row.id);
+      if (!supported.length) return !!row.originatingRunId;
+      return supported.some(item => {
+        const reference = decrypted<{ version?: string }>(keys, "summary_evidence", "reference", item.id, item.sealedReference);
+        const current = item.kind === "record" ? item.recordId && recordVersions.get(item.recordId) : item.attachmentId && noteVersions.get(item.attachmentId);
+        return !current || (reference.version !== undefined && reference.version !== current);
+      });
+    }).map(row => row.id);
+    if (stale.length) await tx.update(userSummary).set({ freshness: "stale", updatedAt: new Date() }).where(and(eq(userSummary.userId, userId), inArray(userSummary.id, stale)));
+  return stale;
+}
+
+export async function listSummaries(db: Db, scope: ChatScope, recallOnly = false): Promise<SummaryView[]> {
   const parsed = chatScopeSchema.parse(scope);
   return asUser(db, parsed.userId, async (tx) => {
-    // Evidence uses ON DELETE SET NULL so the encrypted descriptor survives a record/source
-    // purge. Rechecking it at read time makes deleted supporting data visible as stale.
-    const missingEvidence = tx
-      .select({ one: sql`1` })
-      .from(summaryEvidence)
-      .where(
-        and(
-          eq(summaryEvidence.summaryId, userSummary.id),
-          eq(summaryEvidence.userId, parsed.userId),
-          or(
-            and(eq(summaryEvidence.kind, "record"), isNull(summaryEvidence.recordId)),
-            and(eq(summaryEvidence.kind, "note"), isNull(summaryEvidence.attachmentId)),
-          ),
-        ),
-      );
-    await tx
-      .update(userSummary)
-      .set({ freshness: "stale", updatedAt: new Date() })
-      .where(and(eq(userSummary.userId, parsed.userId), isNull(userSummary.deletedAt), sql`exists (${missingEvidence})`));
     const keys = await keysFor(tx, parsed.userId, new Date());
-    const rows = await tx
-      .select()
-      .from(userSummary)
-      .where(and(eq(userSummary.userId, parsed.userId), isNull(userSummary.deletedAt)))
-      .orderBy(userSummary.updatedAt);
-    return rows.map((row) => ({
-      id: row.id,
-      title: decrypted<string>(keys, "user_summary", "title", row.id, row.sealedTitle),
+    const rows = await tx.select().from(userSummary)
+      .where(and(eq(userSummary.userId, parsed.userId), isNull(userSummary.deletedAt), ...(recallOnly ? [eq(userSummary.freshness, "fresh"), sql`exists (select 1 from ${chatRun} where ${chatRun.id} = ${userSummary.originatingRunId} and ${chatRun.userId} = ${parsed.userId} and ${chatRun.status} = 'completed')`] : [])))
+      .orderBy(desc(userSummary.updatedAt)).limit(recallOnly ? 10 : 100);
+    if (!rows.length) return [];
+    const stale = await refreshSummaryFreshness(tx, keys, parsed.userId, rows);
+    return rows.filter(row => !recallOnly || !stale.includes(row.id)).map(row => ({
+      id: row.id, title: decrypted<string>(keys, "user_summary", "title", row.id, row.sealedTitle),
       content: summaryContentSchema.parse(decrypted<unknown>(keys, "user_summary", "content", row.id, row.sealedContent)),
-      freshness: row.freshness as "fresh" | "stale",
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
+      freshness: stale.includes(row.id) ? "stale" : row.freshness as "fresh" | "stale", createdAt: row.createdAt, updatedAt: row.updatedAt,
     }));
   });
 }
@@ -879,6 +888,12 @@ export async function saveSummary(
     throw new Error("Summary evidence is invalid");
   }
   return asUser(db, parsed.userId, async (tx) => {
+    let run: typeof chatRun.$inferSelect | undefined;
+    if (parsed.runId) {
+      run = await ownedRun(tx, requireRunScope(parsed));
+      if (!parsed.runAttempt || !parsed.workerId || run.status !== "running" || run.attempt !== parsed.runAttempt || run.leaseOwner !== parsed.workerId || !run.leaseExpiresAt || run.leaseExpiresAt <= now || run.cancellationRequestedAt) throw new Error("Chat worker lease is no longer active");
+      if (!input.evidence.length) throw new Error("Summary requires current-run evidence");
+    }
     const [existing] = await tx
       .select()
       .from(userSummary)
@@ -895,23 +910,29 @@ export async function saveSummary(
         updatedAt: existing.updatedAt,
       };
     }
-    let run: typeof chatRun.$inferSelect | undefined;
-    if (parsed.runId) {
-      run = await ownedRun(tx, requireRunScope(parsed));
-      if (!parsed.runAttempt || !parsed.workerId || run.status !== "running" || run.attempt !== parsed.runAttempt || run.leaseOwner !== parsed.workerId || !run.leaseExpiresAt || run.leaseExpiresAt <= now) {
-        throw new Error("Chat worker lease is no longer active");
-      }
-    }
     const summaryId = randomUUID();
     const sourceIds = new Set<string>();
+    const versions = new Map<string, string>();
+    const receipts: ReadReceipt[] = [];
+    if (run) {
+      const calls = await tx.select().from(chatToolCall).where(and(eq(chatToolCall.runId, run.id), eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.status, "completed")));
+      for (const call of calls) if (call.sealedContext) receipts.push(...(decrypted<{ readEvidence?: ReadReceipt[] }>(keys, "chat_tool_call", "context", call.id, call.sealedContext).readEvidence ?? []));
+    }
     for (const evidence of input.evidence) {
       if (evidence.kind === "record") {
-        const [record] = await tx.select({ id: fhirResource.id, sourceId: fhirResource.sourceId }).from(fhirResource).where(and(eq(fhirResource.id, evidence.targetId), eq(fhirResource.userId, parsed.userId))).limit(1);
+        const [record] = await tx.select({ id: fhirResource.id, sourceId: fhirResource.sourceId, version: fhirResource.contentHmac }).from(fhirResource).where(and(eq(fhirResource.id, evidence.targetId), eq(fhirResource.userId, parsed.userId), isNull(fhirResource.supersededAt), isNull(fhirResource.removedAt))).limit(1);
         if (!record) throw new Error("Summary record evidence was not found");
+        if (run && !receipts.some(r => r.kind === "record" && r.targetId === record.id && r.version === record.version)) throw new Error("Summary evidence was not read in this run");
+        versions.set(`record:${record.id}`, record.version);
         sourceIds.add(record.sourceId);
       } else {
-        const [note] = await tx.select({ id: fhirAttachment.id, sourceId: fhirAttachment.sourceId }).from(fhirAttachment).where(and(eq(fhirAttachment.id, evidence.targetId), eq(fhirAttachment.userId, parsed.userId))).limit(1);
+        const [note] = await tx.select({ id: fhirAttachment.id, sourceId: fhirAttachment.sourceId, sealedText: fhirAttachment.sealedText, resourceId: fhirAttachment.resourceId }).from(fhirAttachment).where(and(eq(fhirAttachment.id, evidence.targetId), eq(fhirAttachment.userId, parsed.userId))).limit(1);
         if (!note) throw new Error("Summary note evidence was not found");
+        if (run) {
+          const [parent] = await tx.select({ id: fhirResource.id }).from(fhirResource).where(and(eq(fhirResource.id, note.resourceId), eq(fhirResource.userId, parsed.userId), isNull(fhirResource.supersededAt), isNull(fhirResource.removedAt))).limit(1);
+          if (!parent || !note.sealedText || !receipts.some(r => r.kind === "note" && r.targetId === note.id && r.version === requestDigest(keys, note.sealedText))) throw new Error("Summary note evidence was not read in this run");
+        }
+        if (note.sealedText) versions.set(`note:${note.id}`, noteReadVersion(keys, note.sealedText));
         sourceIds.add(note.sourceId);
       }
     }
@@ -950,7 +971,7 @@ export async function saveSummary(
         kind: evidence.kind,
         recordId: evidence.kind === "record" ? evidence.targetId : null,
         attachmentId: evidence.kind === "note" ? evidence.targetId : null,
-        sealedReference: encrypted(keys, "summary_evidence", "reference", evidence.id, { kind: evidence.kind, targetId: evidence.targetId }),
+        sealedReference: encrypted(keys, "summary_evidence", "reference", evidence.id, { kind: evidence.kind, targetId: evidence.targetId, version: versions.get(`${evidence.kind}:${evidence.targetId}`) }),
         createdAt: now,
       })),
     );
@@ -997,6 +1018,7 @@ export async function beginToolCall(
       runId: parsed.runId,
       callOrder: input.callOrder,
       toolName: input.toolName,
+      requestDigest: requestDigest(keys, { tool: input.toolName, arguments: input.arguments }),
       sealedArguments: encrypted(keys, "chat_tool_call", "arguments", id, input.arguments),
       sealedContext: input.context === undefined ? null : encrypted(keys, "chat_tool_call", "context", id, input.context),
       startedAt: now,
@@ -1043,7 +1065,7 @@ export async function beginRecordedToolCall(
       }
       if (context.providerToolCallId !== input.providerToolCallId) continue;
       const argumentsMatch = canonicalJson(decrypted<unknown>(keys, "chat_tool_call", "arguments", call.id, call.sealedArguments)) === canonicalJson(input.arguments);
-      if (call.toolName !== input.toolName || !argumentsMatch) throw new Error("Provider tool call id was reused");
+      if (call.toolName !== input.toolName || !argumentsMatch || (call.requestDigest && call.requestDigest !== requestDigest(keys, { tool: input.toolName, arguments: input.arguments }))) throw new Error("Provider tool call id was reused");
       if (call.status === "completed" && call.sealedResult) {
         return { status: "replay" as const, toolCallId: call.id, result: decrypted<unknown>(keys, "chat_tool_call", "result", call.id, call.sealedResult) };
       }
@@ -1058,6 +1080,7 @@ export async function beginRecordedToolCall(
       runId: parsed.runId,
       callOrder: calls.length,
       toolName: input.toolName,
+      requestDigest: requestDigest(keys, { tool: input.toolName, arguments: input.arguments }),
       sealedArguments: encrypted(keys, "chat_tool_call", "arguments", id, input.arguments),
       sealedContext: encrypted(keys, "chat_tool_call", "context", id, { providerToolCallId: input.providerToolCallId }),
       startedAt: now,
@@ -1069,7 +1092,7 @@ export async function beginRecordedToolCall(
 export async function finishToolCall(
   db: Db,
   scope: ChatScope,
-  input: { toolCallId: string; status: "completed" | "failed" | "cancelled"; result?: unknown; resultMeta?: Record<string, number | string | boolean | null>; now?: Date },
+  input: { toolCallId: string; status: "completed" | "failed" | "cancelled"; result?: unknown; resultMeta?: Record<string, number | string | boolean | null>; readEvidence?: ReadReceipt[]; now?: Date },
 ): Promise<boolean> {
   const parsed = requireWorkerScope(scope);
   const now = input.now ?? new Date();
@@ -1077,16 +1100,165 @@ export async function finishToolCall(
     const run = await ownedRun(tx, parsed);
     if (run.status !== "running" || run.attempt !== parsed.runAttempt || run.leaseOwner !== parsed.workerId || !run.leaseExpiresAt || run.leaseExpiresAt <= now) return false;
     const keys = await keysFor(tx, parsed.userId, now);
+    const [existing] = await tx.select({ sealedContext: chatToolCall.sealedContext }).from(chatToolCall).where(and(eq(chatToolCall.id, input.toolCallId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.userId, parsed.userId))).limit(1);
+    const context = existing?.sealedContext ? decrypted<Record<string, unknown>>(keys, "chat_tool_call", "context", input.toolCallId, existing.sealedContext) : {};
     const updated = await tx
       .update(chatToolCall)
       .set({
         status: input.status,
         sealedResult: input.result === undefined ? null : encrypted(keys, "chat_tool_call", "result", input.toolCallId, input.result),
         resultMeta: input.resultMeta ?? {},
+        sealedContext: encrypted(keys, "chat_tool_call", "context", input.toolCallId, { ...context, readEvidence: input.readEvidence ?? [] }),
         completedAt: now,
       })
       .where(and(eq(chatToolCall.id, input.toolCallId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.conversationId, parsed.conversationId), eq(chatToolCall.userId, parsed.userId)))
       .returning({ id: chatToolCall.id });
     return updated.length === 1;
+  });
+}
+
+export function noteReadVersion(keys: UserKeys, sealedText: string): string { return requestDigest(keys, sealedText); }
+
+// Browser-only pagination. Worker/legacy helper contracts remain unchanged.
+export const CHAT_BROWSER_PAGE_BYTES = 96 * 1024;
+export const CHAT_BROWSER_MESSAGE_BYTES = 96 * 1024;
+export type PagedMessageView = MessageView & { truncated: boolean };
+export class ChatPageCursorError extends Error {
+  readonly code = "CHAT_INVALID_CURSOR";
+  constructor() { super("Invalid chat page cursor"); this.name = "ChatPageCursorError"; }
+}
+export class ChatPageSizeError extends Error {
+  readonly code = "CHAT_PAGE_TOO_LARGE";
+  constructor() { super("Chat page item exceeds display limit"); this.name = "ChatPageSizeError"; }
+}
+const pageUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function pageLimit(value: number | undefined, fallback: number, maximum: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || value < 1 || value > maximum) throw new ChatPageCursorError();
+  return value;
+}
+function encodedBytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
+function validCursor(cursor: string | undefined): void { if (cursor !== undefined && !pageUuid.test(cursor)) throw new ChatPageCursorError(); }
+function messageView(keys: UserKeys, row: typeof chatMessage.$inferSelect): PagedMessageView {
+  const view: PagedMessageView = {
+    id: row.id, sequence: row.sequence, role: row.role as "user" | "assistant", status: row.status,
+    content: decrypted<string>(keys, "chat_message", "content", row.id, row.sealedContent),
+    createdAt: row.createdAt, completedAt: row.completedAt, truncated: false,
+  };
+  if (encodedBytes(view) <= CHAT_BROWSER_MESSAGE_BYTES - 2) return view;
+  // A legacy row may predate today's input caps. Clip only its display text, and
+  // keep the row/sequence in the page so the cursor never skips a message.
+  const text = view.content;
+  view.truncated = true;
+  let low = 0; let high = text.length;
+  while (low < high) {
+    const end = Math.ceil((low + high) / 2);
+    view.content = text.slice(0, end);
+    if (encodedBytes(view) <= CHAT_BROWSER_MESSAGE_BYTES - 2) low = end; else high = end - 1;
+  }
+  // Preserve Unicode code points at the cut; escaped JSON bytes are counted too.
+  if (low > 0 && low < text.length && /[\uD800-\uDBFF]/.test(text[low - 1]) && /[\uDC00-\uDFFF]/.test(text[low])) low -= 1;
+  view.content = text.slice(0, low);
+  return view;
+}
+
+export async function listConversationPage(
+  db: Db, scope: ChatScope, input: { cursor?: string; limit?: number } = {},
+): Promise<{ conversations: ConversationView[]; hasMore: boolean; nextCursor: string | null }> {
+  const parsed = chatScopeSchema.parse(scope); validCursor(input.cursor);
+  const limit = pageLimit(input.limit, 32, 64);
+  return asUser(db, parsed.userId, async (tx) => {
+    let cutoff: { id: string } | undefined;
+    if (input.cursor) {
+      [cutoff] = await tx.select({ id: chatConversation.id }).from(chatConversation).where(and(eq(chatConversation.userId, parsed.userId), eq(chatConversation.id, input.cursor))).limit(1);
+      if (!cutoff) throw new ChatPageCursorError();
+    }
+    // Compare the stored timestamp in SQL: a JavaScript Date loses PostgreSQL microseconds.
+    const conditions = [eq(chatConversation.userId, parsed.userId), ...(cutoff ? [sql`(${chatConversation.createdAt}, ${chatConversation.id}) < (select c.created_at, c.id from ${chatConversation} c where c.id = ${cutoff.id} and c.user_id = ${parsed.userId})`] : [])];
+    const rows = await tx.select().from(chatConversation).where(and(...conditions)).orderBy(desc(chatConversation.createdAt), desc(chatConversation.id)).limit(limit);
+    const keys = await keysFor(tx, parsed.userId, new Date());
+    const conversations = rows.map(row => ({ id: row.id, title: row.sealedTitle ? decrypted<string>(keys, "chat_conversation", "title", row.id, row.sealedTitle) : DEFAULT_TITLE, archivedAt: row.archivedAt, createdAt: row.createdAt, updatedAt: row.updatedAt }));
+    const oldest = rows.at(-1);
+    const more = oldest && rows.length === limit ? await tx.select({ id: chatConversation.id }).from(chatConversation).where(and(eq(chatConversation.userId, parsed.userId), sql`(${chatConversation.createdAt}, ${chatConversation.id}) < (select c.created_at, c.id from ${chatConversation} c where c.id = ${oldest.id} and c.user_id = ${parsed.userId})`)).limit(1) : [];
+    return { conversations, hasMore: more.length > 0, nextCursor: more.length ? oldest!.id : null };
+  });
+}
+
+export async function listMessagePage(
+  db: Db, scope: ChatScope, input: { before?: number; limit?: number } = {},
+): Promise<{ messages: PagedMessageView[]; hasMore: boolean; nextBefore: number | null }> {
+  const parsed = requireConversationScope(scope);
+  const limit = pageLimit(input.limit, 20, 20);
+  if (input.before !== undefined && (!Number.isSafeInteger(input.before) || input.before < 1)) throw new ChatPageCursorError();
+  return asUser(db, parsed.userId, async (tx) => {
+    await ownedConversation(tx, parsed);
+    const rows = await tx.select().from(chatMessage).where(and(eq(chatMessage.userId, parsed.userId), eq(chatMessage.conversationId, parsed.conversationId), ...(input.before === undefined ? [] : [lt(chatMessage.sequence, input.before)]))).orderBy(desc(chatMessage.sequence)).limit(limit);
+    const keys = await keysFor(tx, parsed.userId, new Date());
+    const selected: PagedMessageView[] = []; let bytes = 2;
+    for (const row of rows) {
+      const view = messageView(keys, row); const size = encodedBytes(view) + (selected.length ? 1 : 0);
+      if (bytes + size > CHAT_BROWSER_PAGE_BYTES) break;
+      selected.push(view); bytes += size;
+    }
+    if (rows.length && !selected.length) throw new ChatPageSizeError();
+    const oldest = selected.at(-1);
+    let hasMore = rows.length > selected.length;
+    if (!hasMore && oldest && rows.length === limit) {
+      const more = await tx.select({ id: chatMessage.id }).from(chatMessage).where(and(eq(chatMessage.userId, parsed.userId), eq(chatMessage.conversationId, parsed.conversationId), lt(chatMessage.sequence, oldest.sequence))).limit(1);
+      hasMore = more.length > 0;
+    }
+    return { messages: selected.reverse(), hasMore, nextBefore: hasMore ? oldest!.sequence : null };
+  });
+}
+
+export async function listRunsForMessages(
+  db: Db, scope: ChatScope, messageIds: readonly string[], input: { includeActive?: boolean } = {},
+): Promise<RunView[]> {
+  const parsed = requireConversationScope(scope);
+  if (messageIds.length > 20 || messageIds.some(id => !pageUuid.test(id))) throw new ChatPageCursorError();
+  const ids = [...new Set(messageIds)];
+  return asUser(db, parsed.userId, async (tx) => {
+    await ownedConversation(tx, parsed);
+    // A legacy parent can have multiple runs; show only the latest matching run
+    // for each parent, rather than letting one old message make this unbounded.
+    const rows = ids.length ? await tx.selectDistinctOn([chatRun.parentMessageId]).from(chatRun).where(and(eq(chatRun.userId, parsed.userId), eq(chatRun.conversationId, parsed.conversationId), or(inArray(chatRun.parentMessageId, ids), inArray(chatRun.assistantMessageId, ids)))).orderBy(chatRun.parentMessageId, desc(chatRun.createdAt), desc(chatRun.id)).limit(ids.length) : [];
+    if (input.includeActive) {
+      const [active] = await tx.select().from(chatRun).where(and(eq(chatRun.userId, parsed.userId), eq(chatRun.conversationId, parsed.conversationId), inArray(chatRun.status, ["queued", "running"]))).orderBy(desc(chatRun.createdAt), desc(chatRun.id)).limit(1);
+      if (active && !rows.some(row => row.id === active.id)) rows.push(active);
+    }
+    return rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)).map(viewRun);
+  });
+}
+
+export async function listSummaryPage(
+  db: Db, scope: ChatScope, input: { cursor?: string; limit?: number } = {},
+): Promise<{ summaries: SummaryView[]; hasMore: boolean; nextCursor: string | null }> {
+  const parsed = chatScopeSchema.parse(scope); validCursor(input.cursor);
+  const limit = pageLimit(input.limit, 32, 32);
+  return asUser(db, parsed.userId, async (tx) => {
+    let cutoff: { id: string } | undefined;
+    if (input.cursor) {
+      // Soft-deleted cursor rows retain their ordering boundary until eventual purge.
+      [cutoff] = await tx.select({ id: userSummary.id }).from(userSummary).where(and(eq(userSummary.userId, parsed.userId), eq(userSummary.id, input.cursor))).limit(1);
+      if (!cutoff) throw new ChatPageCursorError();
+    }
+    const rows = await tx.select().from(userSummary).where(and(eq(userSummary.userId, parsed.userId), isNull(userSummary.deletedAt), ...(cutoff ? [sql`(${userSummary.createdAt}, ${userSummary.id}) < (select s.created_at, s.id from ${userSummary} s where s.id = ${cutoff.id} and s.user_id = ${parsed.userId})`] : []))).orderBy(desc(userSummary.createdAt), desc(userSummary.id)).limit(limit);
+    const keys = await keysFor(tx, parsed.userId, new Date());
+    const stale = await refreshSummaryFreshness(tx, keys, parsed.userId, rows);
+    const summaries: SummaryView[] = []; let bytes = 2;
+    for (const row of rows) {
+      const view: SummaryView = { id: row.id, title: decrypted<string>(keys, "user_summary", "title", row.id, row.sealedTitle), content: summaryContentSchema.parse(decrypted<unknown>(keys, "user_summary", "content", row.id, row.sealedContent)), freshness: stale.includes(row.id) ? "stale" : row.freshness as "fresh" | "stale", createdAt: row.createdAt, updatedAt: row.updatedAt };
+      const size = encodedBytes(view);
+      if (size + 2 > CHAT_BROWSER_PAGE_BYTES) throw new ChatPageSizeError();
+      if (bytes + size + (summaries.length ? 1 : 0) > CHAT_BROWSER_PAGE_BYTES) break;
+      bytes += size + (summaries.length ? 1 : 0); summaries.push(view);
+    }
+    const oldest = summaries.at(-1);
+    let hasMore = rows.length > summaries.length;
+    if (!hasMore && oldest && rows.length === limit) {
+      const more = await tx.select({ id: userSummary.id }).from(userSummary).where(and(eq(userSummary.userId, parsed.userId), isNull(userSummary.deletedAt), sql`(${userSummary.createdAt}, ${userSummary.id}) < (select s.created_at, s.id from ${userSummary} s where s.id = ${oldest.id} and s.user_id = ${parsed.userId})`)).limit(1);
+      hasMore = more.length > 0;
+    }
+    return { summaries, hasMore, nextCursor: hasMore ? oldest!.id : null };
   });
 }

@@ -6,7 +6,7 @@
 --     -f scripts/provision-chat-roles.sql
 --
 -- This script is deliberately separate from Drizzle migrations: it grants a metadata broker
--- privileged access to chat_run, so it must be reviewed and applied only after migration 0008.
+-- privileged access to chat_run, so it must be reviewed and applied only after migration 0009.
 \if :{?chat_data_password}
 \else
   \quit 'chat_data_password is required'
@@ -24,6 +24,10 @@ CREATE ROLE wildhearts_chat_queue LOGIN PASSWORD :'chat_queue_password'
   NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
 
 GRANT USAGE ON SCHEMA public TO wildhearts_chat_data, wildhearts_chat_queue;
+GRANT EXECUTE ON FUNCTION public.chat_lock_session(text, text) TO wildhearts_chat_data, wildhearts_chat_queue;
+GRANT SELECT ON chat_coordinator TO wildhearts_chat_data, wildhearts_chat_queue;
+GRANT UPDATE (disabled_at) ON chat_coordinator TO wildhearts_chat_data;
+GRANT UPDATE (disabled_at, claim_window_at, claim_count) ON chat_coordinator TO wildhearts_chat_queue;
 
 GRANT SELECT ON user_data_key, health_source, fhir_resource, fhir_attachment TO wildhearts_chat_data;
 GRANT SELECT (id, user_id, expires_at) ON session TO wildhearts_chat_data;
@@ -49,9 +53,12 @@ CREATE POLICY chat_data_context_attachment ON fhir_attachment AS RESTRICTIVE FOR
 -- Only queue discovery/lease metadata is visible to this role. It has no grant on the
 -- sealed transcript, event, summary, record, key, or authentication tables.
 GRANT SELECT (id, user_id, conversation_id, status, next_attempt_at, lease_owner, lease_expires_at,
-              cancellation_requested_at, attempt, created_at)
+              cancellation_requested_at, attempt, created_at, initiating_session_id, coordinator_id,
+              claim_request_id, granted_worker_id, deadline_at, execution_grant_hash, control_grant_hash, grants_revoked_at)
   ON chat_run TO wildhearts_chat_queue;
-GRANT UPDATE (status, lease_owner, lease_expires_at, attempt, next_worker_sequence, started_at, completed_at, updated_at)
+GRANT UPDATE (status, lease_owner, lease_expires_at, attempt, next_worker_sequence, started_at, completed_at, updated_at,
+              cancellation_requested_at, coordinator_id, claim_request_id, granted_worker_id, deadline_at,
+              execution_grant_hash, control_grant_hash, grants_revoked_at)
   ON chat_run TO wildhearts_chat_queue;
 CREATE POLICY queue_metadata_select ON chat_run FOR SELECT TO wildhearts_chat_queue USING (true);
 CREATE POLICY queue_metadata_update ON chat_run FOR UPDATE TO wildhearts_chat_queue USING (true) WITH CHECK (true);

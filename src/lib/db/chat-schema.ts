@@ -73,6 +73,16 @@ export const chatRun = pgTable(
     // Config versions and usage counts are non-content metadata. Never put prompts or provider
     // request/response bodies here.
     executionMeta: jsonb("execution_meta").$type<Record<string, number | string | boolean | null>>().notNull().default({}),
+    // Internal Better Auth row id, never its cookie/token. No cascading session FK: logout
+    // revokes authority while preserving the conversation and its encrypted audit history.
+    initiatingSessionId: text("initiating_session_id"),
+    coordinatorId: uuid("coordinator_id").references(() => chatCoordinator.id),
+    claimRequestId: uuid("claim_request_id"),
+    grantedWorkerId: text("granted_worker_id"),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+    executionGrantHash: text("execution_grant_hash"),
+    controlGrantHash: text("control_grant_hash"),
+    grantsRevokedAt: timestamp("grants_revoked_at", { withTimezone: true }),
     attempt: integer("attempt").notNull().default(0),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
     leaseOwner: text("lease_owner"),
@@ -86,6 +96,9 @@ export const chatRun = pgTable(
   },
   (table) => [
     uniqueIndex("chat_run_user_idempotency_idx").on(table.userId, table.idempotencyKey),
+    uniqueIndex("chat_run_coordinator_claim_idx").on(table.coordinatorId, table.claimRequestId),
+    uniqueIndex("chat_run_execution_grant_idx").on(table.executionGrantHash),
+    uniqueIndex("chat_run_control_grant_idx").on(table.controlGrantHash),
     uniqueIndex("chat_run_owner_parent_idx").on(table.userId, table.conversationId, table.id),
     index("chat_run_claim_idx").on(table.status, table.nextAttemptAt, table.leaseExpiresAt),
     index("chat_run_user_conversation_idx").on(table.userId, table.conversationId, table.createdAt),
@@ -111,6 +124,7 @@ export const chatToolCall = pgTable(
     callOrder: integer("call_order").notNull(),
     toolName: text("tool_name").notNull(),
     status: text("status", { enum: ["pending", "completed", "failed", "cancelled"] }).notNull().default("pending"),
+    requestDigest: text("request_digest"),
     sealedArguments: text("sealed_arguments").notNull(),
     sealedContext: text("sealed_context"),
     sealedResult: text("sealed_result"),
@@ -148,6 +162,7 @@ export const chatEvent = pgTable(
     workerSequence: integer("worker_sequence").notNull(),
     sequence: integer("sequence").notNull(),
     kind: text("kind").notNull(),
+    requestDigest: text("request_digest"),
     sealedPayload: text("sealed_payload").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -205,3 +220,14 @@ export const summaryEvidence = pgTable(
     foreignKey({ columns: [table.userId, table.summaryId], foreignColumns: [userSummary.userId, userSummary.id] }),
   ],
 );
+
+// Operational metadata only, no tenant content or standing tenant data authority. Its
+// row lock serializes bounded claims and atomically fences operator disablement.
+export const chatCoordinator = pgTable("chat_coordinator", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  credentialHash: text("credential_hash").notNull(),
+  disabledAt: timestamp("disabled_at", { withTimezone: true }),
+  claimWindowAt: timestamp("claim_window_at", { withTimezone: true }).notNull().defaultNow(),
+  claimCount: integer("claim_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex("chat_coordinator_credential_idx").on(table.credentialHash)]);
