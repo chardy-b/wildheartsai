@@ -5,7 +5,8 @@ COPY services/chat/package.json services/chat/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY services/chat/build.mjs services/chat/tsconfig.json ./
 COPY services/chat/src ./src
-COPY src /app/src
+COPY src/lib/chat/tools.ts /app/src/lib/chat/tools.ts
+COPY src/lib/fhir/categories.ts /app/src/lib/fhir/categories.ts
 RUN npm run build
 
 FROM node:22-alpine AS dependencies
@@ -17,7 +18,6 @@ USER node
 
 FROM dependencies AS service
 COPY --from=build /app/services/chat/dist/index.js ./dist/index.js
-EXPOSE 8080
 CMD ["node", "dist/index.js"]
 
 # Worker receives no service bundle, database connection, signing key, or record key.

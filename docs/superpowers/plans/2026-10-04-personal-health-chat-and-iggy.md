@@ -1,5 +1,7 @@
 # Wild Hearts personal health chat and Iggy execution plan
 
+Historical plan: the VPS database/signing-key topology below is superseded by the [web-owned boundary](../specs/2026-10-07-web-owned-chat-security-boundary.md) and [rollout guide](2026-10-08-web-owned-chat-rollout.md).
+
 **Date:** October 4, 2026
 
 **Status:** Architecture proposal from the planning discussion. No chat implementation, Iggy changes, or deployment has been completed.

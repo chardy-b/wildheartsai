@@ -9,8 +9,11 @@ import type { Observation } from "@/lib/fhir/types";
 import { openStoredRow } from "@/lib/sync/store";
 import type { ChatScope } from "./contracts";
 import { chatRecordsKey } from "./key";
-import { assertActiveWorker, beginRecordedToolCall, finishToolCall, isCancellationRequested, listSummaries, saveSummary } from "./store";
+import { assertActiveWorker, beginRecordedToolCall, finishToolCall, isCancellationRequested, listSummaries, saveSummary, noteReadVersion, type ReadReceipt } from "./store";
 import { CHAT_MAX_CANDIDATES, CHAT_MAX_NOTE_CHARS, chatToolSchemas, type ChatToolName } from "./tools";
+
+const evidenceReceipts = new WeakMap<object, ReadReceipt[]>();
+function withReceipts<T extends object>(output: T, receipts: ReadReceipt[]): T { evidenceReceipts.set(output, receipts); return output; }
 
 type Citation = { kind: "record" | "note"; id: string };
 const current = [isNull(fhirResource.supersededAt), isNull(fhirResource.removedAt)];
@@ -61,7 +64,7 @@ export async function invokeRecordedChatTool<T extends ChatToolName>(
   if (begun.status === "pending") throw new Error("Tool call is already pending");
   try {
     const output = await executeChatTool(db, scope, input.tool, parsed, { summaryIdempotencyKey: begun.toolCallId });
-    const finished = await finishToolCall(db, scope, { toolCallId: begun.toolCallId, status: "completed", result: output });
+    const finished = await finishToolCall(db, scope, { toolCallId: begun.toolCallId, status: "completed", result: output, readEvidence: output && typeof output === "object" ? evidenceReceipts.get(output) : undefined });
     if (!finished) throw new Error("Chat worker lease is no longer active");
     return { status: "completed", output };
   } catch (error) {
@@ -100,7 +103,8 @@ export async function findRecords(db: Db, scope: ChatScope, input: z.infer<typeo
       if (query && !haystack.includes(query)) return [];
       return [{ citation: { kind: "record" as const, id: row.id }, resourceType: row.resourceType, date: row.effectiveAt?.toISOString() ?? null, title: opened.summary.title, detail: opened.summary.detail, status: opened.summary.status }];
     });
-    return { records: matched.slice(0, input.limit), truncated: rows.length === CHAT_MAX_CANDIDATES || matched.length > input.limit };
+    const records = matched.slice(0, input.limit);
+    return withReceipts({ records, truncated: rows.length === CHAT_MAX_CANDIDATES || matched.length > input.limit }, rows.filter(row => records.some(record => record.citation.id === row.id)).map(row => ({ kind: "record", targetId: row.id, version: row.contentHmac })));
   });
 }
 
@@ -109,12 +113,13 @@ export async function readRecords(db: Db, scope: ChatScope, input: z.infer<typeo
     const keys = await keysFor(tx, scope.userId);
     const rows = await tx.select().from(fhirResource).where(and(eq(fhirResource.userId, scope.userId), inArray(fhirResource.id, input.recordIds), ...current));
     const byId = new Map(rows.map((row) => [row.id, row]));
-    return input.recordIds.flatMap((id) => {
+    const result = input.recordIds.flatMap((id) => {
       const row = byId.get(id);
       if (!row) return [];
       const opened = openStoredRow(keys, row);
       return [{ citation: { kind: "record" as const, id }, resourceType: row.resourceType, summary: opened.summary, details: input.includeDetails ? describeResource(opened.resource) : undefined }];
     });
+    return withReceipts(result, rows.map(row => ({ kind: "record", targetId: row.id, version: row.contentHmac })));
   });
 }
 
@@ -125,7 +130,7 @@ export async function readStoredNote(db: Db, scope: ChatScope, input: z.infer<ty
     if (!row) return { available: false, reason: "not_found" };
     if (!row.sealedText) return { available: false, reason: "not_stored_as_text" };
     const text = JSON.parse(JSON.stringify(unsealField(keys, row.sealedText, { table: "fhir_attachment", field: "text", rowId: row.id }))) as string;
-    return { available: true, citation: { kind: "note" as const, id: row.id }, text: text.slice(0, CHAT_MAX_NOTE_CHARS), truncated: text.length > CHAT_MAX_NOTE_CHARS };
+    return withReceipts({ available: true, citation: { kind: "note" as const, id: row.id }, text: text.slice(0, CHAT_MAX_NOTE_CHARS), truncated: text.length > CHAT_MAX_NOTE_CHARS }, [{ kind: "note", targetId: row.id, version: noteReadVersion(keys, row.sealedText) }]);
   });
 }
 
@@ -142,13 +147,13 @@ export async function calculateLabTrend(db: Db, scope: ChatScope, input: z.infer
     const unit = first.valueQuantity?.unit ?? "";
     if (!expectedLabel || points.some((p) => label(p.resource) !== expectedLabel || (p.resource.valueQuantity?.unit ?? "") !== unit || !p.row.effectiveAt)) return { ok: false, reason: "Records must be the same test with the same unit and dates" };
     const ordered = points.sort((a, b) => a.row.effectiveAt!.getTime() - b.row.effectiveAt!.getTime()).map((p) => ({ citation: { kind: "record" as const, id: p.row.id }, at: p.row.effectiveAt!.toISOString(), value: p.resource.valueQuantity!.value!, unit }));
-    return { ok: true, test: first.code?.text ?? expectedLabel, unit, points: ordered, change: ordered[ordered.length - 1].value - ordered[0].value };
+    return withReceipts({ ok: true, test: first.code?.text ?? expectedLabel, unit, points: ordered, change: ordered[ordered.length - 1].value - ordered[0].value }, rows.map(row => ({ kind: "record", targetId: row.id, version: row.contentHmac })));
   });
 }
 
 export async function findSavedSummaries(db: Db, scope: ChatScope, input: z.infer<typeof chatToolSchemas.find_saved_summaries>) {
   const query = input.query?.toLocaleLowerCase();
-  return (await listSummaries(db, scope)).filter((summary) => !query || `${summary.title} ${summary.content.text}`.toLocaleLowerCase().includes(query)).slice(0, input.limit);
+  return (await listSummaries(db, scope, true)).filter((summary) => !query || `${summary.title} ${summary.content.text}`.toLocaleLowerCase().includes(query)).slice(0, input.limit);
 }
 
 export async function savePersonalSummary(

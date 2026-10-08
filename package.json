@@ -19,7 +19,8 @@
     "db:check-rls": "tsx scripts/check-rls.ts",
     "db:seed": "tsx --conditions=react-server scripts/seed-local.ts",
     "directory:import": "tsx --conditions=react-server scripts/import-directory.ts",
-    "qa:capture": "tsx --conditions=react-server scripts/capture-sandbox.ts"
+    "qa:capture": "tsx --conditions=react-server scripts/capture-sandbox.ts",
+    "chat:coordinator": "node scripts/provision-chat-coordinator.mjs"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.7.5",

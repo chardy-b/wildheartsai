@@ -2,8 +2,10 @@
 export interface SqlClient { query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> }
 const chatTables = ["chat_conversation", "chat_message", "chat_run", "chat_tool_call", "chat_event", "user_summary", "summary_evidence"];
 const recordTables = ["user_data_key", "health_source", "fhir_resource", "fhir_attachment"];
-const queueSelect = new Set(["id", "user_id", "conversation_id", "status", "next_attempt_at", "lease_owner", "lease_expires_at", "cancellation_requested_at", "attempt", "created_at"]);
-const queueUpdate = new Set(["status", "lease_owner", "lease_expires_at", "attempt", "next_worker_sequence", "started_at", "completed_at", "updated_at"]);
+const queueSelect = new Set(["id", "user_id", "conversation_id", "status", "next_attempt_at", "lease_owner", "lease_expires_at", "cancellation_requested_at", "attempt", "created_at", "initiating_session_id", "coordinator_id", "claim_request_id", "granted_worker_id", "deadline_at", "execution_grant_hash", "control_grant_hash", "grants_revoked_at"]);
+const queueUpdate = new Set(["status", "lease_owner", "lease_expires_at", "attempt", "next_worker_sequence", "started_at", "completed_at", "updated_at", "cancellation_requested_at", "coordinator_id", "claim_request_id", "granted_worker_id", "deadline_at", "execution_grant_hash", "control_grant_hash", "grants_revoked_at"]);
+const coordinatorSelect = new Set(["id", "credential_hash", "disabled_at", "claim_window_at", "claim_count", "created_at"]);
+const coordinatorUpdate = { data: new Set(["disabled_at"]), queue: new Set(["disabled_at", "claim_window_at", "claim_count"]) };
 const authSelect: Record<string, Set<string>> = { session: new Set(["id", "user_id", "expires_at"]), user: new Set(["id", "email_verified"]) };
 const keyInsert = new Set(["user_id", "sealed_dek", "kek_version", "created_at"]);
 
@@ -28,7 +30,7 @@ async function inspect(client: SqlClient, kind: "data" | "queue"): Promise<strin
   for (const col of columns) {
     const table = String(col.table_name); const column = String(col.column_name);
     for (const privilege of ["read", "insert", "update", "references"] as const) {
-      const allowed = kind === "queue" ? table === "chat_run" && (privilege === "read" ? queueSelect.has(column) : privilege === "update" && queueUpdate.has(column)) :
+      const allowed = table === "chat_coordinator" ? (privilege === "read" ? coordinatorSelect.has(column) : privilege === "update" && coordinatorUpdate[kind].has(column)) : kind === "queue" ? table === "chat_run" && (privilege === "read" ? queueSelect.has(column) : privilege === "update" && queueUpdate.has(column)) :
         privilege === "read" ? chatTables.includes(table) || recordTables.includes(table) || authSelect[table]?.has(column) === true :
         privilege === "insert" ? chatTables.includes(table) || table === "user_data_key" && keyInsert.has(column) : privilege === "update" && chatTables.includes(table);
       if (col[privilege] === true && !allowed) throw new Error("chat_role_excess_column_grant");
@@ -66,6 +68,15 @@ async function inspect(client: SqlClient, kind: "data" | "queue"): Promise<strin
     const policies = (await client.query("select cmd, qual, with_check from pg_policies where schemaname='public' and tablename='chat_run' and permissive='PERMISSIVE' and roles::text[] @> array[current_user]::text[]")).rows;
     if (!policies.some((p) => p.cmd === "SELECT" && p.qual === "true") || !policies.some((p) => p.cmd === "UPDATE" && p.qual === "true" && p.with_check === "true")) throw new Error("queue_policy_not_provisioned");
   }
+  const sessionLock = (await client.query(`select p.prosecdef, p.proconfig, p.prosrc as body, pg_get_userbyid(p.proowner) as owner,
+    has_function_privilege(current_user,p.oid,'EXECUTE') as allowed,
+    exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where a.grantee=0 and a.privilege_type='EXECUTE') as public_execute
+    from pg_proc p where p.oid='public.chat_lock_session(text,text)'::regprocedure`)).rows[0];
+  const expectedBody = `SELECT s.expires_at FROM public.session s JOIN public."user" u ON u.id=s.user_id
+    WHERE s.id=p_session_id AND s.user_id=p_user_id AND s.expires_at > clock_timestamp()
+      AND u.email_verified=true FOR SHARE OF s, u`;
+  const normalize = (value: string) => value.replace(/\s+/g, "").toLowerCase();
+  if (!sessionLock?.prosecdef || sessionLock.owner === role.name || !sessionLock.allowed || sessionLock.public_execute || !Array.isArray(sessionLock.proconfig) || !sessionLock.proconfig.includes("search_path=pg_catalog, public") || typeof sessionLock.body !== "string" || normalize(sessionLock.body) !== normalize(expectedBody)) throw new Error("chat_session_lock_not_restricted");
   return String(role.name);
 }
 

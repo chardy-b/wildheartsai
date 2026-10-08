@@ -38,7 +38,7 @@ export const saveSummaryInput = z
     coverageState: z.enum(["complete", "partial", "unknown"]),
     // The model supplies owned target citations only. Evidence-row ids and summary idempotency
     // keys are server-generated so free-form model text never becomes unsealed metadata.
-    evidence: z.array(z.object({ kind: z.enum(["record", "note"]), targetId: uuid }).strict()).max(100),
+    evidence: z.array(z.object({ kind: z.enum(["record", "note"]), targetId: uuid }).strict()).min(1).max(100),
   })
   .strict();
 

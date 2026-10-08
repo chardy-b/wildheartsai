@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createTestDb, createTestUser } from "@/test/db";
 import { sealField, userKeysFor } from "@/lib/crypto/user-keys";
@@ -57,10 +57,11 @@ describe("deterministic health tool acceptance", () => {
     const call = { providerToolCallId: "memory_1", tool: "save_summary" as const, rawInput };
     await expect(invokeRecordedChatTool(db, scope, { ...call, rawInput: { ...rawInput, idempotencyKey: "sensitive model text" } })).rejects.toThrow();
     await expect(invokeRecordedChatTool(db, scope, { ...call, rawInput: { ...rawInput, evidence: [{ ...rawInput.evidence[0], id: own[0] }] } })).rejects.toThrow();
+    await invokeRecordedChatTool(db, scope, { providerToolCallId: "memory_evidence", tool: "read_records", rawInput: { recordIds: [own[0]] } });
     const result = await invokeRecordedChatTool(db, scope, call);
     const summary = result.output as { id: string; content: { evidence: { id: string }[] } };
     const [saved] = await db.select().from(userSummary).where(eq(userSummary.id, summary.id));
-    const [trace] = await db.select().from(chatToolCall).where(eq(chatToolCall.runId, scope.runId!));
+    const [trace] = await db.select().from(chatToolCall).where(and(eq(chatToolCall.runId, scope.runId!), eq(chatToolCall.toolName, "save_summary")));
     expect(saved.idempotencyKey).toBe(trace.id);
     const evidence = await db.select().from(summaryEvidence).where(eq(summaryEvidence.summaryId, summary.id));
     expect(evidence).toHaveLength(1);

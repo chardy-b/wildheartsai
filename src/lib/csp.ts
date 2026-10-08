@@ -1,5 +1,3 @@
-import { chatApiOrigin } from "./chat-auth/configuration";
-
 // Content-Security-Policy for every page. Scripts run only from this origin with the
 // per-request nonce Next.js adds to its own scripts ('strict-dynamic' lets those load
 // the rest), so injected markup can't run script even if some ever reached a page.
@@ -9,9 +7,7 @@ export function createNonce(): string {
   return Buffer.from(crypto.randomUUID()).toString("base64");
 }
 
-export function contentSecurityPolicy(nonce: string, options: { development: boolean; https: boolean; chatApiOrigin?: string }): string {
-  // Reuse ticket validation so configuration can add only one exact HTTP(S) origin.
-  const chatOrigin = chatApiOrigin(options.chatApiOrigin);
+export function contentSecurityPolicy(nonce: string, options: { development: boolean; https: boolean }): string {
   return [
     "default-src 'self'",
     // React needs eval in development only, to rebuild server error stacks.
@@ -20,7 +16,7 @@ export function contentSecurityPolicy(nonce: string, options: { development: boo
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' blob: data:",
     "font-src 'self'",
-    `connect-src 'self'${chatOrigin ? ` ${chatOrigin}` : ""}`,
+    "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

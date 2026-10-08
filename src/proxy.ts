@@ -1,6 +1,5 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextResponse, type NextRequest } from "next/server";
-import { chatConfiguration } from "@/lib/chat-auth/configuration";
 import { contentSecurityPolicy, createNonce } from "@/lib/csp";
 
 export function proxy(request: NextRequest) {
@@ -16,7 +15,6 @@ export function proxy(request: NextRequest) {
   const csp = contentSecurityPolicy(createNonce(), {
     development: process.env.NODE_ENV === "development",
     https: request.nextUrl.protocol === "https:",
-    chatApiOrigin: chatConfiguration()?.apiUrl,
   });
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("Content-Security-Policy", csp);

@@ -6,6 +6,7 @@ import { failRun } from "@/lib/sync/run";
 import { queueScheduledRefreshes, sourcesDueForRefresh } from "@/lib/sync/scheduled";
 import { loadSyncJob, sendSyncRequest } from "@/lib/sync/server";
 import { directoryRefreshRequested, inngest, syncRequested } from "./client";
+import { chatEnabled, webChatRuntime } from "@/lib/chat-web/runtime";
 
 // Syncs one source. One run per source at a time; each query is its own retried step.
 export const syncSource = inngest.createFunction(
@@ -65,4 +66,14 @@ export const refreshEpicDirectory = inngest.createFunction(
   async ({ step }) => step.run("import directory", () => importEpicDirectory(db)),
 );
 
-export const functions = [syncSource, refreshSources, refreshEpicDirectory];
+// The authoritative backend expires begun jobs even if every VPS worker is offline.
+// Step results contain counts only; no grants, patient identifiers or transcripts.
+export const reapChatRuns = inngest.createFunction(
+  { id: "reap-chat-runs", triggers: [{ cron: "* * * * *" }], concurrency: { limit: 1 }, retries: 2 },
+  async ({ step }) => {
+    if (!chatEnabled()) return { interrupted: 0 };
+    return step.run("expire-chat-leases", async () => ({ interrupted: await (await webChatRuntime()).authority.reap() }));
+  },
+);
+
+export const functions = [syncSource, refreshSources, refreshEpicDirectory, reapChatRuns];
