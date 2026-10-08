@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyRunEvents, createDetailReadGuard, retryTerminalHydration } from "./chat-client-state";
+import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, mergeOlderDetail, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration } from "./chat-client-state";
 
 const event = (sequence: number, kind: string, text?: string) => ({
   sequence, kind, payload: { text }, createdAt: "2026-01-01T00:00:00Z",
@@ -27,6 +27,78 @@ describe("chat client response ordering and run activity", () => {
 
     expect(sameSelection.generation).toBe(pendingDetailRead.generation);
     expect(guard.isLatest(pendingDetailRead)).toBe(true);
+  });
+
+  it("marks New Chat intent even when the initial selection is already null", () => {
+    const guard = createDetailReadGuard();
+    const initialListSelection = guard.snapshot();
+    guard.reset();
+
+    expect(guard.snapshot().conversationId).toBeNull();
+    expect(guard.isSelected(initialListSelection)).toBe(false);
+  });
+
+  it("clears the summary spinner when the latest refresh fails without letting an older page clear a newer request", () => {
+    const loadingStates: boolean[] = [];
+    const lifecycle = createRequestLifecycle(loading => loadingStates.push(loading));
+    const olderPage = lifecycle.begin();
+    const latestRefresh = lifecycle.begin();
+
+    expect(lifecycle.finish(olderPage)).toBe(false);
+    expect(lifecycle.isLoading()).toBe(true);
+    // The latest refresh uses this same finish path from finally, including on failure.
+    expect(lifecycle.finish(latestRefresh)).toBe(true);
+    expect(lifecycle.isLoading()).toBe(false);
+    expect(loadingStates).toEqual([true, true, false]);
+  });
+
+  it("merges older message pages in sequence order without replacing fresh detail or duplicating ids", () => {
+    const current = {
+      conversation: { id: "conversation-a", title: "Fresh title" },
+      messages: [
+        { id: "m21", sequence: 21, role: "user", content: "latest question", createdAt: "2026-01-01", truncated: false },
+        { id: "m22", sequence: 22, role: "assistant", content: "latest answer", createdAt: "2026-01-01", truncated: false },
+      ],
+      runs: [{ id: "new-run", status: "running" }],
+      hasMore: true,
+      nextBefore: 20,
+    };
+    const olderPage = {
+      conversation: { id: "conversation-a", title: "Stale title" },
+      messages: [
+        { id: "m19", sequence: 19, role: "user", content: "old question", createdAt: "2025-12-01", truncated: false },
+        { id: "m21", sequence: 21, role: "user", content: "stale copy", createdAt: "2025-12-01", truncated: false },
+        { id: "m20", sequence: 20, role: "assistant", content: "old answer", createdAt: "2025-12-01", truncated: true },
+      ],
+      runs: [{ id: "old-run", status: "completed" }],
+      hasMore: true,
+      nextBefore: 18,
+    };
+
+    const merged = mergeOlderDetail(current, olderPage);
+    expect(merged.messages.map(message => message.id)).toEqual(["m19", "m20", "m21", "m22"]);
+    expect(merged.messages.find(message => message.id === "m21")?.content).toBe("latest question");
+    expect(merged.conversation.title).toBe("Fresh title");
+    expect(merged.runs).toEqual([{ id: "new-run", status: "running" }]);
+    expect(merged.nextBefore).toBe(18);
+    expect(mergeUniqueById([{ id: "a" }, { id: "b" }], [{ id: "b" }, { id: "c" }]).map(item => item.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("keeps an in-flight latest detail read valid during an older-page merge and rejects the page after selection changes", () => {
+    const guard = createDetailReadGuard();
+    guard.select("conversation-a");
+    const currentRead = guard.begin("conversation-a");
+    const olderPageSelection = guard.snapshot();
+    const current = { conversation: { id: "conversation-a" }, messages: [{ id: "new", sequence: 3 }], runs: [{ id: "active", status: "running" }], hasMore: true, nextBefore: 2 as number | null };
+    const page = { messages: [{ id: "old", sequence: 1 }], hasMore: false, nextBefore: null as number | null };
+    const merged = mergeOlderDetailIfCurrent(current, page, () => guard.isSelected(olderPageSelection));
+    expect(merged?.messages.map(message => message.id)).toEqual(["old", "new"]);
+    expect(guard.isLatest(currentRead)).toBe(true);
+    expect(merged?.runs).toEqual([{ id: "active", status: "running" }]);
+
+    guard.select("conversation-b");
+    expect(guard.isLatest(currentRead)).toBe(false);
+    expect(mergeOlderDetailIfCurrent(current, page, () => guard.isSelected(olderPageSelection))).toBeNull();
   });
 
   it("keeps partial answers and trace cursors separated by run and replays later events", () => {

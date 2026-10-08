@@ -1,6 +1,32 @@
 export type SelectionSnapshot = { conversationId: string | null; generation: number };
 export type DetailRequestToken = SelectionSnapshot & { request: number };
 
+export function createRequestLifecycle(onLoadingChange: (loading: boolean) => void) {
+  let sequence = 0;
+  let latest = 0;
+  let loading = false;
+  return {
+    begin(): number {
+      latest = ++sequence;
+      loading = true;
+      onLoadingChange(true);
+      return latest;
+    },
+    isCurrent(request: number): boolean {
+      return request === latest;
+    },
+    isLoading(): boolean {
+      return loading;
+    },
+    finish(request: number): boolean {
+      if (request !== latest) return false;
+      loading = false;
+      onLoadingChange(false);
+      return true;
+    },
+  };
+}
+
 export function createDetailReadGuard() {
   let conversationId: string | null = null;
   let generation = 0;
@@ -11,6 +37,12 @@ export function createDetailReadGuard() {
     select(nextConversationId: string | null): SelectionSnapshot {
       if (nextConversationId === conversationId) return { conversationId, generation };
       conversationId = nextConversationId;
+      generation += 1;
+      latestRequest = ++request;
+      return { conversationId, generation };
+    },
+    reset(): SelectionSnapshot {
+      conversationId = null;
       generation += 1;
       latestRequest = ++request;
       return { conversationId, generation };
@@ -35,6 +67,54 @@ export function createDetailReadGuard() {
 export type ActivityEvent = { sequence: number; kind: string; payload: { text?: string; tool?: string; status?: string }; createdAt: string };
 export type RunActivity = { cursor: number; answer: string; events: ActivityEvent[] };
 export type RunActivities = Map<string, RunActivity>;
+
+export type Identified = { id: string };
+
+export function mergeUniqueById<T extends Identified>(existing: T[], incoming: T[]): T[] {
+  const seen = new Set(existing.map(item => item.id));
+  const merged = [...existing];
+  for (const item of incoming) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(item);
+  }
+  return merged;
+}
+
+export type PagedDetail<TMessage extends { id: string; sequence: number }> = {
+  conversation: { id: string };
+  messages: TMessage[];
+  runs: Run[];
+  hasMore: boolean;
+  nextBefore: number | null;
+};
+
+type Run = { id: string; status: string };
+
+export function mergeOlderDetail<TMessage extends { id: string; sequence: number }, TDetail extends PagedDetail<TMessage>>(
+  current: TDetail,
+  olderPage: Pick<TDetail, "messages" | "hasMore" | "nextBefore">,
+): TDetail {
+  const byId = new Map(current.messages.map(message => [message.id, message]));
+  for (const message of olderPage.messages) {
+    const existing = byId.get(message.id);
+    byId.set(message.id, existing ? { ...message, ...existing } : message);
+  }
+  return {
+    ...current,
+    messages: [...byId.values()].sort((a, b) => a.sequence - b.sequence),
+    hasMore: olderPage.hasMore,
+    nextBefore: olderPage.nextBefore,
+  };
+}
+
+export function mergeOlderDetailIfCurrent<TMessage extends { id: string; sequence: number }, TDetail extends PagedDetail<TMessage>>(
+  current: TDetail,
+  olderPage: Pick<TDetail, "messages" | "hasMore" | "nextBefore">,
+  isCurrent: () => boolean,
+): TDetail | null {
+  return isCurrent() ? mergeOlderDetail(current, olderPage) : null;
+}
 
 export function applyRunEvents(
   activities: RunActivities,
