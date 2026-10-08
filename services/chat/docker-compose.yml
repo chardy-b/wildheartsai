@@ -13,38 +13,28 @@ x-common: &common
   cpus: 0.5
   restart: unless-stopped
   networks: [trusted]
-x-environment: &environment
-  CHAT_DATABASE_URL: ${CHAT_DATABASE_URL:?required}
-  CHAT_QUEUE_DATABASE_URL: ${CHAT_QUEUE_DATABASE_URL:?required}
-  RECORDS_ENCRYPTION_KEY: ${RECORDS_ENCRYPTION_KEY:?required}
-  CHAT_INFERENCE_URL: ${CHAT_INFERENCE_URL:?required}
-  CHAT_INFERENCE_MODEL: ${CHAT_INFERENCE_MODEL:?required}
-  CHAT_INFERENCE_API_KEY: ${CHAT_INFERENCE_API_KEY:-}
-  IGGY_URL: ${IGGY_URL:?required}
-  IGGY_BEARER_TOKEN: ${IGGY_BEARER_TOKEN:?required}
-  CHAT_RUNNER_CAPABILITY_KEY: ${CHAT_RUNNER_CAPABILITY_KEY:?required}
-  CHAT_RUNNER_ISSUER: wild-hearts-chat-service
 services:
-  chat-api:
+  chat-coordinator:
     <<: *common
     environment:
-      <<: *environment
-      CHAT_SERVICE_MODE: public
-      PORT: "8080"
-      CHAT_SIGNING_KEY: ${CHAT_SIGNING_KEY:?required}
-      CHAT_TICKET_ISSUER: wildhearts-web
-      CHAT_WEB_ORIGIN: ${CHAT_WEB_ORIGIN:?required}
+      CHAT_SERVICE_MODE: coordinator
+      CHAT_WEB_API_URL: ${CHAT_WEB_API_URL:-https://www.wildheartsai.com/api/chat/worker/v1}
+      CHAT_COORDINATOR_TOKEN: ${CHAT_COORDINATOR_TOKEN:?required}
       CHAT_WORKER_ID: ${CHAT_WORKER_ID:?required}
-    ports: ["127.0.0.1:8080:8080"]
+      IGGY_URL: ${IGGY_URL:-http://wildhearts-iggy:8417}
+      IGGY_BEARER_TOKEN: ${IGGY_BEARER_TOKEN:?required}
   chat-gateway:
     <<: *common
     container_name: wildhearts-chat-gateway
     environment:
-      <<: *environment
       CHAT_SERVICE_MODE: gateway
-      PORT: "8080"
-    # No published port. Iggy attaches this container to each isolated run network.
+      CHAT_WEB_API_URL: ${CHAT_WEB_API_URL:-https://www.wildheartsai.com/api/chat/worker/v1}
+      CHAT_INFERENCE_URL: ${CHAT_INFERENCE_URL:?required}
+      CHAT_INFERENCE_MODEL: ${CHAT_INFERENCE_MODEL:?required}
+      CHAT_INFERENCE_MAX_TOKENS: ${CHAT_INFERENCE_MAX_TOKENS:-2048}
+      CHAT_INFERENCE_API_KEY: ${CHAT_INFERENCE_API_KEY:-}
+  # Iggy's trusted management container is provisioned separately. Attach it to
+  # wildhearts-chat-trusted and keep its worker runs on their isolated networks.
 networks:
-  # Trusted broker needs outbound Postgres and inference. Only isolated workers
-  # belong on Iggy's per-run internal networks; they never join this network.
-  trusted: {}
+  trusted:
+    name: wildhearts-chat-trusted

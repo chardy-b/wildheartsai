@@ -1,5 +1,6 @@
-import { mintRunnerCapability } from "./capabilities.js";
-import type { ChatRepository } from "./contracts.js";
+import { randomUUID } from "node:crypto";
+import type { FinalizeInput } from "./protocol.js";
+import type { ClaimedWebRun } from "./contracts.js";
 
 export interface IggyControlPlane {
   startHealthRun(input: { id: string; capability: string }): Promise<void>;
@@ -7,68 +8,115 @@ export interface IggyControlPlane {
   getHealthRunStatus(runId: string): Promise<"queued" | "running" | "completed" | "failed" | "cancelled">;
 }
 
-/**
- * Claims only queued work. A run that was ever started is never automatically rerun:
- * the queue-role recovery job marks an expired lease interrupted and retains its audit trail.
- */
+export interface ChatCoordinatorApi {
+  claim(input: { requestId: string; workerId: string }): Promise<{ run: ClaimedWebRun | null }>;
+  heartbeat(controlGrant: string): Promise<{ active: boolean; cancelled: boolean; deadlineAt: string }>;
+  finalize(controlGrant: string, input: FinalizeInput): Promise<{ status: "accepted" | "duplicate" }>;
+}
+
+export type DispatcherOptions = Readonly<{
+  monitorPollMs?: number;
+  random?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}>;
+
+/** Owns one remote lease at a time. The execution grant is sent only to Iggy. */
 export class IggyRunDispatcher {
-  private active = 0;
-  constructor(private readonly repository: ChatRepository, private readonly iggy: IggyControlPlane, private readonly key: Uint8Array, private readonly issuer: string, private readonly workerId: string, private readonly leaseMs = 30_000) {}
+  private active = false;
+  private readonly pollMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  constructor(private readonly api: ChatCoordinatorApi, private readonly iggy: IggyControlPlane, private readonly workerId: string, options: DispatcherOptions = {}) {
+    this.pollMs = Math.max(100, options.monitorPollMs ?? 5_000);
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
 
   async dispatchOnce(): Promise<boolean> {
-    // One bounded worker per dispatcher process; no overlap from timer ticks.
     if (this.active) return false;
-    this.active += 1;
-    let run: Awaited<ReturnType<ChatRepository["claimNextRun"]>>;
-    try { run = await this.repository.claimNextRun(this.workerId, this.leaseMs); }
-    catch (error) { this.active -= 1; throw error; }
-    if (!run) { this.active -= 1; return false; }
+    this.active = true;
+    const requestId = randomUUID();
+    let run: ClaimedWebRun | null;
     try {
-      if (await this.repository.isCancellationRequested(run.scope)) {
-        await this.repository.finalizeServiceEvent(run.scope, { status: "cancelled" });
-        this.active -= 1;
-        return true;
-      }
-      const capability = await mintRunnerCapability(run.scope, this.key, this.issuer, run.attempt, run.leaseOwner);
-      await this.iggy.startHealthRun({ id: run.id, capability });
-      void this.monitor(run).catch(() => {
-        // Stop renewing on a coordinator failure; recovery visibly interrupts the
-        // begun run. Never swallow a failure while keeping an orphan lease alive.
-      }).finally(() => { this.active -= 1; });
-      return true;
+      // ChatWebApi retries this POST with the same requestId and serialized body.
+      ({ run } = await this.api.claim({ requestId, workerId: this.workerId }));
+    } catch (error) {
+      this.active = false;
+      throw error;
+    }
+    if (!run) {
+      this.active = false;
+      return false;
+    }
+    try {
+      // The control grant stays in this process. Only the execution grant crosses
+      // into the isolated Iggy run environment.
+      await this.iggy.startHealthRun({ id: run.id, capability: run.executionGrant });
     } catch {
-      try { await this.repository.finalizeServiceEvent(run.scope, await this.repository.isCancellationRequested(run.scope) ? { status: "cancelled" } : { status: "failed", errorCode: "runner_start_failed" }); }
-      finally { this.active -= 1; }
+      try {
+        // A timed-out start call may have reached Iggy despite its lost reply.
+        // Stop that idempotent run before finalizing the web-owned lease.
+        await this.iggy.cancelHealthRun(run.id).catch(() => undefined);
+        await this.api.finalize(run.controlGrant, { requestId, status: "failed", errorCode: "runner_start_failed" });
+      }
+      finally { this.active = false; }
       return true;
+    }
+    try {
+      await this.monitor(run, requestId);
+      return true;
+    } finally {
+      this.active = false;
     }
   }
 
-  async cancel(runId: string): Promise<void> {
-    // Cancellation state is persisted before this best-effort control-plane request.
-    await this.iggy.cancelHealthRun(runId);
-  }
-
-  private async monitor(run: Awaited<ReturnType<ChatRepository["claimNextRun"]>> & {}): Promise<void> {
-    if (!run) return;
+  private async monitor(run: ClaimedWebRun, requestId: string): Promise<void> {
     while (true) {
-      await new Promise((resolve) => setTimeout(resolve, Math.floor(this.leaseMs / 3)));
-      if (!(await this.repository.renewLease(run.scope, run.leaseOwner, this.leaseMs))) return;
-      if (await this.repository.isCancellationRequested(run.scope)) {
-        // Covers cancellation before Iggy had created the run (its earlier
-        // control-plane cancel returned 404). State still fences all data access.
+      await this.sleep(this.pollMs);
+      const heartbeat = await this.api.heartbeat(run.controlGrant);
+      if (heartbeat.cancelled) {
         await this.iggy.cancelHealthRun(run.id).catch(() => undefined);
-        await this.repository.finalizeServiceEvent(run.scope, { status: "cancelled" });
+        await this.api.finalize(run.controlGrant, { requestId, status: "cancelled" });
         return;
       }
-      // An unavailable control plane must not get an endlessly renewed lease.
-      const status = await this.iggy.getHealthRunStatus(run.id);
-      if (status === "running" || status === "queued") continue;
-      if (status === "failed" || status === "cancelled") {
-        await this.repository.finalizeServiceEvent(run.scope, status === "cancelled" ? { status: "cancelled" } : { status: "failed", errorCode: "runner_failed" });
+      if (!heartbeat.active) return;
+      if (Date.now() >= Date.parse(heartbeat.deadlineAt)) {
+        await this.iggy.cancelHealthRun(run.id).catch(() => undefined);
+        await this.api.finalize(run.controlGrant, { requestId, status: "failed", errorCode: "worker_timeout" });
+        return;
       }
-      // A completed Iggy container must already have sent the fenced broker completion.
-      // If it did not, the still-running lease expires into visible `interrupted`, never a retry.
+      const status = await this.iggy.getHealthRunStatus(run.id);
+      if (status === "queued" || status === "running") continue;
+      if (status === "cancelled") await this.api.finalize(run.controlGrant, { requestId, status: "cancelled" });
+      else if (status === "failed") await this.api.finalize(run.controlGrant, { requestId, status: "failed", errorCode: "runner_failed" });
+      else if (status === "completed") await this.api.finalize(run.controlGrant, { requestId, status: "interrupted", errorCode: "coordinator_stopped" });
       return;
     }
+  }
+}
+
+export type DispatchLoopOptions = Readonly<{ minIdleMs?: number; maxIdleMs?: number; random?: () => number; sleep?: (ms: number) => Promise<void> }>;
+
+/** Claims at a rate that stays below the web API's six-claims-per-minute limit. */
+export async function runDispatchLoop(dispatcher: Pick<IggyRunDispatcher, "dispatchOnce">, signal: AbortSignal, options: DispatchLoopOptions = {}): Promise<void> {
+  const minimum = Math.min(30_000, Math.max(10_000, options.minIdleMs ?? 10_000));
+  const maximum = Math.max(minimum, Math.min(30_000, options.maxIdleMs ?? 30_000));
+  const random = options.random ?? Math.random;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let idleRounds = 0;
+  while (!signal.aborted) {
+    let claimed = false;
+    let retryAfterMs = 0;
+    try { claimed = await dispatcher.dispatchOnce(); }
+    catch (error) {
+      claimed = false;
+      const hinted = (error as { retryAfterMs?: unknown }).retryAfterMs;
+      if (typeof hinted === "number" && Number.isFinite(hinted)) retryAfterMs = Math.max(0, Math.min(30_000, hinted));
+    }
+    if (claimed) idleRounds = 0;
+    else idleRounds += 1;
+    if (signal.aborted) return;
+    const ceiling = Math.min(maximum, minimum * (2 ** Math.min(16, idleRounds)));
+    const jitter = Math.max(0, Math.min(0.999_999, random()));
+    await sleep(Math.max(minimum + Math.floor((ceiling - minimum) * jitter), retryAfterMs));
   }
 }

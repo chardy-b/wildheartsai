@@ -11,7 +11,7 @@ const systemPrompt = "You answer questions about the person's supplied health-re
 
 export type WorkerEventSink = (event: { eventId: string; sequence: number; type: WorkerEventType; data: Record<string, unknown> }) => Promise<void>;
 
-export type PiRunnerOptions = Readonly<{ gatewayUrl: URL; capability: string; modelId: string; contextWindow?: number; maxTokens?: number; maxTurns?: number; deadlineMs?: number; deltaFlushMs?: number; maxDeltaBytes?: number }>;
+export type PiRunnerOptions = Readonly<{ gatewayUrl: URL; capability: string; modelId: string; gatewayClient?: GatewayToolClient; contextWindow?: number; maxTokens?: number; maxTurns?: number; deadlineMs?: number; deltaFlushMs?: number; maxDeltaBytes?: number }>;
 
 /**
  * The health worker's Pi adapter. It receives only an opaque run capability and a
@@ -26,13 +26,13 @@ export class PiHealthRunner {
   }
 
   async run(signal: AbortSignal): Promise<string> {
-    const gateway = new GatewayToolClient(this.options.gatewayUrl, this.options.capability);
-    const messages = await gateway.loadContext(signal);
+    const gateway = this.options.gatewayClient ?? new GatewayToolClient(this.options.gatewayUrl, this.options.capability);
+    const { messages, modelId } = await gateway.loadContext(signal);
     const input = messages.at(-1);
     if (!input || input.role !== "user") throw new Error("missing_user_input");
     const models = createModels();
-    models.setProvider(this.provider());
-    const model = models.getModel("wild-hearts-gateway", this.options.modelId);
+    models.setProvider(this.provider(modelId));
+    const model = models.getModel("wild-hearts-gateway", modelId);
     if (!model) throw new Error("model_not_configured");
     let answer = "";
     let currentAssistantText = "";
@@ -171,9 +171,9 @@ export class PiHealthRunner {
     await this.publish(type, type === "error" ? { code: "worker_failed" } : {});
   }
 
-  private provider() {
+  private provider(modelId: string) {
     const model: Model<"openai-completions"> = {
-      id: this.options.modelId,
+      id: modelId,
       name: "Configured health model",
       api: "openai-completions",
       provider: "wild-hearts-gateway",
@@ -224,8 +224,8 @@ export async function runWorkerFromEnvironment(): Promise<void> {
   const controller = new AbortController();
   process.once("SIGTERM", () => controller.abort());
   process.once("SIGINT", () => controller.abort());
-  const { modelId } = await client.loadConfiguration(controller.signal);
-  const runner = new PiHealthRunner({ capability, gatewayUrl: new URL(gatewayUrl), modelId }, (event) => client.publish(event, ["cancelled", "error"].includes(event.type) ? AbortSignal.timeout(5_000) : controller.signal).then(() => undefined));
+  const context = await client.loadContext(controller.signal);
+  const runner = new PiHealthRunner({ capability, gatewayUrl: new URL(gatewayUrl), modelId: context.modelId, gatewayClient: client }, (event) => client.publish(event, ["cancelled", "error"].includes(event.type) ? AbortSignal.timeout(5_000) : controller.signal).then(() => undefined));
   try {
     await runner.run(controller.signal);
   } catch {
