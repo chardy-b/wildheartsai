@@ -65,7 +65,7 @@ describe("same-origin browser chat against the restricted data role", () => {
   it("hides another person's conversation/run and rejects model or caller identity fields", async () => {
     const f = await fixture();
     const submitted = await submitQuestionAndRun(f.dataDb, { userId: f.bob, conversationId: f.bobConversation.id }, { message: "Bob synthetic question", idempotencyKey: randomUUID(), initiatingSessionId: `session-${f.bob}` });
-    for (const [method, path] of [["GET", ["conversations", f.bobConversation.id]], ["DELETE", ["conversations", f.bobConversation.id]], ["GET", ["runs", submitted.run.id, "events"]], ["DELETE", ["runs", submitted.run.id]]] as const) {
+    for (const [method, path] of [["GET", ["conversations", f.bobConversation.id]], ["DELETE", ["conversations", f.bobConversation.id]], ["GET", ["runs", submitted.run.id, "events"]], ["GET", ["runs", submitted.run.id, "research-sources"]], ["DELETE", ["runs", submitted.run.id]]] as const) {
       expect((await f.call(method, [...path])).status).toBe(404);
     }
     expect((await f.call("POST", ["conversations", f.aliceConversation.id, "runs"], { message: "Synthetic", userId: f.bob })).status).toBe(400);
@@ -76,8 +76,9 @@ describe("same-origin browser chat against the restricted data role", () => {
 
   it("rejects a stale auth cache after logout or session expiration", async () => {
     const f = await fixture();
-    await f.db.delete(session).where(eq(session.id, f.identity.session.id));
+    await f.db.update(session).set({ expiresAt: new Date(Date.now() - 1_000) }).where(eq(session.id, f.identity.session.id));
     expect((await f.call("GET", ["conversations", f.aliceConversation.id])).status).toBe(401);
+    await f.db.delete(session).where(eq(session.id, f.identity.session.id));
     expect((await f.call("POST", ["conversations", f.aliceConversation.id, "runs"], { message: "Synthetic" })).status).toBe(401);
     expect(await f.db.select().from(chatRun)).toEqual([]);
   });
@@ -98,5 +99,18 @@ describe("same-origin browser chat against the restricted data role", () => {
     expect(older.messages.at(-1).sequence).toBeLessThan(page.messages[0].sequence);
     expect((await f.call("GET", ["conversations"], undefined, randomUUID(), `?before=${f.bobConversation.id}`)).status).toBe(400);
     expect((await f.call("GET", ["conversations", f.aliceConversation.id], undefined, randomUUID(), "?before=not-a-sequence")).status).toBe(400);
+  });
+
+  it("authenticates saved research history and validates numeric pagination cursors", async () => {
+    const f = await fixture();
+    const submitted = await submitQuestionAndRun(f.dataDb, { userId: f.alice, conversationId: f.aliceConversation.id }, { message: "Synthetic research question", idempotencyKey: randomUUID(), initiatingSessionId: f.identity.session.id });
+    const path = ["runs", submitted.run.id, "research-sources"];
+    expect((await f.call("GET", path)).status).toBe(200);
+    expect(await (await f.call("GET", path, undefined, randomUUID(), "?after=1")).json()).toEqual({ calls: [], hasMore: false, nextAfter: null });
+    for (const cursor of ["0", "-1", "01", "1.5", "1e2", "7", "9007199254740992", "not-a-number"]) {
+      expect((await f.call("GET", path, undefined, randomUUID(), `?after=${cursor}`)).status).toBe(400);
+    }
+    await f.db.delete(session).where(eq(session.id, f.identity.session.id));
+    expect((await f.call("GET", path)).status).toBe(401);
   });
 });

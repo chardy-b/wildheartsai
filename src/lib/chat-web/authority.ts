@@ -11,9 +11,9 @@ import * as store from "@/lib/chat/store";
 import {
   CHAT_CLAIMS_PER_MINUTE, CHAT_DEADLINE_MS, CHAT_LEASE_MS, CHAT_MAX_CONTEXT_BYTES,
   CHAT_MAX_EVENT_BYTES, CHAT_MAX_EVENTS, CHAT_MAX_REQUEST_BYTES, CHAT_MAX_TOOL_OUTPUT_BYTES,
-  ChatAuthorityError, claimInputSchema, eventsInputSchema, finalizeInputSchema, toolInputSchema,
+  ChatAuthorityError, claimInputSchema, eventsInputSchema, finalizeInputSchema, toolInputSchema, researchBeginInputSchema, researchResultInputSchema,
   type ClaimInput, type ClaimReply, type ContextReply, type EventsInput, type FinalizeInput,
-  type HeartbeatReply, type OperationAck, type ToolInput, type ToolReply,
+  type HeartbeatReply, type OperationAck, type ToolInput, type ToolReply, type ResearchBeginInput, type ResearchBeginReply, type ResearchResultInput,
 } from "./protocol";
 
 // queueDb sees only immutable bindings and non-content lease metadata. It resolves the
@@ -29,7 +29,7 @@ const locator = {
 type LocatedRun = { [K in keyof typeof locator]: typeof chatRun.$inferSelect[K] };
 type Run = typeof chatRun.$inferSelect;
 type GrantKind = "execution" | "control";
-export type AuthorityOptions = { dataDb: Db; queueDb: Db; grantKey: Uint8Array; modelId: string; now?: () => Date };
+export type AuthorityOptions = { dataDb: Db; queueDb: Db; grantKey: Uint8Array; modelId: string; researchGatewayTokenHash?: string; now?: () => Date };
 export function credentialHash(token: string): string { return createHash("sha256").update(token).digest("hex"); }
 function equal(a: string, b: string): boolean { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); }
 function parse<T>(schema: { safeParse(value: unknown): { success: boolean; data?: T } }, value: unknown): T {
@@ -42,9 +42,9 @@ function terminal(status: string): boolean { return ["completed", "failed", "can
 
 /** Internal metadata lock; no authentication tokens or auth-table write grants are used. */
 export async function lockInitiatingSession(tx: Db, sessionId: string, userId: string, at = new Date()): Promise<void> {
-  const result = await tx.execute(sql`select public.chat_lock_session(${sessionId}, ${userId}) as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
+  const result = await tx.execute(sql`select public.chat_lock_session(${sessionId}, ${userId}) at time zone 'UTC' as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
   const expires = result.rows[0]?.expires_at;
-  if (!expires || new Date(expires) <= at) throw new ChatAuthorityError("run_not_active");
+  if (!expires || !Number.isFinite(new Date(expires).getTime()) || new Date(expires) <= at) throw new ChatAuthorityError("run_not_active");
 }
 
 /** Portable Node domain authority. Route adapters never accept a tenant/run scope. */
@@ -173,6 +173,46 @@ export class ChatAuthority {
     });
   }
 
+  private authorizeResearchGateway(token: string): void {
+    const expected = this.options.researchGatewayTokenHash;
+    // Optional/malformed configuration disables only research, never ordinary patient chat.
+    if (!expected || !/^[a-f0-9]{64}$/.test(expected) || !/^[A-Za-z0-9_-]{43}$/.test(token) || !equal(credentialHash(token), expected)) throw new ChatAuthorityError("unauthorized", 401);
+  }
+
+  async researchBegin(token: string, gatewayToken: string, raw: ResearchBeginInput): Promise<ResearchBeginReply> {
+    this.authorizeResearchGateway(gatewayToken);
+    const input = parse<ResearchBeginInput>(researchBeginInputSchema, raw);
+    if (bytes(input) > CHAT_MAX_REQUEST_BYTES) throw new ChatAuthorityError("invalid_request", 400);
+    return this.authorized(token, "execution", false, async (tx, run, scope) => {
+      const pinned = run.executionMeta.researchSnapshotId;
+      if (pinned !== undefined && (typeof pinned !== "string" || !/^[a-f0-9]{64}$/.test(pinned))) throw new ChatAuthorityError("invalid_request", 409);
+      const snapshotId = typeof pinned === "string" ? pinned : input.proposedSnapshotId;
+      if (input.tool === "read_research" && input.input.snapshotId !== snapshotId) throw new ChatAuthorityError("invalid_request", 409);
+      const begun = await store.beginRecordedResearchCall(tx, scope, input, snapshotId, this.now());
+      if (begun.status === "started") {
+        if (snapshotId === null) throw new ChatAuthorityError("invalid_request", 400);
+        if (Number(run.executionMeta.toolOutputBytes ?? 0) >= CHAT_MAX_TOOL_OUTPUT_BYTES) throw new ChatAuthorityError("quota_exceeded", 429);
+        run.executionMeta = { ...run.executionMeta, researchSnapshotId: snapshotId };
+        await tx.update(chatRun).set({ executionMeta: run.executionMeta }).where(and(eq(chatRun.id, run.id), eq(chatRun.userId, run.userId)));
+      }
+      if (begun.status === "completed") return { status: "completed", operationId: begun.operationId, output: begun.output };
+      if (begun.status === "failed") return { status: "failed", operationId: begun.operationId, errorCode: begun.errorCode };
+      if (snapshotId === null) throw new ChatAuthorityError("invalid_request", 400);
+      return { status: "execute", operationId: begun.operationId, snapshotId, deadlineAt: run.deadlineAt!.toISOString() };
+    });
+  }
+
+  async researchResult(token: string, gatewayToken: string, raw: ResearchResultInput): Promise<OperationAck> {
+    this.authorizeResearchGateway(gatewayToken);
+    const input = parse<ResearchResultInput>(researchResultInputSchema, raw);
+    if (bytes(input) > CHAT_MAX_REQUEST_BYTES) throw new ChatAuthorityError("invalid_request", 400);
+    return this.authorized(token, "execution", false, async (tx, run, scope) => {
+      const result = await store.finishRecordedResearchCall(tx, scope, input, this.now());
+      if (result.status === "accepted" && result.outputBytes) await this.budget(tx, run, "toolOutputBytes", result.outputBytes, CHAT_MAX_TOOL_OUTPUT_BYTES);
+      return { status: result.status };
+    });
+  }
+
   async events(token: string, raw: EventsInput): Promise<OperationAck> {
     const input = parse<EventsInput>(eventsInputSchema, raw);
     if (bytes(input) > CHAT_MAX_REQUEST_BYTES) throw new ChatAuthorityError("invalid_request", 400);
@@ -231,39 +271,67 @@ export class ChatAuthority {
       if (input.status === "interrupted") {
         await tx.update(chatRun).set({ status: "interrupted", completedAt: this.now(), leaseOwner: null, leaseExpiresAt: null }).where(eq(chatRun.id, run.id));
       } else await store.finalizeServiceEvent(tx, scope, { event: { eventId: input.requestId, type: input.status === "cancelled" ? "cancelled" : "error", data: input.errorCode ? { code: input.errorCode } : {} }, status: input.status, now: this.now() });
+      await store.closePendingResearchCalls(tx, scope, this.now());
       await tx.update(chatRun).set({ executionMeta: { ...run.executionMeta, controlFinalizeDigest: digest } }).where(eq(chatRun.id, run.id));
       return { status: "accepted" };
     });
   }
 
-  /** Web-scheduled independently of VPS liveness; no content, encryption, or network. */
+  /** Web-scheduled independently of VPS liveness; only scoped metadata is changed. */
   async reap(): Promise<number> {
     const now = this.now();
-    return this.options.queueDb.transaction(async (rawTx) => {
+    // The queue role can discover identities but cannot touch encrypted tool traces.
+    // Each run transition and its pending-call cleanup commits atomically as that user.
+    const candidates = await this.options.queueDb.transaction(async rawTx => {
       const tx = rawTx as unknown as Db;
-      const expired = await tx.update(chatRun).set({ status: "interrupted", leaseOwner: null, leaseExpiresAt: null, grantsRevokedAt: now, completedAt: now, updatedAt: now }).where(and(eq(chatRun.status, "running"), or(lte(chatRun.leaseExpiresAt, now), lte(chatRun.deadlineAt, now), isNull(chatRun.initiatingSessionId)))).returning({ id: chatRun.id });
+      const expired = await tx.select(locator).from(chatRun).where(and(eq(chatRun.status, "running"), or(lte(chatRun.leaseExpiresAt, now), lte(chatRun.deadlineAt, now), isNull(chatRun.initiatingSessionId), sql`${chatRun.grantsRevokedAt} is not null`, sql`exists (select 1 from ${chatCoordinator} where ${chatCoordinator.id} = ${chatRun.coordinatorId} and ${chatCoordinator.disabledAt} is not null)`))).orderBy(asc(chatRun.createdAt)).limit(100);
       const queued = await tx.select(locator).from(chatRun).where(eq(chatRun.status, "queued")).orderBy(asc(chatRun.createdAt)).limit(100);
-      let invalid = 0;
-      for (const run of queued) {
-        let valid = !!run.initiatingSessionId;
-        if (valid) try { await lockInitiatingSession(tx, run.initiatingSessionId!, run.userId, now); } catch (error) { if (error instanceof ChatAuthorityError) valid = false; else throw error; }
-        if (!valid) {
-          const rows = await tx.update(chatRun).set({ status: "cancelled", cancellationRequestedAt: now, completedAt: now, grantsRevokedAt: now, updatedAt: now }).where(and(eq(chatRun.id, run.id), eq(chatRun.status, "queued"))).returning({ id: chatRun.id });
-          invalid += rows.length;
-        }
-      }
-      return expired.length + invalid;
+      return [...expired, ...queued];
     });
+    let count = 0;
+    for (const candidate of candidates) count += await asUser(this.options.dataDb, candidate.userId, async tx => {
+      let disabled = false;
+      if (candidate.coordinatorId) {
+        const [coordinator] = await tx.select().from(chatCoordinator).where(eq(chatCoordinator.id, candidate.coordinatorId)).limit(1).for("update");
+        disabled = !coordinator || !!coordinator.disabledAt;
+      }
+      let validSession = !!candidate.initiatingSessionId;
+      if (validSession) try { await lockInitiatingSession(tx, candidate.initiatingSessionId!, candidate.userId, this.now()); }
+      catch (error) { if (error instanceof ChatAuthorityError) validSession = false; else throw error; }
+      const [run] = await tx.select().from(chatRun).where(and(eq(chatRun.id, candidate.id), eq(chatRun.userId, candidate.userId))).limit(1).for("update");
+      if (!run || run.initiatingSessionId !== candidate.initiatingSessionId || run.coordinatorId !== candidate.coordinatorId) return 0;
+      const at = this.now();
+      if (run.status === "queued") {
+        if (validSession && !disabled) return 0;
+        await tx.update(chatRun).set({ status: "cancelled", cancellationRequestedAt: at, completedAt: at, grantsRevokedAt: at, updatedAt: at }).where(and(eq(chatRun.id, run.id), eq(chatRun.userId, run.userId)));
+      } else if (run.status === "running") {
+        if (validSession && !disabled && !run.grantsRevokedAt && run.leaseExpiresAt && run.leaseExpiresAt > at && run.deadlineAt && run.deadlineAt > at) return 0;
+        await tx.update(chatRun).set({ status: "interrupted", leaseOwner: null, leaseExpiresAt: null, grantsRevokedAt: at, completedAt: at, updatedAt: at }).where(and(eq(chatRun.id, run.id), eq(chatRun.userId, run.userId)));
+      } else return 0;
+      await store.closePendingResearchCalls(tx, { userId: run.userId, conversationId: run.conversationId, runId: run.id }, at);
+      return 1;
+    });
+    return count;
   }
 
   /** Operator-only internal method: never mounted as a coordinator endpoint. */
   async disableCoordinator(id: string): Promise<void> {
-    await this.options.queueDb.transaction(async (rawTx) => {
-      const tx = rawTx as unknown as Db; const now = this.now();
+    const candidates = await this.options.queueDb.transaction(async rawTx => {
+      const tx = rawTx as unknown as Db;
       const [row] = await tx.select().from(chatCoordinator).where(eq(chatCoordinator.id, id)).limit(1).for("update");
-      if (!row) return;
-      await tx.update(chatCoordinator).set({ disabledAt: now }).where(eq(chatCoordinator.id, id));
-      await tx.update(chatRun).set({ grantsRevokedAt: now, status: "interrupted", leaseOwner: null, leaseExpiresAt: null, completedAt: now, updatedAt: now }).where(and(eq(chatRun.coordinatorId, id), inArray(chatRun.status, ["queued", "running"])));
+      if (!row) return [];
+      await tx.update(chatCoordinator).set({ disabledAt: this.now() }).where(eq(chatCoordinator.id, id));
+      return tx.select(locator).from(chatRun).where(and(eq(chatRun.coordinatorId, id), inArray(chatRun.status, ["queued", "running"])));
+    });
+    // Disablement already denies grants. If interrupted here, the independent reaper
+    // discovers the disabled coordinator and performs the same atomic cleanup.
+    for (const candidate of candidates) await asUser(this.options.dataDb, candidate.userId, async tx => {
+      await tx.select().from(chatCoordinator).where(eq(chatCoordinator.id, id)).limit(1).for("update");
+      const [run] = await tx.select().from(chatRun).where(and(eq(chatRun.id, candidate.id), eq(chatRun.userId, candidate.userId), eq(chatRun.coordinatorId, id))).limit(1).for("update");
+      if (!run || !["queued", "running"].includes(run.status)) return;
+      const now = this.now();
+      await tx.update(chatRun).set({ grantsRevokedAt: now, status: "interrupted", leaseOwner: null, leaseExpiresAt: null, completedAt: now, updatedAt: now }).where(and(eq(chatRun.id, run.id), eq(chatRun.userId, run.userId)));
+      await store.closePendingResearchCalls(tx, { userId: run.userId, conversationId: run.conversationId, runId: run.id }, now);
     });
   }
 }

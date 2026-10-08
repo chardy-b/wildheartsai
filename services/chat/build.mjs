@@ -2,7 +2,7 @@ import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 
 await build({
-  entryPoints: ["src/index.ts", "src/worker-entry.ts"],
+  entryPoints: ["src/index.ts", "src/worker-entry.ts", "src/research-publisher.ts"],
   outdir: "dist",
   bundle: true,
   packages: "external",

@@ -24,6 +24,20 @@ docker compose --env-file services/chat/.env -f services/chat/docker-compose.yml
 
 Neither service publishes a host port. Compose creates the fixed `wildhearts-chat-trusted` network for the coordinator and gateway. Attach the separately provisioned Iggy management container to that network, give it the DNS name `wildhearts-iggy`, and have it listen on port 8417 inside the network without publishing that port. Iggy attaches the fixed gateway container to each isolated worker network; each worker joins only its own network and receives only its execution grant and gateway URL. The coordinator does not join worker networks.
 
+### Optional offline research snapshot
+
+The gateway can read a manually published Markdown snapshot when the research override is enabled. On the VPS, set `CHAT_RESEARCH_SOURCE_PATH` to the raw checkout and `CHAT_RESEARCH_CORPUS_HOST_PATH` to a dedicated private parent directory; create the parent with restrictive ownership and permissions (for example, `install -d -m 0700 -o 1000 -g 1000 /srv/wildhearts/research`). Put the raw GitHub checkout in the source directory and keep both host paths out of the application repository. The web app receives only the SHA-256 hash of the gateway token; keep the raw `CHAT_RESEARCH_GATEWAY_TOKEN` in the VPS-only research environment file.
+
+From the repository root, build the gateway and one-shot publisher, then publish with `run`:
+
+```sh
+docker compose --env-file services/chat/.env --env-file services/chat/.env.research -f services/chat/docker-compose.yml -f services/chat/docker-compose.research.yml build chat-gateway research-publisher
+docker compose --env-file services/chat/.env --env-file services/chat/.env.research -f services/chat/docker-compose.yml -f services/chat/docker-compose.research.yml run --rm --no-deps research-publisher
+docker compose --env-file services/chat/.env --env-file services/chat/.env.research -f services/chat/docker-compose.yml -f services/chat/docker-compose.research.yml up -d --no-deps chat-gateway
+```
+
+Do not use `docker compose up` for `research-publisher`; it is a one-shot validation-and-publish command in the `research-publish` profile. The gateway mounts the dedicated published parent read-only at `/published`; its corpus engine reads only `/published/current`. The publisher scans only the configured curated Markdown directories and `index.md`, enforces file and byte bounds, validates the staged snapshot, then replaces `current` with a brief fail-closed rename gap. Update the raw checkout and run the publisher again to publish a newer snapshot. Retained snapshots support in-flight runs within the gateway process; after a gateway restart, a missing old pin fails closed instead of switching to the latest snapshot. Never mount the raw checkout into the gateway, coordinator, or worker.
+
 Keep the existing worker image digest and Iggy health-run timeout consistent. The current Pi worker deadline and supported Iggy health-run limit are 120 seconds. The web authority may enforce a longer overall deadline, but this VPS configuration does not extend Iggy's run limit; a longer worker window requires an Iggy-side change and verification before it can be claimed.
 
 Pin the deployed worker as `registry/image@sha256:<digest>`. Build and exercise the synthetic Iggy profile in an approved test environment before connecting real accounts. Do not expose the coordinator, private gateway, Iggy API, Docker socket, or worker network to the public internet.

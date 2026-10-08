@@ -57,13 +57,13 @@ describe("web authority HTTP adapter", () => {
   });
 
   it("keeps execution and control grants operation-bound", async () => {
-    const seen: Array<{ url: string; authorization: string }> = [];
+    const seen: Array<{ url: string; authorization: string; research: string | null }> = [];
     const api = new ChatWebApi({
       baseUrl: localBase,
       fetcher: async (input, init) => {
         const url = String(input);
         const authorization = new Headers(init?.headers).get("authorization") ?? "";
-        seen.push({ url, authorization });
+        seen.push({ url, authorization, research: new Headers(init?.headers).get("x-chat-research-gateway-token") });
         if (url.endsWith("/execution/context")) return Response.json({ messages: [{ role: "user", content: "Synthetic question" }], modelId: "synthetic-model" });
         if (url.endsWith("/control/heartbeat")) return Response.json({ active: true, cancelled: false, deadlineAt: "2026-10-08T20:00:00.000Z" });
         return Response.json({ status: "accepted" });
@@ -73,9 +73,52 @@ describe("web authority HTTP adapter", () => {
     await expect(api.heartbeat(controlGrant)).resolves.toMatchObject({ active: true, cancelled: false });
     expect(seen[0]?.authorization).toBe(`Bearer ${executionGrant}`);
     expect(seen[1]?.authorization).toBe(`Bearer ${controlGrant}`);
+    expect(seen.map((item) => item.research)).toEqual([null, null]);
     await expect(api.context(controlGrant)).rejects.toThrow("invalid_execution_grant");
     await expect(api.heartbeat(executionGrant)).rejects.toThrow("invalid_control_grant");
     expect(seen).toHaveLength(2);
+  });
+
+  it("retries research begin with identical bytes and sends the raw credential only on research routes", async () => {
+    const seen: Array<{ url: string; body: string | undefined; authorization: string | null; research: string | null }> = [];
+    const gatewayToken = "r".repeat(43);
+    const api = new ChatWebApi({
+      baseUrl: localBase,
+      maxAttempts: 2,
+      random: () => 0,
+      sleep: async () => undefined,
+      fetcher: async (input, init) => {
+        seen.push({ url: String(input), body: init?.body as string | undefined, authorization: new Headers(init?.headers).get("authorization"), research: new Headers(init?.headers).get("x-chat-research-gateway-token") });
+        if (seen.length === 1) return new Response("{}", { status: 503 });
+        if (String(input).endsWith("/execution/cancellation")) return Response.json({ cancelled: false });
+        return Response.json({ status: "execute", operationId: "20000000-0000-4000-8000-000000000099", snapshotId: "a".repeat(64), deadlineAt: "2026-10-08T20:00:00.000Z" });
+      },
+    });
+    const input = { toolCallId: "call_1", tool: "search_research" as const, input: { query: "heart", limit: 5 }, proposedSnapshotId: "a".repeat(64) };
+    await expect(api.researchBegin(executionGrant, gatewayToken, input)).resolves.toMatchObject({ status: "execute", snapshotId: "a".repeat(64) });
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toEqual(seen[1]);
+    expect(seen[0]?.url).toBe("http://127.0.0.1:8765/api/chat/worker/v1/execution/research/begin");
+    expect(seen[0]?.authorization).toBe(`Bearer ${executionGrant}`);
+    expect(seen[0]?.research).toBe(gatewayToken);
+
+    await api.isCancelled(executionGrant);
+    expect(seen[2]?.research).toBeNull();
+  });
+
+  it("validates strict research replies and result bodies before sending", async () => {
+    const api = new ChatWebApi({
+      baseUrl: localBase,
+      maxAttempts: 1,
+      fetcher: async () => Response.json({ status: "execute", operationId: "bad", snapshotId: "a".repeat(64), deadlineAt: "later" }),
+    });
+    await expect(api.researchBegin(executionGrant, "r".repeat(43), {
+      toolCallId: "call_1", tool: "search_research", input: { query: "heart", limit: 5 }, proposedSnapshotId: "a".repeat(64),
+    })).rejects.toThrow("chat_web_api_invalid_reply");
+    await expect(api.researchResult(executionGrant, "r".repeat(43), {
+      operationId: "20000000-0000-4000-8000-000000000099", status: "completed", output: { snapshotId: "a".repeat(64), hits: [], truncated: false },
+      extra: true,
+    } as never)).rejects.toThrow();
   });
 
   it("rejects unsafe origins and replies containing database scope", async () => {

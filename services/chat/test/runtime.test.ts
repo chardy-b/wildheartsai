@@ -37,4 +37,35 @@ describe("remote-only runtime configuration", () => {
       CHAT_INFERENCE_MODEL: "synthetic-model",
     })).toThrow("invalid_chat_inference_url");
   });
+
+  it("enables research only when both gateway-only settings are present", () => {
+    const token = "r".repeat(43);
+    const disabled = createGatewayRuntime({
+      CHAT_WEB_API_URL: "https://www.wildheartsai.com/api/chat/worker/v1",
+      CHAT_INFERENCE_URL: "http://127.0.0.1:8081/v1",
+      CHAT_INFERENCE_MODEL: "synthetic-model",
+      CHAT_RESEARCH_CORPUS_ROOT: "/srv/research/current",
+    });
+    expect(disabled).not.toHaveProperty("researchCorpus");
+    expect(disabled).not.toHaveProperty("researchGatewayToken");
+
+    const enabled = createGatewayRuntime({
+      CHAT_WEB_API_URL: "https://www.wildheartsai.com/api/chat/worker/v1",
+      CHAT_INFERENCE_URL: "http://127.0.0.1:8081/v1",
+      CHAT_INFERENCE_MODEL: "synthetic-model",
+      CHAT_RESEARCH_CORPUS_ROOT: "/srv/research/current",
+      CHAT_RESEARCH_GATEWAY_TOKEN: token,
+    });
+    expect(enabled.researchGatewayToken).toBe(token);
+    expect(enabled.researchCorpus).toBeDefined();
+    expect(createCoordinatorRuntime({
+      CHAT_WEB_API_URL: "https://www.wildheartsai.com/api/chat/worker/v1",
+      CHAT_COORDINATOR_TOKEN: "synthetic-coordinator-token-with-enough-length",
+      CHAT_WORKER_ID: "worker-test",
+      IGGY_URL: "http://127.0.0.1:8417",
+      IGGY_BEARER_TOKEN: "synthetic-iggy-management-token",
+      CHAT_RESEARCH_GATEWAY_TOKEN: token,
+      CHAT_RESEARCH_CORPUS_ROOT: "/srv/research/current",
+    })).not.toHaveProperty("researchGatewayToken");
+  });
 });

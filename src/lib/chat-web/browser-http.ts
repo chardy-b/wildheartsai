@@ -33,8 +33,8 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
       await reaping;
     }
     return asUser(dataDb, identity.user.id, async (tx) => {
-      const locked = await tx.execute(sql`select public.chat_lock_session(${identity.session.id}, ${identity.user.id}) as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
-      if (!locked.rows[0]?.expires_at || new Date(locked.rows[0].expires_at).getTime() <= Date.now()) throw new ChatRequestError(401, "unauthorized");
+      const locked = await tx.execute(sql`select public.chat_lock_session(${identity.session.id}, ${identity.user.id}) at time zone 'UTC' as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
+      if (!locked.rows[0]?.expires_at || !Number.isFinite(new Date(locked.rows[0].expires_at).getTime()) || new Date(locked.rows[0].expires_at).getTime() <= Date.now()) throw new ChatRequestError(401, "unauthorized");
       const sessionExpiresAt = new Date(locked.rows[0].expires_at).getTime();
       const response = await (async () => {
       const scope = { userId: identity.user.id };
@@ -59,7 +59,7 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
         if (!conversation) throw new ChatRequestError(404, "not_found");
         if (path.length === 2 && request.method === "GET") {
           const rawBefore = url.searchParams.get("before");
-          if (rawBefore !== null && (!/^[1-9]\d*$/.test(rawBefore) || !Number.isSafeInteger(Number(rawBefore)))) throw new ChatRequestError(400, "invalid_cursor");
+          if (rawBefore !== null && (!/^[1-9][0-9]*$/.test(rawBefore) || !Number.isSafeInteger(Number(rawBefore)))) throw new ChatRequestError(400, "invalid_cursor");
           const before = rawBefore === null ? undefined : Number(rawBefore);
           const page = await store.listMessagePage(tx, owned, { before });
           return json({ conversation, ...page, runs: await store.listRunsForMessages(tx, owned, page.messages.map(message => message.id), { includeActive: before === undefined }) });
@@ -83,6 +83,11 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
         if (request.method === "DELETE" && path.length === 2) {
           const accepted = await store.requestRunCancellation(tx, owned);
           return json({ status: accepted ? "cancelling" : run.status }, 202);
+        }
+        if (request.method === "GET" && operation === "research-sources") {
+          const rawAfter = new URL(request.url).searchParams.get("after");
+          if (rawAfter !== null && (!/^[1-9][0-9]*$/.test(rawAfter) || !Number.isSafeInteger(Number(rawAfter)))) throw new ChatRequestError(400, "invalid_cursor");
+          return json(await store.listResearchToolPage(tx, owned, { after: rawAfter === null ? undefined : Number(rawAfter) }));
         }
         if (request.method === "GET" && operation === "events") {
           const raw = new URL(request.url).searchParams.get("after") ?? "0";

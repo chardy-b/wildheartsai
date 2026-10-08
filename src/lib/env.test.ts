@@ -14,6 +14,11 @@ const valid = {
 };
 
 describe("parseEnv", () => {
+  it("accepts an optional research verifier without a raw gateway credential", () => {
+    expect(parseEnv({ ...valid, CHAT_RESEARCH_GATEWAY_TOKEN_HASH: "" }).CHAT_RESEARCH_GATEWAY_TOKEN_HASH).toBeUndefined();
+    expect(parseEnv({ ...valid, CHAT_RESEARCH_GATEWAY_TOKEN_HASH: "a".repeat(64) }).CHAT_RESEARCH_GATEWAY_TOKEN_HASH).toBe("a".repeat(64));
+    expect(() => parseEnv({ ...valid, CHAT_RESEARCH_GATEWAY_TOKEN_HASH: "not-a-hash" })).toThrow(/CHAT_RESEARCH_GATEWAY_TOKEN_HASH/);
+  });
   it("accepts a complete environment and defaults sign-ups to off", () => {
     const env = parseEnv(valid);
     expect(env.DATABASE_URL).toBe(valid.DATABASE_URL);

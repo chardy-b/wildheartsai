@@ -10,6 +10,7 @@ beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks();
   mocks.preflight.mockResolvedValue(undefined); mocks.end.mockResolvedValue(undefined);
   vi.stubEnv("CHAT_ENABLED", "1");
+  vi.stubEnv("CHAT_RESEARCH_GATEWAY_TOKEN_HASH", "");
   vi.stubEnv("CHAT_DATABASE_URL", "postgres://synthetic_data@localhost/test");
   vi.stubEnv("CHAT_QUEUE_DATABASE_URL", "postgres://synthetic_queue@localhost/test");
   vi.stubEnv("CHAT_GRANT_DERIVATION_KEY", Buffer.alloc(32, 8).toString("base64url"));
@@ -51,5 +52,11 @@ describe("lazy fail-closed web chat configuration", () => {
     expect(mocks.end).toHaveBeenCalledTimes(2);
     await runtime.webChatRuntime();
     expect(mocks.pool).toHaveBeenCalledTimes(4);
+  });  it("passes only an optional research verifier and never requires a VPS raw token", async () => {
+    vi.stubEnv("CHAT_RESEARCH_GATEWAY_TOKEN_HASH", "a".repeat(64));
+    const runtime = await import("./runtime"); await runtime.webChatRuntime();
+    expect(mocks.authority).toHaveBeenCalledWith(expect.objectContaining({ researchGatewayTokenHash: "a".repeat(64) }));
+    expect(mocks.authority.mock.calls[0][0]).not.toHaveProperty("researchGatewayToken");
   });
+
 });
