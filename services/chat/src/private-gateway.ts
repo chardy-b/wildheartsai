@@ -272,14 +272,20 @@ function validateInferenceUrl(input: URL): URL {
 }
 
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
-  request.setTimeout(5_000, () => request.destroy());
+  const onBodyTimeout = () => request.destroy();
+  request.setTimeout(5_000, onBodyTimeout);
   const chunks: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of request) {
-    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    bytes += value.length;
-    if (bytes > maxBytes) throw new ChatWebApiError(413, "worker_request_too_large");
-    chunks.push(value);
+  try {
+    for await (const chunk of request) {
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += value.length;
+      if (bytes > maxBytes) throw new ChatWebApiError(413, "worker_request_too_large");
+      chunks.push(value);
+    }
+  } finally {
+    request.setTimeout(0);
+    request.off("timeout", onBodyTimeout);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
   catch { throw new ChatWebApiError(400, "invalid_worker_request"); }

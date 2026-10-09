@@ -81,9 +81,12 @@ describe("remote run dispatcher", () => {
       cancelHealthRun: async () => undefined,
       getHealthRunStatus: async () => "completed" as const,
     };
-    const dispatcher = new IggyRunDispatcher(api, iggy, "worker-test", { monitorPollMs: 100, sleep: async () => undefined });
-    await expect(dispatcher.dispatchOnce()).resolves.toBe(true);
-    expect(finalizations).toEqual([expect.objectContaining({ status: "interrupted", errorCode: "coordinator_stopped" })]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(run.deadlineAt) - 1_000);
+    try {
+      const dispatcher = new IggyRunDispatcher(api, iggy, "worker-test", { monitorPollMs: 100, sleep: async () => undefined });
+      await expect(dispatcher.dispatchOnce()).resolves.toBe(true);
+      expect(finalizations).toEqual([expect.objectContaining({ status: "interrupted", errorCode: "coordinator_stopped" })]);
+    } finally { clock.mockRestore(); }
   });
 
   it("cancels an ambiguously started run before finalizing the claim", async () => {
