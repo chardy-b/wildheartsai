@@ -13,9 +13,9 @@ export const syncSource = inngest.createFunction(
   {
     id: "sync-source",
     triggers: [syncRequested],
-    // One run per source; and at most 10 steps at once overall, so the nightly refresh
+    // One run per source; and at most 5 steps at once overall, so the nightly refresh
     // doesn't flood Epic.
-    concurrency: [{ key: "event.data.sourceId", limit: 1 }, { limit: 10 }],
+    concurrency: [{ key: "event.data.sourceId", limit: 1 }, { limit: 5 }],
     retries: 3,
     // Every retry of a step failed: end the run so the source isn't stuck "importing".
     onFailure: async ({ event }) => {
