@@ -7,7 +7,7 @@ import { getConnectionForSource } from "@/lib/epic/connections";
 import { accessTokenFor, tokenKey } from "@/lib/epic/server";
 import { fhirRead, fhirSearchBounded } from "@/lib/fhir/client";
 import { inngest, syncRequested } from "@/lib/inngest/client";
-import { loadMetriportSyncJob, prepareMetriportSource } from "@/lib/metriport/server";
+import { loadMetriportSyncJob, prepareMetriportSource, startMetriportSource } from "@/lib/metriport/server";
 import { recordsKey } from "@/lib/records-keys";
 import { needingFirstSync, type SourceSummary } from "@/lib/sources";
 import type { JobEnv, SyncRequest } from "./job";
@@ -52,6 +52,10 @@ async function vendorOf(userId: string, sourceId: string): Promise<"epic" | "met
 }
 
 // Metriport sources wait for the pull from the networks before the searches run.
+export const startSyncJob: NonNullable<JobEnv["start"]> = async ({ userId, sourceId }) => {
+  if ((await vendorOf(userId, sourceId)) === "metriport") await startMetriportSource(userId, sourceId);
+};
+
 export const prepareSyncJob: NonNullable<JobEnv["prepare"]> = async ({ userId, sourceId }) => {
   if ((await vendorOf(userId, sourceId)) === "metriport") await prepareMetriportSource(userId, sourceId);
 };

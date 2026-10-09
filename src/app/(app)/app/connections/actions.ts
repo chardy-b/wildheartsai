@@ -76,11 +76,14 @@ export async function connectMetriportSandboxAction(formData: FormData): Promise
     console.error("[metriport] connect failed", error instanceof Error ? error.name : "unknown");
     redirect("/app/connections?error=unavailable");
   }
+  let outcome: string;
   try {
-    await requestSyncFor(session.user.id, sourceId, "connect");
+    outcome = await requestSyncFor(session.user.id, sourceId, "connect");
   } catch (error) {
     console.error("[sync] queueing failed", error instanceof Error ? error.name : "unknown");
+    outcome = "failed";
   }
   revalidatePath("/app");
-  redirect("/app/connections?connected=1");
+  revalidatePath("/app/connections");
+  redirect(outcome === "queued" ? "/app/connections?connected=1" : `/app/connections?refresh=${outcome}`);
 }

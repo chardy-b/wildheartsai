@@ -1,0 +1,40 @@
+name: wildhearts-chat
+x-common: &common
+  build:
+    context: ../..
+    dockerfile: services/chat/Dockerfile
+    target: service
+  image: wildhearts-chat-service:local
+  read_only: true
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  mem_limit: 192m
+  cpus: 0.5
+  restart: unless-stopped
+  networks: [trusted]
+services:
+  chat-coordinator:
+    <<: *common
+    environment:
+      CHAT_SERVICE_MODE: coordinator
+      CHAT_WEB_API_URL: ${CHAT_WEB_API_URL:-https://www.wildheartsai.com/api/chat/worker/v1}
+      CHAT_COORDINATOR_TOKEN: ${CHAT_COORDINATOR_TOKEN:?required}
+      CHAT_WORKER_ID: ${CHAT_WORKER_ID:?required}
+      IGGY_URL: ${IGGY_URL:-http://wildhearts-iggy:8417}
+      IGGY_BEARER_TOKEN: ${IGGY_BEARER_TOKEN:?required}
+  chat-gateway:
+    <<: *common
+    container_name: wildhearts-chat-gateway
+    environment:
+      CHAT_SERVICE_MODE: gateway
+      CHAT_WEB_API_URL: ${CHAT_WEB_API_URL:-https://www.wildheartsai.com/api/chat/worker/v1}
+      CHAT_INFERENCE_URL: ${CHAT_INFERENCE_URL:?required}
+      CHAT_INFERENCE_MODEL: ${CHAT_INFERENCE_MODEL:?required}
+      CHAT_INFERENCE_MAX_TOKENS: ${CHAT_INFERENCE_MAX_TOKENS:-2048}
+      CHAT_INFERENCE_API_KEY: ${CHAT_INFERENCE_API_KEY:-}
+  # Iggy's trusted management container is provisioned separately. Attach it to
+  # wildhearts-chat-trusted and keep its worker runs on their isolated networks.
+networks:
+  trusted:
+    name: wildhearts-chat-trusted

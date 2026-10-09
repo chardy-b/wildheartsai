@@ -61,8 +61,22 @@
     {
       "idx": 8,
       "version": "7",
+      "when": 1791175234148,
+      "tag": "0008_chat_storage",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791442284227,
+      "tag": "0009_web_owned_chat",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
       "when": 1791524757750,
-      "tag": "0008_metriport_connection",
+      "tag": "0010_metriport_connection",
       "breakpoints": true
     }
   ]

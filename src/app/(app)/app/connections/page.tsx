@@ -59,6 +59,7 @@ function SourceIssues({ source }: { source: SourceSummary }) {
   const names = (categories: RecordCategory[]) => listOf(categories.map((c) => labelFor(c).toLowerCase()));
   return (
     <>
+      {source.lastSyncStatus === "failed" && !failed.length ? <p className="source-issue">We couldn&apos;t finish importing records. Refresh to try again.</p> : null}
       {failed.length ? <p className="source-issue">Last time we couldn&apos;t load {names(failed)}. Refresh to try again.</p> : null}
       {truncated.length ? <p className="source-issue">There were more {names(truncated)} than we could import at once.</p> : null}
     </>
@@ -114,6 +115,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
             Pull a sample patient&apos;s records the way they&apos;d arrive from health information exchanges. These are made-up
             people, so there&apos;s nothing to sign in to: pick one and their records import into your dashboard.
           </p>
+          <p>Structured records and note summaries are imported. Full note text and document files aren&apos;t included yet.</p>
           <ul className="connection-list">
             {PERSONAS.map((persona) => {
               const connectedAlready = sources.some((s) => s.fhirBaseUrl === `metriport:sandbox/${persona.id}` && s.status !== "disconnected");
@@ -194,12 +196,12 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                   ) : null}
                   {/* Signing in again replaces the stored access and keeps the records already imported. */}
                   {source.vendor === "epic" ? (
-                  <a
-                    className={source.status === "connected" && !newPermissions(source, expanded).length ? "btn btn-ghost" : "btn"}
-                    href={`/api/epic/authorize?${new URLSearchParams({ iss: source.fhirBaseUrl, org: source.organizationName })}`}
-                  >
-                    Reconnect
-                  </a>
+                    <a
+                      className={source.status === "connected" && !newPermissions(source, expanded).length ? "btn btn-ghost" : "btn"}
+                      href={`/api/epic/authorize?${new URLSearchParams({ iss: source.fhirBaseUrl, org: source.organizationName })}`}
+                    >
+                      Reconnect
+                    </a>
                   ) : null}
                   {source.connectionId ? (
                     <details className="source-confirm">

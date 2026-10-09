@@ -19,6 +19,8 @@
 
 # production
 /build
+/services/chat/dist
+/scripts/chat-acceptance/dist/
 
 # misc
 .DS_Store

@@ -1,0 +1,34 @@
+services:
+  chat-gateway:
+    environment:
+      CHAT_RESEARCH_CORPUS_ROOT: /published/current
+      CHAT_RESEARCH_GATEWAY_TOKEN: ${CHAT_RESEARCH_GATEWAY_TOKEN:?required only when enabling research}
+    volumes:
+      - type: bind
+        source: ${CHAT_RESEARCH_CORPUS_HOST_PATH:?required only when enabling research}
+        target: /published
+        read_only: true
+
+  research-publisher:
+    profiles: ["research-publish"]
+    build:
+      context: ../..
+      dockerfile: services/chat/Dockerfile
+      target: publisher
+    image: wildhearts-chat-publisher:local
+    network_mode: none
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    mem_limit: 192m
+    cpus: 0.5
+    volumes:
+      - type: bind
+        source: ${CHAT_RESEARCH_SOURCE_PATH:?required only when publishing a snapshot}
+        target: /source
+        read_only: true
+      - type: bind
+        source: ${CHAT_RESEARCH_CORPUS_HOST_PATH:?required only when publishing a snapshot}
+        target: /published
+    command: ["/source", "/published"]

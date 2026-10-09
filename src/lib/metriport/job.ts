@@ -1,3 +1,4 @@
+import "server-only";
 import { REFERENCED_TYPES } from "@/lib/fhir/references";
 import type { Resource } from "@/lib/fhir/types";
 import { SYNC_QUERIES } from "@/lib/sync/plan";
@@ -16,24 +17,42 @@ import { readFromBundle, searchBundle } from "./search";
 export const METRIPORT_SCOPE = [...new Set([...SYNC_QUERIES.map((q) => q.resourceType), ...REFERENCED_TYPES])].map((type) => `patient/${type}.rs`).join(" ");
 
 const BUNDLE_TTL_MS = 60_000;
+const MAX_CACHED_BUNDLES = 5;
 const POLL_EVERY_MS = 2_000;
 const POLL_FOR_MS = 40_000;
 
-type Cached = { at: number; bundle: Promise<FhirBundle> };
+type Cached = { at: number; bundle: Promise<FhirBundle>; expiry: ReturnType<typeof setTimeout> };
 const bundles = new Map<string, Cached>();
 
 // For tests.
 export function clearBundleCache(): void {
+  for (const cached of bundles.values()) clearTimeout(cached.expiry);
   bundles.clear();
 }
 
-function bundleFor(client: MetriportClient, patientId: string, now: number): Promise<FhirBundle> {
-  const cached = bundles.get(patientId);
+function bundleFor(client: MetriportClient, cacheKey: string, patientId: string, now: number): Promise<FhirBundle> {
+  const cached = bundles.get(cacheKey);
   if (cached && now - cached.at < BUNDLE_TTL_MS) return cached.bundle;
+  if (cached) {
+    clearTimeout(cached.expiry);
+    bundles.delete(cacheKey);
+  }
+  if (bundles.size >= MAX_CACHED_BUNDLES) {
+    const oldest = bundles.keys().next().value!;
+    clearTimeout(bundles.get(oldest)!.expiry);
+    bundles.delete(oldest);
+  }
   const bundle = client.consolidated(patientId);
-  bundles.set(patientId, { at: now, bundle });
+  const expiry = setTimeout(() => {
+    if (bundles.get(cacheKey)?.bundle === bundle) bundles.delete(cacheKey);
+  }, BUNDLE_TTL_MS);
+  expiry.unref();
+  bundles.set(cacheKey, { at: now, bundle, expiry });
   // A failed fetch must not be served again.
-  bundle.catch(() => bundles.delete(patientId));
+  bundle.catch(() => {
+    clearTimeout(expiry);
+    if (bundles.get(cacheKey)?.bundle === bundle) bundles.delete(cacheKey);
+  });
   return bundle;
 }
 
@@ -44,7 +63,8 @@ export function metriportJob(
   userId: string,
   connection: MetriportConnectionSecrets,
 ): { deps: SyncDeps; source: SyncSource } {
-  const bundle = () => bundleFor(client, connection.patientId, base.now().getTime());
+  const cacheKey = JSON.stringify([userId, connection.sourceId, runId]);
+  const bundle = () => bundleFor(client, cacheKey, connection.patientId, base.now().getTime());
   return {
     source: {
       runId,
@@ -84,7 +104,7 @@ export async function waitForRecords(
     const state = queryState(await client.documentQueryStatus(patientId));
     if (state === "completed") return;
     if (state === "failed") throw new MetriportError(undefined, "query_failed");
-    await sleep(POLL_EVERY_MS);
+    if (attempt < deadline) await sleep(POLL_EVERY_MS);
   }
   throw new MetriportError(undefined, "query_still_running");
 }

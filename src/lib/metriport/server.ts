@@ -6,7 +6,7 @@ import { env } from "@/lib/env";
 import { recordsKey } from "@/lib/records-keys";
 import type { JobEnv } from "@/lib/sync/job";
 import { tokenKey } from "@/lib/epic/server";
-import { createMetriportClient, externalIdFor, type MetriportClient } from "./client";
+import { createMetriportClient, externalIdFor, findOrCreatePatient, type MetriportClient } from "./client";
 import { findPersonaConnection, getMetriportConnectionForSource, saveMetriportConnection } from "./connections";
 import { metriportJob, waitForRecords } from "./job";
 import type { Persona } from "./personas";
@@ -22,15 +22,13 @@ function client(): MetriportClient {
   return createMetriportClient(key);
 }
 
-// Connects one of Metriport's sample patients and starts the pull from the networks. No sign-in:
-// the sandbox has no real person to authenticate. Returns the source to sync once it's ready.
+// Save the connection first. The queued sync starts the network pull on both connect and refresh.
 export async function connectSandboxPersona(userId: string, persona: Persona): Promise<{ sourceId: string }> {
   const metriport = client();
   const key = tokenKey();
   const existing = await asUser(db, userId, (tx) => findPersonaConnection(tx, key, userId, persona));
   const facilityId = existing?.facilityId ?? (await metriport.facilityId());
-  const patientId = existing?.patientId ?? (await metriport.createPatient(persona, facilityId, externalIdFor(userId, persona))).id;
-  await metriport.startDocumentQuery(patientId, facilityId);
+  const patientId = existing?.patientId ?? (await findOrCreatePatient(metriport, persona, facilityId, externalIdFor(userId, persona))).id;
   return asUser(db, userId, (tx) => saveMetriportConnection(tx, key, { userId, persona, patientId, facilityId }, new Date()));
 }
 
@@ -44,4 +42,9 @@ export const loadMetriportSyncJob: JobEnv["load"] = async ({ runId, userId, sour
 export async function prepareMetriportSource(userId: string, sourceId: string): Promise<void> {
   const connection = await getMetriportConnectionForSource(db, tokenKey(), userId, sourceId);
   if (connection) await waitForRecords(client(), connection.patientId);
+}
+
+export async function startMetriportSource(userId: string, sourceId: string): Promise<void> {
+  const connection = await getMetriportConnectionForSource(db, tokenKey(), userId, sourceId);
+  if (connection) await client().startDocumentQuery(connection.patientId, connection.facilityId);
 }

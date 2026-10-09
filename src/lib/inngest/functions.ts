@@ -4,17 +4,18 @@ import { importEpicDirectory } from "@/lib/epic/directory-import";
 import { runSyncJob } from "@/lib/sync/job";
 import { failRun } from "@/lib/sync/run";
 import { queueScheduledRefreshes, sourcesDueForRefresh } from "@/lib/sync/scheduled";
-import { loadSyncJob, prepareSyncJob, sendSyncRequest } from "@/lib/sync/server";
+import { loadSyncJob, prepareSyncJob, sendSyncRequest, startSyncJob } from "@/lib/sync/server";
 import { directoryRefreshRequested, inngest, syncRequested } from "./client";
+import { chatEnabled, webChatRuntime } from "@/lib/chat-web/runtime";
 
 // Syncs one source. One run per source at a time; each query is its own retried step.
 export const syncSource = inngest.createFunction(
   {
     id: "sync-source",
     triggers: [syncRequested],
-    // One run per source; and at most 10 steps at once overall, so the nightly refresh
+    // One run per source; and at most 5 steps at once overall, so the nightly refresh
     // doesn't flood Epic.
-    concurrency: [{ key: "event.data.sourceId", limit: 1 }, { limit: 10 }],
+    concurrency: [{ key: "event.data.sourceId", limit: 1 }, { limit: 5 }],
     retries: 3,
     // Every retry of a step failed: end the run so the source isn't stuck "importing".
     onFailure: async ({ event }) => {
@@ -28,6 +29,7 @@ export const syncSource = inngest.createFunction(
       db,
       now: () => new Date(),
       load: loadSyncJob,
+      start: startSyncJob,
       prepare: prepareSyncJob,
     }),
 );
@@ -66,4 +68,14 @@ export const refreshEpicDirectory = inngest.createFunction(
   async ({ step }) => step.run("import directory", () => importEpicDirectory(db)),
 );
 
-export const functions = [syncSource, refreshSources, refreshEpicDirectory];
+// The authoritative backend expires begun jobs even if every VPS worker is offline.
+// Step results contain counts only; no grants, patient identifiers or transcripts.
+export const reapChatRuns = inngest.createFunction(
+  { id: "reap-chat-runs", triggers: [{ cron: "* * * * *" }], concurrency: { limit: 1 }, retries: 2 },
+  async ({ step }) => {
+    if (!chatEnabled()) return { interrupted: 0 };
+    return step.run("expire-chat-leases", async () => ({ interrupted: await (await webChatRuntime()).authority.reap() }));
+  },
+);
+
+export const functions = [syncSource, refreshSources, refreshEpicDirectory, reapChatRuns];

@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createTestDb, createTestUser } from "@/test/db";
 import { asUser, RLS_TABLES } from "./rls";
-import { auditEvent, fhirResource, healthSource, syncCursor } from "./schema";
+import { auditEvent, fhirResource, healthSource, metriportConnection, syncCursor } from "./schema";
 import type { Db } from "./types";
 
 let db: Db;
@@ -35,6 +35,7 @@ beforeAll(async () => {
   bobSource = b.id;
   const now = new Date();
   for (const [userId, sourceId] of [[alice, a.id], [bob, b.id]]) {
+    await db.insert(metriportConnection).values({ id: `mp-${userId}`, userId, sourceId, persona: "jane", sealedPatientId: "sealed-test-id", facilityId: "sandbox-facility" });
     await db.insert(fhirResource).values({
       userId, sourceId, resourceType: "Observation", fhirId: "o1", category: "lab", contentHmac: "h",
       sealedResource: "v2.x", sealedSummary: "v2.y", normalizerVersion: 2, firstSeenAt: now, lastSeenAt: now,
@@ -58,9 +59,11 @@ describe("row-level security", () => {
       sources: await u.select({ userId: healthSource.userId }).from(healthSource),
       records: await u.select({ userId: fhirResource.userId }).from(fhirResource),
       cursors: await u.select({ sourceId: syncCursor.sourceId }).from(syncCursor),
+      metriport: await u.select({ userId: metriportConnection.userId }).from(metriportConnection),
     })));
     expect(seen.sources).toEqual([{ userId: alice }]);
     expect(seen.records).toEqual([{ userId: alice }]);
+    expect(seen.metriport).toEqual([{ userId: alice }]);
     expect(seen.cursors).toHaveLength(1);
     expect(seen.cursors[0].sourceId).not.toBe(bobSource);
   });
@@ -70,11 +73,13 @@ describe("row-level security", () => {
       asUser(tx, alice, async (u) => {
         await u.update(healthSource).set({ organizationName: "changed" }).where(eq(healthSource.id, bobSource));
         await u.delete(fhirResource).where(eq(fhirResource.sourceId, bobSource));
+        await u.delete(metriportConnection).where(eq(metriportConnection.sourceId, bobSource));
       }),
     );
     const [source] = await db.select().from(healthSource).where(eq(healthSource.id, bobSource));
     expect(source.organizationName).toBe("B");
     expect(await db.select().from(fhirResource).where(eq(fhirResource.userId, bob))).toHaveLength(1);
+    expect(await db.select().from(metriportConnection).where(eq(metriportConnection.userId, bob))).toHaveLength(1);
   });
 
   it("refuses to write a row for someone else", async () => {

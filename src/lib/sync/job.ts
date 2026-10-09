@@ -23,6 +23,8 @@ export type JobEnv = {
   now: () => Date;
   // Undefined once the source has no connection (disconnected since the run was queued).
   load: (request: SyncRequest) => Promise<{ deps: SyncDeps; source: SyncSource } | undefined>;
+  // Separate from polling so retrying prepare never restarts the upstream query.
+  start?: (request: SyncRequest) => Promise<void>;
   // For sources whose records arrive asynchronously (Metriport's pull from the networks): resolves
   // once they're ready to read, throws to have the queue retry the step later.
   prepare?: (request: SyncRequest) => Promise<void>;
@@ -38,6 +40,14 @@ export async function runSyncJob(request: SyncRequest, step: StepRunner, env: Jo
     return true;
   });
   if (!ready) return "failed";
+
+  if (env.start) {
+    const { start } = env;
+    await step("start retrieval", async () => {
+      await start(request);
+      return true;
+    });
+  }
 
   if (env.prepare) {
     const { prepare } = env;

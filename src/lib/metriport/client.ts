@@ -1,4 +1,6 @@
+import "server-only";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import type { Resource } from "@/lib/fhir/types";
 import type { Persona } from "./personas";
 
@@ -25,8 +27,25 @@ export type QueryStatus = "processing" | "completed" | "failed";
 export type DocumentQuery = { requestId?: string; download?: { status?: QueryStatus }; convert?: { status?: QueryStatus } };
 export type FhirBundle = { resourceType: "Bundle"; entry?: { resource?: Resource }[] };
 
+const patientSchema = z.object({ id: z.string().min(1) });
+const progressSchema = z.object({ status: z.enum(["processing", "completed", "failed"]) });
+const querySchema = z.object({ requestId: z.string().optional(), download: progressSchema.optional(), convert: progressSchema.optional() });
+const bundleSchema = z.looseObject({
+  resourceType: z.literal("Bundle"),
+  entry: z.array(z.looseObject({ resource: z.looseObject({ resourceType: z.string().min(1), id: z.string().min(1) }) })).optional(),
+  link: z.array(z.object({ relation: z.string() })).optional(),
+}).refine((bundle) => !bundle.link?.some((link) => link.relation === "next"));
+
+function validated<T>(schema: z.ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value);
+  // Never propagate validation errors containing response data.
+  if (!result.success) throw new MetriportError(undefined, "bad_response");
+  return result.data;
+}
+
 export type MetriportClient = {
   facilityId(): Promise<string>;
+  findPatient(externalId: string): Promise<{ id: string } | undefined>;
   createPatient(persona: Persona, facilityId: string, externalId: string): Promise<{ id: string }>;
   startDocumentQuery(patientId: string, facilityId: string): Promise<DocumentQuery>;
   documentQueryStatus(patientId: string): Promise<DocumentQuery>;
@@ -48,6 +67,7 @@ export function createMetriportClient(apiKey: string, fetchImpl: typeof fetch = 
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(TIMEOUT_MS),
         cache: "no-store",
+        redirect: "error",
       });
     } catch {
       throw new MetriportError(undefined, "network");
@@ -62,8 +82,8 @@ export function createMetriportClient(apiKey: string, fetchImpl: typeof fetch = 
 
   return {
     async facilityId() {
-      const listed = await call<{ facilities?: { id: string }[] } | { id: string }[]>("GET", "/facility");
-      const facilities = Array.isArray(listed) ? listed : (listed.facilities ?? []);
+      const listed = validated(z.union([z.array(patientSchema), z.object({ facilities: z.array(patientSchema) })]), await call("GET", "/facility"));
+      const facilities = Array.isArray(listed) ? listed : listed.facilities;
       if (facilities[0]?.id) return facilities[0].id;
       const created = await call<{ id: string }>("POST", "/facility", {
         name: "Wild Hearts sandbox facility",
@@ -71,10 +91,18 @@ export function createMetriportClient(apiKey: string, fetchImpl: typeof fetch = 
         active: true,
         address: { addressLine1: "2261 Market Street", city: "San Francisco", state: "CA", zip: "94114", country: "USA" },
       });
-      return created.id;
+      return validated(patientSchema, created).id;
     },
-    createPatient(persona, facilityId, externalId) {
-      return call<{ id: string }>("POST", `/patient?facilityId=${encodeURIComponent(facilityId)}`, {
+    async findPatient(externalId) {
+      try {
+        return validated(patientSchema, await call("GET", `/patient/external-id?externalId=${encodeURIComponent(externalId)}`));
+      } catch (error) {
+        if (error instanceof MetriportError && error.status === 404) return undefined;
+        throw error;
+      }
+    },
+    async createPatient(persona, facilityId, externalId) {
+      return validated(patientSchema, await call("POST", `/patient?facilityId=${encodeURIComponent(facilityId)}`, {
         firstName: persona.firstName,
         lastName: persona.lastName,
         dob: persona.dob,
@@ -82,22 +110,40 @@ export function createMetriportClient(apiKey: string, fetchImpl: typeof fetch = 
         address: [persona.address],
         contact: [{ phone: "1234567899", email: "sandbox@example.com" }],
         externalId,
-      });
+      }));
     },
     startDocumentQuery(patientId, facilityId) {
       return call("POST", `/document/query?patientId=${encodeURIComponent(patientId)}&facilityId=${encodeURIComponent(facilityId)}`, {});
     },
-    documentQueryStatus(patientId) {
-      return call("GET", `/document/query?patientId=${encodeURIComponent(patientId)}`);
+    async documentQueryStatus(patientId) {
+      return validated(querySchema, await call("GET", `/document/query?patientId=${encodeURIComponent(patientId)}`));
     },
-    consolidated(patientId) {
-      return call("GET", `/patient/${encodeURIComponent(patientId)}/consolidated`);
+    async consolidated(patientId) {
+      return validated(bundleSchema, await call("GET", `/patient/${encodeURIComponent(patientId)}/consolidated`)) as FhirBundle;
     },
   };
 }
 
-// The pull from the networks is finished once the download stage is. (The sandbox's status has no
-// `convert` stage, so only the download decides.)
+// The sandbox can omit stages. When conversion is reported, it must finish too.
 export function queryState(status: DocumentQuery): QueryStatus {
-  return status.download?.status ?? "completed";
+  const stages = [status.download?.status, status.convert?.status];
+  if (stages.includes("failed")) return "failed";
+  if (stages.includes("processing")) return "processing";
+  return "completed";
+}
+
+// Disconnect deletes the local link, not the upstream sample patient. Recover it on reconnect
+// and after a failed save; also tolerate another connect request winning the create race.
+export async function findOrCreatePatient(client: MetriportClient, persona: Persona, facilityId: string, externalId: string): Promise<{ id: string }> {
+  const existing = await client.findPatient(externalId);
+  if (existing) return existing;
+  try {
+    return await client.createPatient(persona, facilityId, externalId);
+  } catch (error) {
+    if (error instanceof MetriportError && error.status === 409) {
+      const concurrent = await client.findPatient(externalId);
+      if (concurrent) return concurrent;
+    }
+    throw error;
+  }
 }

@@ -1,0 +1,19 @@
+.health-chat { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); gap: 24px; margin-top: 32px; }
+.health-chat button { padding: 10px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); cursor: pointer; }
+.health-chat button:disabled { opacity: .55; cursor: default; }
+.health-chat button:focus-visible, .health-chat textarea:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.health-chat aside ul { padding: 0; list-style: none; }
+.health-chat aside li { margin: 10px 0; }
+.health-chat aside li button { width: 100%; text-align: left; }
+.health-chat small { display: block; margin-top: 4px; color: var(--text-2); }
+.health-chat [aria-pressed="true"] { border-color: var(--text); }
+.chat-body { min-width: 0; }
+.chat-messages article { padding: 16px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 16px; }
+.chat-messages p, .chat-body details p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.chat-body form { display: grid; gap: 12px; margin: 20px 0; }
+.chat-body textarea { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; resize: vertical; }
+.chat-body form button { justify-self: start; }
+.chat-body details { margin-top: 20px; padding: 12px 0; border-top: 1px solid var(--line); }
+.chat-body summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 700px) { .health-chat { grid-template-columns: 1fr; } .health-chat aside ul { display: flex; flex-wrap: wrap; gap: 8px; } }
+.chat-partial p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }

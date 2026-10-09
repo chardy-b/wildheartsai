@@ -3,6 +3,8 @@ import { z } from "zod";
 const schema = z
   .object({
     DATABASE_URL: z.url(),
+    // Optional verifier only; the raw research credential belongs exclusively to the VPS gateway.
+    CHAT_RESEARCH_GATEWAY_TOKEN_HASH: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     BETTER_AUTH_SECRET: z.string().min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
     BETTER_AUTH_URL: z.url().optional(),
     VERCEL_URL: z.string().optional(),
