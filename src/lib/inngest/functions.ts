@@ -4,7 +4,7 @@ import { importEpicDirectory } from "@/lib/epic/directory-import";
 import { runSyncJob } from "@/lib/sync/job";
 import { failRun } from "@/lib/sync/run";
 import { queueScheduledRefreshes, sourcesDueForRefresh } from "@/lib/sync/scheduled";
-import { loadSyncJob, sendSyncRequest } from "@/lib/sync/server";
+import { loadSyncJob, prepareSyncJob, sendSyncRequest } from "@/lib/sync/server";
 import { directoryRefreshRequested, inngest, syncRequested } from "./client";
 
 // Syncs one source. One run per source at a time; each query is its own retried step.
@@ -28,6 +28,7 @@ export const syncSource = inngest.createFunction(
       db,
       now: () => new Date(),
       load: loadSyncJob,
+      prepare: prepareSyncJob,
     }),
 );
 

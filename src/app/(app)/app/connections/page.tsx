@@ -7,13 +7,15 @@ import { isSampleData } from "@/lib/epic/directory";
 import { connectChoices } from "@/lib/epic/directory-store";
 import { connectErrorMessage } from "@/lib/epic/messages";
 import { enabledEpicEnvironment, env } from "@/lib/env";
+import { metriportEnabled } from "@/lib/metriport/server";
+import { isMetriportSource, PERSONAS } from "@/lib/metriport/personas";
 import { requireOnboarded } from "@/lib/onboarding-guard";
 import { loadSourcesFor } from "@/lib/records-server";
 import { labelFor } from "@/lib/fhir/categories";
 import type { RecordCategory } from "@/lib/fhir/normalize";
 import { ago, categoryCounts, lastRunIssues, listOf } from "@/lib/source-display";
 import type { SourceSummary } from "@/lib/sources";
-import { deleteSourceAction, disconnectAction, refreshAction, refreshAllAction } from "./actions";
+import { connectMetriportSandboxAction, deleteSourceAction, disconnectAction, refreshAction, refreshAllAction } from "./actions";
 import "@/components/auth/auth.css";
 import "@/components/app/connections.css";
 
@@ -105,6 +107,42 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
         <OrgSearch environment={environment} query={query} results={results} sample={sample} formAction="/app/connections" />
       </div>
 
+      {metriportEnabled() ? (
+        <div className="panel-light">
+          <h2>Try the Metriport sandbox</h2>
+          <p className="lede">
+            Pull a sample patient&apos;s records the way they&apos;d arrive from health information exchanges. These are made-up
+            people, so there&apos;s nothing to sign in to: pick one and their records import into your dashboard.
+          </p>
+          <ul className="connection-list">
+            {PERSONAS.map((persona) => {
+              const connectedAlready = sources.some((s) => s.fhirBaseUrl === `metriport:sandbox/${persona.id}` && s.status !== "disconnected");
+              return (
+                <li className="connection" key={persona.id}>
+                  <div className="source-main">
+                    <h3>
+                      {persona.firstName} {persona.lastName}
+                    </h3>
+                    <p>
+                      Born {persona.dob} · {persona.address.city}, {persona.address.state}
+                      <span className="tag">Sample data, not your records</span>
+                    </p>
+                  </div>
+                  <div className="connection-actions">
+                    <form action={connectMetriportSandboxAction}>
+                      <input type="hidden" name="persona" value={persona.id} />
+                      <button className="btn" type="submit" disabled={connectedAlready}>
+                        {connectedAlready ? "Connected" : "Import records"}
+                      </button>
+                    </form>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+
       <div>
         <div className="sources-head">
           <h2>Your health systems</h2>
@@ -127,7 +165,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                   <h3>{source.organizationName}</h3>
                   <p role={source.syncing ? "status" : undefined}>
                     {sourceStatus(source, now)}
-                    {isSampleData(source) ? <span className="tag">Sample data, not your records</span> : null}
+                    {isSampleData(source) || isMetriportSource(source) ? <span className="tag">Sample data, not your records</span> : null}
                   </p>
                   {source.recordCount > 0 ? (
                     <ul className="source-counts" aria-label={`Records from ${source.organizationName}`}>
@@ -155,12 +193,14 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                     </form>
                   ) : null}
                   {/* Signing in again replaces the stored access and keeps the records already imported. */}
+                  {source.vendor === "epic" ? (
                   <a
                     className={source.status === "connected" && !newPermissions(source, expanded).length ? "btn btn-ghost" : "btn"}
                     href={`/api/epic/authorize?${new URLSearchParams({ iss: source.fhirBaseUrl, org: source.organizationName })}`}
                   >
                     Reconnect
                   </a>
+                  ) : null}
                   {source.connectionId ? (
                     <details className="source-confirm">
                       <summary className="btn btn-ghost">Disconnect</summary>

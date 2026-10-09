@@ -179,6 +179,7 @@ describe("sourceProblems", () => {
     id: "s",
     organizationName: "North Clinic",
     fhirBaseUrl: "https://north.example/R4",
+    vendor: "epic",
     status: "connected",
     connectionId: "c",
     grantedScope: "patient/Observation.rs",
