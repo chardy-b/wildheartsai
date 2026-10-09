@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
@@ -89,6 +90,62 @@ describe("remote worker relay", () => {
       expect(remotePaths.every((url) => url.endsWith("/execution/cancellation"))).toBe(true);
     } finally { await fixture.close(); }
   });
+
+  it("keeps the inference connection open after the request body has been read", async () => {
+    const remoteFetch: typeof fetch = async () => Response.json({ cancelled: false });
+    const modelFetch = vi.fn(async () => {
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          await new Promise((resolve) => setTimeout(resolve, 5_250));
+          if (cancelled) return;
+          controller.enqueue(Buffer.from("data: [DONE]\n\n"));
+          controller.close();
+        },
+        cancel() { cancelled = true; },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    });
+    const fixture = await startGateway(remoteFetch, modelFetch);
+    try {
+      const response = await fetch(`${fixture.url}/v1/inference/chat/completions`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ messages: [{ role: "user", content: "synthetic" }], stream: true }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("data: [DONE]\n\n");
+      expect(modelFetch).toHaveBeenCalledTimes(1);
+    } finally { await fixture.close(); }
+  }, 12_000);
+
+  it("still times out when a request body pauses before it is complete", async () => {
+    const remoteFetch: typeof fetch = vi.fn(async () => Response.json({ cancelled: false }));
+    const fixture = await startGateway(remoteFetch);
+    try {
+      const startedAt = Date.now();
+      const disconnected = new Promise<void>((resolve, reject) => {
+        const request = httpRequest(`${fixture.url}/v1/tools`, { method: "POST", headers: headers() });
+        const safeguard = setTimeout(() => {
+          request.destroy();
+          reject(new Error("request body timeout did not fire"));
+        }, 8_000);
+        request.once("error", () => {
+          clearTimeout(safeguard);
+          if (Date.now() - startedAt < 4_500) reject(new Error("request body timed out before its inactivity limit"));
+          else resolve();
+        });
+        request.once("response", (response) => {
+          clearTimeout(safeguard);
+          response.resume();
+          reject(new Error("incomplete request unexpectedly received a response"));
+        });
+        request.write('{"toolCallId":"call_slow_body","tool":"get_data_coverage","input":');
+      });
+      await expect(disconnected).resolves.toBeUndefined();
+      expect(remoteFetch).not.toHaveBeenCalled();
+    } finally { await fixture.close(); }
+  }, 12_000);
 
   it("rejects inference redirects instead of forwarding the worker grant or request body", async () => {
     const remoteFetch: typeof fetch = async () => Response.json({ cancelled: false });
