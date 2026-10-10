@@ -104,5 +104,5 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
       if (sessionExpiresAt <= Date.now()) throw new ChatRequestError(401, "unauthorized");
       return response;
     });
-  });
+  }, { surface: "browser", method: request.method, path });
 }

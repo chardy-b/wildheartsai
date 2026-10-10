@@ -1,4 +1,5 @@
 import "server-only";
+import { logChatReapedRuns } from "./logging";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { canonicalJson } from "@/lib/crypto/user-keys";
@@ -311,6 +312,7 @@ export class ChatAuthority {
       await store.closePendingResearchCalls(tx, { userId: run.userId, conversationId: run.conversationId, runId: run.id }, at);
       return 1;
     });
+    logChatReapedRuns(count);
     return count;
   }
 
