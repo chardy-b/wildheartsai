@@ -33,6 +33,8 @@ services:
       CHAT_INFERENCE_MODEL: ${CHAT_INFERENCE_MODEL:?required}
       CHAT_INFERENCE_MAX_TOKENS: ${CHAT_INFERENCE_MAX_TOKENS:-2048}
       CHAT_INFERENCE_API_KEY: ${CHAT_INFERENCE_API_KEY:-}
+      CHAT_INFERENCE_FALLBACK_MODELS: ${CHAT_INFERENCE_FALLBACK_MODELS:-}
+      CHAT_INFERENCE_ATTEMPT_TIMEOUT_MS: ${CHAT_INFERENCE_ATTEMPT_TIMEOUT_MS:-45000}
   # Iggy's trusted management container is provisioned separately. Attach it to
   # wildhearts-chat-trusted and keep its worker runs on their isolated networks.
 networks:

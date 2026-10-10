@@ -38,6 +38,45 @@ describe("remote-only runtime configuration", () => {
     })).toThrow("invalid_chat_inference_url");
   });
 
+  it("keeps fallback settings absent unless valid server configuration is provided", () => {
+    const base = {
+      CHAT_WEB_API_URL: "https://www.wildheartsai.com/api/chat/worker/v1",
+      CHAT_INFERENCE_URL: "http://127.0.0.1:8081/v1",
+      CHAT_INFERENCE_MODEL: "qwen3.8-27b-q6k-112k-mtp-dual",
+    };
+    const primaryOnly = createGatewayRuntime(base);
+    expect(primaryOnly).not.toHaveProperty("fallbackModelIds");
+    expect(primaryOnly).not.toHaveProperty("attemptTimeoutMs");
+
+    const configured = createGatewayRuntime({
+      ...base,
+      CHAT_INFERENCE_FALLBACK_MODELS: '["qwen3.8-27b-gsq-9070"]',
+    });
+    expect(configured.fallbackModelIds).toEqual(["qwen3.8-27b-gsq-9070"]);
+    expect(configured.attemptTimeoutMs).toBe(45_000);
+
+    expect(createGatewayRuntime({
+      ...base,
+      CHAT_INFERENCE_FALLBACK_MODELS: '["backup-model"]',
+      CHAT_INFERENCE_ATTEMPT_TIMEOUT_MS: "120000",
+    }).attemptTimeoutMs).toBe(120_000);
+  });
+
+  it("rejects invalid fallback lists and attempt timeout bounds", () => {
+    const base = {
+      CHAT_WEB_API_URL: "https://www.wildheartsai.com/api/chat/worker/v1",
+      CHAT_INFERENCE_URL: "http://127.0.0.1:8081/v1",
+      CHAT_INFERENCE_MODEL: "primary-model",
+    };
+    for (const value of ["not-json", "{}", "[]", '[" "]', '["backup","backup"]', '["primary-model"]', '[1]', '["bad model"]', '["a","b","c","d"]', `[` + JSON.stringify("x".repeat(201)) + `]`]) {
+      expect(() => createGatewayRuntime({ ...base, CHAT_INFERENCE_FALLBACK_MODELS: value })).toThrow("invalid_chat_inference_fallback_models");
+    }
+    for (const value of ["999", "120001", "1.5", "NaN", "0"]) {
+      expect(() => createGatewayRuntime({ ...base, CHAT_INFERENCE_ATTEMPT_TIMEOUT_MS: value })).toThrow("invalid_chat_inference_attempt_timeout_ms");
+    }
+    expect(createGatewayRuntime({ ...base, CHAT_INFERENCE_ATTEMPT_TIMEOUT_MS: "1000", CHAT_INFERENCE_FALLBACK_MODELS: '["backup"]' }).attemptTimeoutMs).toBe(1_000);
+  });
+
   it("enables research only when both gateway-only settings are present", () => {
     const token = "r".repeat(43);
     const disabled = createGatewayRuntime({
