@@ -9,12 +9,16 @@ const executionGrantPattern = /^whchat1\.execution\.[A-Za-z0-9_-]{43}$/;
 const inferenceRequestLimit = 512 * 1024;
 const inferenceStreamLimit = 4 * 1024 * 1024;
 const inferenceTimeoutMs = 120_000;
+const defaultInferenceAttemptTimeoutMs = 45_000;
 const inferenceCancellationPollMs = 2_000;
+const retryableInferenceStatuses = new Set([404, 408, 429, 500, 502, 503, 504]);
 
 export type PrivateGatewayOptions = Readonly<{
   api: ChatWebApi;
   inferenceUrl: URL;
   modelId: string;
+  fallbackModelIds?: readonly string[];
+  attemptTimeoutMs?: number;
   maxTokens: number;
   apiKey?: string;
   researchCorpus?: OfflineResearchCorpus;
@@ -31,6 +35,9 @@ export type OfflineResearchCorpus = Readonly<{
 /** Private worker relay: execution grants authorize only web-owned run operations. */
 export function createPrivateToolGateway(options: PrivateGatewayOptions) {
   const inferenceUrl = validateInferenceUrl(options.inferenceUrl);
+  const inferenceModels = validateInferenceModels(options.modelId, options.fallbackModelIds ?? []);
+  const attemptTimeoutMs = options.attemptTimeoutMs ?? (inferenceModels.length > 1 ? defaultInferenceAttemptTimeoutMs : inferenceTimeoutMs);
+  if (!Number.isSafeInteger(attemptTimeoutMs) || attemptTimeoutMs < 1 || attemptTimeoutMs > inferenceTimeoutMs) throw new Error("invalid_chat_inference_attempt_timeout");
   const fetcher = options.fetcher ?? fetch;
   const loadedSnapshots = new Map<string, true>();
   const runSnapshots = new Map<string, string>();
@@ -74,22 +81,16 @@ export function createPrivateToolGateway(options: PrivateGatewayOptions) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return sendJson(response, 400, { error: "invalid_inference_request" });
     const body = input as Record<string, unknown>;
     if (!Array.isArray(body.messages) || body.messages.length < 1 || body.messages.length > 64 || (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.length > 16))) return sendJson(response, 400, { error: "invalid_inference_request" });
-    if (await options.api.isCancelled(executionGrant)) return sendJson(response, 409, { error: "run_not_active" });
-
     const controller = new AbortController();
     const stop = () => controller.abort();
     request.once("aborted", stop);
     response.once("close", stop);
+    const deadlineAt = Date.now() + inferenceTimeoutMs;
     const deadline = setTimeout(stop, inferenceTimeoutMs);
     let polling = false;
-    const cancellationPoll = setInterval(() => {
-      if (polling || controller.signal.aborted) return;
-      polling = true;
-      void options.api.isCancelled(executionGrant).then((cancelled) => { if (cancelled) stop(); }).catch(stop).finally(() => { polling = false; });
-    }, inferenceCancellationPollMs);
+    let cancellationPoll: ReturnType<typeof setInterval> | undefined;
     const requestedTokens = typeof body.max_tokens === "number" && Number.isSafeInteger(body.max_tokens) && body.max_tokens > 0 ? body.max_tokens : options.maxTokens;
     const inferenceBody = {
-      model: options.modelId,
       messages: body.messages,
       ...(Array.isArray(body.tools) ? { tools: body.tools } : {}),
       ...(body.tool_choice === undefined ? {} : { tool_choice: body.tool_choice }),
@@ -99,42 +100,123 @@ export function createPrivateToolGateway(options: PrivateGatewayOptions) {
       ...(typeof body.temperature === "number" && Number.isFinite(body.temperature) ? { temperature: Math.max(0, Math.min(1, body.temperature)) } : {}),
     };
     try {
+      const initiallyCancelled = await raceWithDeadline(options.api.isCancelled(executionGrant), controller.signal, deadlineAt - Date.now());
+      if (controller.signal.aborted) return sendJson(response, 502, { error: "inference_unavailable" });
+      if (initiallyCancelled) return sendJson(response, 409, { error: "run_not_active" });
+      cancellationPoll = setInterval(() => {
+        if (polling || controller.signal.aborted) return;
+        polling = true;
+        void options.api.isCancelled(executionGrant).then((cancelled) => { if (cancelled) stop(); }).catch(stop).finally(() => { polling = false; });
+      }, inferenceCancellationPollMs);
+
       const url = new URL("chat/completions", inferenceUrl);
-      const upstream = await fetcher(url, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}) },
-        body: JSON.stringify(inferenceBody),
-        redirect: "error",
-        signal: controller.signal,
-      });
-      if (!upstream.ok) {
-        await upstream.body?.cancel().catch(() => undefined);
-        if (!response.headersSent) sendJson(response, 502, { error: "inference_unavailable" });
-        else response.end();
-        return;
+      for (let index = 0; index < inferenceModels.length; index += 1) {
+        if (controller.signal.aborted || Date.now() >= deadlineAt) break;
+        if (index > 0 && !await mayStartFallback(options.api, executionGrant, controller.signal, deadlineAt, stop)) break;
+        if (controller.signal.aborted || Date.now() >= deadlineAt) break;
+
+        const modelId = inferenceModels[index]!;
+        const attemptController = new AbortController();
+        const abortAttempt = () => attemptController.abort();
+        controller.signal.addEventListener("abort", abortAttempt, { once: true });
+        let attemptTimedOut = false;
+        const remainingMs = Math.max(1, deadlineAt - Date.now());
+        const attemptBudgetMs = Math.min(attemptTimeoutMs, remainingMs);
+        const attemptTimer = setTimeout(() => { attemptTimedOut = true; attemptController.abort(); }, attemptBudgetMs);
+        let upstream: Response | undefined;
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let firstByteForwarded = false;
+        let retryableFailure = false;
+        try {
+          if (controller.signal.aborted || Date.now() >= deadlineAt) break;
+          upstream = await fetcher(url, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}) },
+            body: JSON.stringify({ ...inferenceBody, model: modelId }),
+            redirect: "error",
+            signal: attemptController.signal,
+          });
+          if (controller.signal.aborted) break;
+          if (upstream.redirected) {
+            break;
+          }
+          if (!upstream.ok) {
+            retryableFailure = retryableInferenceStatuses.has(upstream.status);
+            if (retryableFailure && index + 1 < inferenceModels.length) continue;
+            break;
+          }
+          if (!upstream.body) {
+            retryableFailure = true;
+            if (index + 1 < inferenceModels.length) continue;
+            break;
+          }
+
+          reader = upstream.body.getReader();
+          let first: Awaited<ReturnType<typeof reader.read>>;
+          do { first = await reader.read(); } while (!first.done && first.value.byteLength === 0);
+          if (controller.signal.aborted) break;
+          if (attemptTimedOut) {
+            retryableFailure = true;
+            if (index + 1 < inferenceModels.length) continue;
+            break;
+          }
+          if (first.done) {
+            retryableFailure = true;
+            if (index + 1 < inferenceModels.length) continue;
+            break;
+          }
+
+          clearTimeout(attemptTimer);
+          const firstChunk = first.value;
+          if (firstChunk.byteLength > inferenceStreamLimit) break;
+          response.writeHead(upstream.status, {
+            "content-type": upstream.headers.get("content-type") ?? "text/event-stream",
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+            "x-wh-chat-model": modelId,
+          });
+          response.write(Buffer.from(firstChunk));
+          firstByteForwarded = true;
+          let bytes = firstChunk.byteLength;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done || controller.signal.aborted) break;
+            bytes += value.byteLength;
+            if (bytes > inferenceStreamLimit) { await reader.cancel().catch(() => undefined); controller.abort(); break; }
+            response.write(Buffer.from(value));
+          }
+          break;
+        } catch (error) {
+          if (!firstByteForwarded && !response.headersSent && !controller.signal.aborted) {
+            retryableFailure = attemptTimedOut || isRetryableConnectionError(error);
+          }
+          if (firstByteForwarded) await reader?.cancel().catch(() => undefined);
+          if (!retryableFailure || index + 1 >= inferenceModels.length || controller.signal.aborted) break;
+          continue;
+        } finally {
+          clearTimeout(attemptTimer);
+          controller.signal.removeEventListener("abort", abortAttempt);
+          if (!firstByteForwarded) {
+            if (reader) {
+              await reader.cancel().catch(() => undefined);
+              reader.releaseLock();
+            } else {
+              await upstream?.body?.cancel().catch(() => undefined);
+            }
+          } else {
+            reader?.releaseLock();
+          }
+          if (attemptTimedOut || retryableFailure) attemptController.abort();
+        }
       }
-      response.writeHead(upstream.status, {
-        "content-type": upstream.headers.get("content-type") ?? "text/event-stream",
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-      });
-      if (!upstream.body) { response.end(); return; }
-      const reader = upstream.body.getReader();
-      let bytes = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done || controller.signal.aborted) break;
-        bytes += value.byteLength;
-        if (bytes > inferenceStreamLimit) { await reader.cancel().catch(() => undefined); controller.abort(); break; }
-        response.write(Buffer.from(value));
-      }
-      response.end();
+      if (!response.headersSent) sendJson(response, 502, { error: "inference_unavailable" });
+      else if (!response.writableEnded) response.end();
     } catch {
       if (!response.headersSent) sendJson(response, 502, { error: "inference_unavailable" });
       else response.end();
     } finally {
       clearTimeout(deadline);
-      clearInterval(cancellationPoll);
+      if (cancellationPoll) clearInterval(cancellationPoll);
       request.off("aborted", stop);
       response.off("close", stop);
     }
@@ -271,6 +353,62 @@ function validateInferenceUrl(input: URL): URL {
   return url;
 }
 
+function validateInferenceModels(primary: string, fallbacks: readonly string[]): readonly string[] {
+  const modelPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+  if (!modelPattern.test(primary) || fallbacks.length > 3 || fallbacks.some((model) => !modelPattern.test(model))) throw new Error("invalid_chat_inference_models");
+  const models = [primary, ...fallbacks];
+  if (new Set(models).size !== models.length) throw new Error("invalid_chat_inference_models");
+  return models;
+}
+
+async function raceWithDeadline<T>(promise: Promise<T>, signal: AbortSignal, timeoutMs: number): Promise<T> {
+  if (signal.aborted || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("chat_inference_deadline");
+  return new Promise<T>((resolve, reject) => {
+    const finish = (callback: (value: never) => void, value: unknown) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      callback(value as never);
+    };
+    const timer = setTimeout(() => finish(reject, new Error("chat_inference_deadline")), timeoutMs);
+    const onAbort = () => finish(reject, new Error("chat_inference_aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then((value) => finish(resolve as (value: never) => void, value), (error: unknown) => finish(reject, error));
+  });
+}
+
+function isRetryableConnectionError(error: unknown): boolean {
+  const retryableCodes = new Set([
+    "ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT",
+    "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "UND_ERR_ABORTED",
+  ]);
+  let current: unknown = error;
+  let message = "";
+  for (let depth = 0; depth < 5 && current && typeof current === "object"; depth += 1) {
+    const item = current as { code?: unknown; cause?: unknown; message?: unknown };
+    if (typeof item.message === "string" && item.message.toLowerCase().includes("redirect")) return false;
+    if (typeof item.code === "string") {
+      if (item.code === "UND_ERR_REDIRECT") return false;
+      if (retryableCodes.has(item.code)) return true;
+    }
+    if (depth === 0 && typeof item.message === "string") message = item.message.toLowerCase();
+    current = item.cause;
+  }
+  return error instanceof TypeError && (message === "fetch failed" || message === "terminated");
+}
+
+async function mayStartFallback(api: ChatWebApi, executionGrant: string, signal: AbortSignal, deadlineAt: number, abortOverall: () => void): Promise<boolean> {
+  if (signal.aborted || Date.now() >= deadlineAt) return false;
+  try {
+    const remainingMs = deadlineAt - Date.now();
+    const cancelled = await raceWithDeadline(api.isCancelled(executionGrant), signal, remainingMs);
+    if (signal.aborted || Date.now() >= deadlineAt) return false;
+    if (cancelled) { abortOverall(); return false; }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   const onBodyTimeout = () => request.destroy();
   request.setTimeout(5_000, onBodyTimeout);
@@ -287,6 +425,7 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise
     request.setTimeout(0);
     request.off("timeout", onBodyTimeout);
   }
+
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
   catch { throw new ChatWebApiError(400, "invalid_worker_request"); }
 }
