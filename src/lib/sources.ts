@@ -1,6 +1,6 @@
 import { recordAudit } from "@/lib/audit";
 import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
-import { epicConnection, fhirResource, healthSource, syncRun, type SyncQueryStats } from "@/lib/db/schema";
+import { epicConnection, fhirResource, healthSource, metriportConnection, syncRun, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { STALE_RUN_MS } from "@/lib/sync/run";
 
@@ -11,6 +11,7 @@ export type SourceSummary = {
   id: string;
   organizationName: string;
   fhirBaseUrl: string;
+  vendor: "epic" | "metriport";
   status: "connected" | "reconnect_required" | "disconnected";
   // The tokens row, when the source is still connected (needed to disconnect).
   connectionId: string | null;
@@ -29,12 +30,13 @@ export type SourceSummary = {
 const ACTIVE: ("queued" | "running")[] = ["queued", "running"];
 
 export async function listSources(db: Db, userId: string, now = new Date()): Promise<SourceSummary[]> {
-  const [sources, connections, active, lastFinished, counts] = await Promise.all([
+  const [sources, epicConnections, metriportConnections, active, lastFinished, counts] = await Promise.all([
     db.select().from(healthSource).where(eq(healthSource.userId, userId)).orderBy(asc(healthSource.createdAt)),
     db
       .select({ id: epicConnection.id, sourceId: epicConnection.sourceId, scope: epicConnection.scope })
       .from(epicConnection)
       .where(eq(epicConnection.userId, userId)),
+    db.select({ id: metriportConnection.id, sourceId: metriportConnection.sourceId }).from(metriportConnection).where(eq(metriportConnection.userId, userId)),
     // A run queued or started longer ago than STALE_RUN_MS was lost (startRun fails it on the
     // next request), so it doesn't count as importing.
     db
@@ -67,6 +69,8 @@ export async function listSources(db: Db, userId: string, now = new Date()): Pro
       .groupBy(fhirResource.sourceId, fhirResource.category),
   ]);
 
+  // Metriport links hold no per-resource permissions, so they have an id (to disconnect) but no scope.
+  const connections = [...epicConnections, ...metriportConnections.map((c) => ({ ...c, scope: null as string | null }))];
   return sources.map((source) => {
     const categoryCounts: Partial<Record<string, number>> = {};
     for (const c of counts) if (c.sourceId === source.id && c.category) categoryCounts[c.category] = c.n;
@@ -74,6 +78,7 @@ export async function listSources(db: Db, userId: string, now = new Date()): Pro
       id: source.id,
       organizationName: source.organizationName,
       fhirBaseUrl: source.fhirBaseUrl,
+      vendor: source.vendor,
       status: source.status,
       connectionId: connections.find((c) => c.sourceId === source.id)?.id ?? null,
       grantedScope: connections.find((c) => c.sourceId === source.id)?.scope ?? null,

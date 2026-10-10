@@ -5,6 +5,9 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { asUser } from "@/lib/db/rls";
 import { deleteConnection } from "@/lib/epic/connections";
+import { deleteMetriportConnection } from "@/lib/metriport/connections";
+import { connectSandboxPersona, metriportEnabled } from "@/lib/metriport/server";
+import { personaById } from "@/lib/metriport/personas";
 import { requireSession } from "@/lib/session";
 import { deleteSource, listSources } from "@/lib/sources";
 import { requestSyncFor } from "@/lib/sync/server";
@@ -13,7 +16,10 @@ import { requestSyncFor } from "@/lib/sync/server";
 export async function disconnectAction(formData: FormData): Promise<void> {
   const session = await requireSession();
   const userId = session.user.id;
-  await asUser(db, userId, (tx) => deleteConnection(tx, userId, String(formData.get("connectionId") ?? "")));
+  const connectionId = String(formData.get("connectionId") ?? "");
+  await asUser(db, userId, async (tx) => {
+    if (!(await deleteConnection(tx, userId, connectionId))) await deleteMetriportConnection(tx, userId, connectionId);
+  });
   revalidatePath("/app/connections");
   revalidatePath("/app");
 }
@@ -56,4 +62,28 @@ export async function deleteSourceAction(formData: FormData): Promise<void> {
   await asUser(db, userId, (tx) => deleteSource(tx, userId, String(formData.get("sourceId") ?? "")));
   revalidatePath("/app");
   redirect("/app/connections?deleted=1");
+}
+
+// Connects one of Metriport's sample patients: no sign-in, so it goes straight to importing.
+export async function connectMetriportSandboxAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const persona = personaById(String(formData.get("persona") ?? ""));
+  if (!persona || !metriportEnabled()) redirect("/app/connections?error=unavailable");
+  let sourceId: string;
+  try {
+    ({ sourceId } = await connectSandboxPersona(session.user.id, persona));
+  } catch (error) {
+    console.error("[metriport] connect failed", error instanceof Error ? error.name : "unknown");
+    redirect("/app/connections?error=unavailable");
+  }
+  let outcome: string;
+  try {
+    outcome = await requestSyncFor(session.user.id, sourceId, "connect");
+  } catch (error) {
+    console.error("[sync] queueing failed", error instanceof Error ? error.name : "unknown");
+    outcome = "failed";
+  }
+  revalidatePath("/app");
+  revalidatePath("/app/connections");
+  redirect(outcome === "queued" ? "/app/connections?connected=1" : `/app/connections?refresh=${outcome}`);
 }

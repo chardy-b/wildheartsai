@@ -4,7 +4,7 @@ import { importEpicDirectory } from "@/lib/epic/directory-import";
 import { runSyncJob } from "@/lib/sync/job";
 import { failRun } from "@/lib/sync/run";
 import { queueScheduledRefreshes, sourcesDueForRefresh } from "@/lib/sync/scheduled";
-import { loadSyncJob, sendSyncRequest } from "@/lib/sync/server";
+import { loadSyncJob, prepareSyncJob, sendSyncRequest, startSyncJob } from "@/lib/sync/server";
 import { directoryRefreshRequested, inngest, syncRequested } from "./client";
 import { chatEnabled, webChatRuntime } from "@/lib/chat-web/runtime";
 
@@ -29,6 +29,8 @@ export const syncSource = inngest.createFunction(
       db,
       now: () => new Date(),
       load: loadSyncJob,
+      start: startSyncJob,
+      prepare: prepareSyncJob,
     }),
 );
 

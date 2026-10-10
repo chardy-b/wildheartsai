@@ -13,6 +13,7 @@ export const RLS_TABLES = [
   "user_data_key",
   "health_source",
   "epic_connection",
+  "metriport_connection",
   "fhir_resource",
   "fhir_attachment",
   "sync_run",

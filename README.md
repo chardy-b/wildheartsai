@@ -54,6 +54,14 @@ Copy `.env.example` to `.env.local` for local placeholders. Never commit real cr
 
 Vercel should hold preview and production values separately after the GitHub project is imported.
 
+## Metriport sandbox
+
+Set the optional, server-only `METRIPORT_API_KEY` to a Metriport sandbox key to show five sample patients on Connections. Leave it unset to hide the option. Apply migration `0010_metriport_connection` with `npm run db:migrate` locally; Vercel applies it during the build. Record imports also need the existing Inngest configuration (locally, `INNGEST_DEV=1` and the Inngest dev server).
+
+Import a sample patient to add structured records and note summaries to the dashboard. Refresh starts another retrieval; disconnect keeps stored records unless you choose to delete them. Reconnecting reuses the upstream sample patient and the local source. Full note text and document files are not imported. The API address is fixed to Metriport's sandbox and redirects are rejected; this does not enable real-patient HIE access.
+
+The replay tests use Metriport's published Jane sample bundle and require no API key: `npm test -- src/lib/metriport`. Client API responses and credentials must never be logged or committed.
+
 ## Optional offline research snapshot
 
 The chat gateway can search a curated Markdown snapshot of the private health-research wiki. The gateway reads only a fixed, read-only published directory; the worker receives neither the mounted corpus nor the research credential. The publisher runs as a separate Docker target with networking disabled, a read-only raw-repository mount, and one dedicated writable publication parent. It copies only the approved Markdown directories and `index.md`, builds a SHA-256 manifest, then asks the same corpus engine used by the gateway to validate every selected file and reject invalid frontmatter or duplicate record IDs. PDF, binary, raw, prompt, operational, and Git metadata are excluded.

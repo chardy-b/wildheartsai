@@ -44,7 +44,7 @@ export const healthSource = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    vendor: text("vendor", { enum: ["epic"] }).notNull(),
+    vendor: text("vendor", { enum: ["epic", "metriport"] }).notNull(),
     fhirBaseUrl: text("fhir_base_url").notNull(),
     organizationName: text("organization_name").notNull(),
     status: text("status", { enum: ["connected", "reconnect_required", "disconnected"] }).notNull(),

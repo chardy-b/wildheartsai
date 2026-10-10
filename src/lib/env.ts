@@ -40,6 +40,8 @@ const schema = z
     EPIC_PRODUCTION_CLIENT_ID: z.string().min(1).optional(),
     EPIC_PRODUCTION_PRIVATE_JWK: z.string().min(2).optional(),
     EPIC_PRODUCTION_RETIRING_PUBLIC_JWK: z.string().min(2).optional(),
+    // Metriport sandbox (sample HIE patients, no sign-in). Unset hides the option. Server-only.
+    METRIPORT_API_KEY: z.string().min(1).optional(),
     TOKEN_ENCRYPTION_KEY: z
       .string()
       .refine((value) => Buffer.from(value, "base64").length === 32, "TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded"),
