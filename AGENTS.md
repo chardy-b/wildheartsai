@@ -10,6 +10,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Wild Hearts AI delivery rules
 
+- For PR checks, merges, and deployments, follow `.agents/skills/pr-delivery/SKILL.md`: inspect CI for the exact head commit before merging, verify production after merging, and clean up the merged PR branch.
 - Treat health data, OAuth credentials, authorization codes, access tokens, refresh tokens, and patient identifiers as sensitive. Never commit, log, or expose them to client-side code.
 - Keep Epic/FHIR secrets server-only. Use encrypted, short-lived storage and least-privilege SMART scopes when authentication is implemented.
 - Do not claim HIPAA compliance, Epic production approval, or clinical accuracy without documented evidence.
