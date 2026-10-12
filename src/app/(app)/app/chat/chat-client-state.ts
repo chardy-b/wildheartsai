@@ -64,9 +64,24 @@ export function createDetailReadGuard() {
   };
 }
 
-export type ActivityEvent = { sequence: number; kind: string; payload: { text?: string; tool?: string; status?: string }; createdAt: string };
+export type ActivityEvent = { sequence: number; kind: string; payload: { text?: string; tool?: string; toolCallId?: string; status?: string }; createdAt: string };
 export type RunActivity = { cursor: number; answer: string; events: ActivityEvent[] };
 export type RunActivities = Map<string, RunActivity>;
+
+export function toolSteps(events: ActivityEvent[], active: boolean) {
+  const steps: { id: string; tool: string; status: string }[] = [];
+  for (const event of events) {
+    if (event.kind === "tool.started") {
+      steps.push({ id: event.payload.toolCallId ?? String(event.sequence), tool: event.payload.tool ?? "lookup", status: "running" });
+    } else if (event.kind === "tool.completed") {
+      const step = event.payload.toolCallId
+        ? steps.find(item => item.id === event.payload.toolCallId)
+        : steps.find(item => item.status === "running" && !!event.payload.tool && item.tool === event.payload.tool);
+      if (step) step.status = event.payload.status ?? "completed";
+    }
+  }
+  return steps.map(step => !active && step.status === "running" ? { ...step, status: "interrupted" } : step);
+}
 
 export type Identified = { id: string };
 
