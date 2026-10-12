@@ -1068,13 +1068,13 @@ export async function beginRecordedToolCall(
       }
       if (context.providerToolCallId !== input.providerToolCallId) continue;
       const argumentsMatch = canonicalJson(decrypted<unknown>(keys, "chat_tool_call", "arguments", call.id, call.sealedArguments)) === canonicalJson(input.arguments);
-      if (call.toolName !== input.toolName || !argumentsMatch || (call.requestDigest && call.requestDigest !== requestDigest(keys, { tool: input.toolName, arguments: input.arguments }))) throw new Error("Provider tool call id was reused");
+      if (call.toolName !== input.toolName || !argumentsMatch || (call.requestDigest && call.requestDigest !== requestDigest(keys, { tool: input.toolName, arguments: input.arguments }))) throw new ChatAuthorityError("invalid_request", 409);
       if (call.status === "completed" && call.sealedResult) {
         return { status: "replay" as const, toolCallId: call.id, result: decrypted<unknown>(keys, "chat_tool_call", "result", call.id, call.sealedResult) };
       }
       return { status: "pending" as const, toolCallId: call.id };
     }
-    if (calls.length >= CHAT_MAX_TOOL_CALLS) throw new Error("Chat tool-call limit reached");
+    if (calls.length >= CHAT_MAX_TOOL_CALLS) throw new ChatAuthorityError("tool_limit_reached", 429);
     const id = randomUUID();
     await tx.insert(chatToolCall).values({
       id,
@@ -1150,7 +1150,7 @@ export async function beginRecordedResearchCall(db: Db, scope: ChatScope, input:
       if (call.status !== "pending") throw new ChatAuthorityError("run_not_active");
       return { status: "pending", operationId: call.id };
     }
-    if (calls.length >= CHAT_MAX_TOOL_CALLS) throw new ChatAuthorityError("quota_exceeded", 429);
+    if (calls.length >= CHAT_MAX_TOOL_CALLS) throw new ChatAuthorityError("tool_limit_reached", 429);
     if (calls.some(call => call.status === "pending")) throw new ChatAuthorityError("invalid_request", 409);
     const id = randomUUID();
     const unavailable = "failureCode" in input && snapshotId === null;

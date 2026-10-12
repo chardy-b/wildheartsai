@@ -13,6 +13,7 @@ export type ChatScope = z.infer<typeof chatScopeSchema>;
 export const workerEventTypeSchema = z.enum([
   "lifecycle",
   "answer.delta",
+  "reasoning.delta",
   "message.completed",
   "tool.started",
   "tool.completed",

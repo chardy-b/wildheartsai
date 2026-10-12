@@ -189,6 +189,16 @@ export class ChatWebApi {
         await this.delay(attempt);
         continue;
       }
+      // A durable per-run lookup quota cannot recover by retrying the same request.
+      // Parse a tiny body and propagate only this fixed code; never provider/error text.
+      if (response.status === 429 && (path === "execution/tools" || path === "execution/research/begin")) {
+        let exhausted = false;
+        try {
+          const failure = await readBoundedJson(response, 1_024);
+          exhausted = hasExactKeys(failure, ["error"]) && (failure as { error: unknown }).error === "tool_limit_reached";
+        } catch { /* malformed errors remain a generic bounded rate-limit failure */ }
+        if (exhausted) throw new ChatWebApiError(429, "tool_limit_reached");
+      }
       if (retryableStatus(response.status)) {
         lastStatus = response.status;
         const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));

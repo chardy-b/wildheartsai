@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, createTestUser } from "@/test/db";
 import { session, chatRun, chatMessage } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
-import { createConversation, createUserMessage, submitQuestionAndRun } from "@/lib/chat/store";
+import { createConversation, createUserMessage, submitQuestionAndRun, claimRun, appendWorkerEvent, finalizeWorkerEvent } from "@/lib/chat/store";
 
 const mocks = vi.hoisted(() => ({ runtime: vi.fn(), getSession: vi.fn() }));
 vi.mock("./runtime", () => ({ webChatRuntime: mocks.runtime, ChatUnavailableError: class extends Error {} }));
@@ -60,6 +60,25 @@ describe("same-origin browser chat against the restricted data role", () => {
     const history = await f.call("GET", ["conversations", f.aliceConversation.id]);
     expect(history.status).toBe(200);
     expect((await history.json()).messages).toMatchObject([{ content: "Synthetic question" }]);
+  });
+
+  it("replays thinking and safe failure details only to the owning browser", async () => {
+    const f = await fixture();
+    const owned = { userId: f.alice, conversationId: f.aliceConversation.id };
+    const submitted = await submitQuestionAndRun(f.dataDb, owned, { message: "Synthetic question", idempotencyKey: randomUUID(), initiatingSessionId: f.identity.session.id });
+    const runScope = { ...owned, runId: submitted.run.id };
+    const claimed = await claimRun(f.dataDb, runScope, { workerId: "synthetic-worker", leaseMs: 60_000 });
+    const scope = { ...runScope, workerId: "synthetic-worker", runAttempt: claimed!.attempt };
+    await appendWorkerEvent(f.dataDb, scope, { eventId: randomUUID(), sequence: 1, type: "reasoning.delta", data: { text: "Synthetic thinking" } });
+    await finalizeWorkerEvent(f.dataDb, scope, { status: "failed", event: { eventId: randomUUID(), sequence: 2, type: "error", data: { code: "tool_limit_reached", stage: "record_lookup" } } });
+    const response = await f.call("GET", ["runs", submitted.run.id, "events"]);
+    expect(response.status).toBe(200);
+    expect((await response.json()).events).toMatchObject([
+      { kind: "reasoning.delta", payload: { text: "Synthetic thinking" } },
+      { kind: "run.failed", payload: { status: "failed", code: "tool_limit_reached", stage: "record_lookup" } },
+    ]);
+    mocks.getSession.mockResolvedValue({ user: { id: f.bob, emailVerified: true }, session: { id: `session-${f.bob}` } });
+    expect((await f.call("GET", ["runs", submitted.run.id, "events"])).status).toBe(404);
   });
 
   it("hides another person's conversation/run and rejects model or caller identity fields", async () => {

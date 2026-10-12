@@ -110,8 +110,8 @@ describe("offline research authority and encrypted trace", () => {
       expect(await f.authority.researchResult(f.c.executionGrant, credential, failed)).toEqual({ status: "duplicate" });
       expect(await f.authority.researchBegin(f.c.executionGrant, credential, input)).toEqual({ status: "failed", operationId: begin.operationId, errorCode: "snapshot_unavailable" });
     }
-    await expect(f.authority.researchBegin(f.c.executionGrant, credential, command("seventh"))).rejects.toMatchObject({ code: "quota_exceeded" });
-    await expect(f.authority.tool(f.c.executionGrant, { toolCallId: "health_seventh", tool: "get_data_coverage", input: {} })).rejects.toThrow("limit reached");
+    await expect(f.authority.researchBegin(f.c.executionGrant, credential, command("seventh"))).rejects.toMatchObject({ code: "tool_limit_reached", status: 429 });
+    await expect(f.authority.tool(f.c.executionGrant, { toolCallId: "health_seventh", tool: "get_data_coverage", input: {} })).rejects.toMatchObject({ code: "tool_limit_reached", status: 429 });
     expect(await f.db.select().from(chatToolCall)).toHaveLength(6);
   });
 

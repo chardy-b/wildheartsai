@@ -129,6 +129,45 @@ describe("web-owned chat authority with constrained PostgreSQL roles", () => {
     expect((await listMessages(f.dataDb, { userId: f.alice, conversationId: f.conversations.get(f.alice)! })).at(-1)).toMatchObject({ content: "Synthetic complete answer", status: "completed" });
   });
 
+  it("returns a typed lookup limit while preserving replay at the cap", async () => {
+    const f = await fixture(); await f.submit(); const c = await f.claim();
+    const tool = { toolCallId: "coverage_0", tool: "get_data_coverage" as const, input: {} };
+    const first = await f.authority.tool(c.executionGrant, tool);
+    for (let n = 1; n < 6; n++) await f.authority.tool(c.executionGrant, { ...tool, toolCallId: `coverage_${n}` });
+    await expect(f.authority.tool(c.executionGrant, { ...tool, toolCallId: "coverage_6" })).rejects.toMatchObject({ code: "tool_limit_reached", status: 429 });
+    expect(await f.authority.tool(c.executionGrant, tool)).toEqual(first);
+    await expect(f.authority.tool(c.executionGrant, { ...tool, tool: "find_records" })).rejects.toMatchObject({ code: "invalid_request", status: 409 });
+    expect(await f.db.select().from(chatToolCall)).toHaveLength(6);
+  });
+
+  it("distinguishes a fenced cancellation request from expired or revoked execution", async () => {
+    const f = await fixture(); const submitted = await f.submit(); const c = await f.claim();
+    expect(await f.authority.cancellation(c.executionGrant)).toEqual({ cancelled: false });
+    await requestRunCancellation(f.dataDb, { userId: f.alice, conversationId: f.conversations.get(f.alice)!, runId: submitted.run.id });
+    expect(await f.authority.cancellation(c.executionGrant)).toEqual({ cancelled: true });
+    await expect(f.authority.context(c.executionGrant)).rejects.toMatchObject({ code: "run_not_active" });
+    f.advance(30_001);
+    await expect(f.authority.cancellation(c.executionGrant)).rejects.toMatchObject({ code: "run_not_active" });
+    const g = await fixture(); await g.submit(); const d = await g.claim();
+    await g.db.update(chatRun).set({ grantsRevokedAt: new Date() }).where(eq(chatRun.id, d.id));
+    await expect(g.authority.cancellation(d.executionGrant)).rejects.toMatchObject({ code: "run_not_active" });
+  });
+
+  it("seals reasoning separately and enforces a replay-safe reasoning budget", async () => {
+    const f = await fixture(); await f.submit(); const c = await f.claim();
+    const event = { eventId: randomUUID(), sequence: 1, type: "reasoning.delta" as const, data: { text: "Synthetic thinking" } };
+    expect(await f.authority.events(c.executionGrant, { events: [event] })).toEqual({ status: "accepted" });
+    expect(await f.authority.events(c.executionGrant, { events: [event] })).toEqual({ status: "duplicate" });
+    expect(JSON.stringify(await f.db.select().from(chatEvent))).not.toContain("Synthetic thinking");
+    expect((await f.db.select().from(chatRun))[0].executionMeta).toMatchObject({ reasoningEvents: 1, reasoningBytes: 18 });
+    for (let n = 2; n <= 16; n++) await f.authority.events(c.executionGrant, { events: [{ ...event, eventId: randomUUID(), sequence: n }] });
+    await expect(f.authority.events(c.executionGrant, { events: [{ ...event, eventId: randomUUID(), sequence: 17 }] })).rejects.toMatchObject({ code: "quota_exceeded", status: 429 });
+    await f.authority.events(c.executionGrant, { events: [completion(17)] });
+    const messages = await listMessages(f.dataDb, { userId: f.alice, conversationId: f.conversations.get(f.alice)! });
+    expect(messages.at(-1)?.content).not.toContain("Synthetic thinking");
+    expect(messages.at(-1)?.role).toBe("assistant");
+  });
+
   it("rejects cancelled writes and uses lease-bound control acknowledgement", async () => {
     const f = await fixture(); const submitted = await f.submit(); const c = await f.claim();
     await requestRunCancellation(f.dataDb, { userId: f.alice, conversationId: f.conversations.get(f.alice)!, runId: submitted.run.id });

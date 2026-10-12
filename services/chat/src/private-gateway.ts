@@ -8,8 +8,8 @@ import type { ResearchBeginReply, ResearchErrorCode, ResearchOutput } from "./pr
 const executionGrantPattern = /^whchat1\.execution\.[A-Za-z0-9_-]{43}$/;
 const inferenceRequestLimit = 512 * 1024;
 const inferenceStreamLimit = 4 * 1024 * 1024;
-const inferenceTimeoutMs = 120_000;
-const defaultInferenceAttemptTimeoutMs = 45_000;
+const inferenceTimeoutMs = 240_000;
+const defaultInferenceAttemptTimeoutMs = 120_000;
 const inferenceCancellationPollMs = 2_000;
 const retryableInferenceStatuses = new Set([404, 408, 429, 500, 502, 503, 504]);
 
@@ -36,8 +36,8 @@ export type OfflineResearchCorpus = Readonly<{
 export function createPrivateToolGateway(options: PrivateGatewayOptions) {
   const inferenceUrl = validateInferenceUrl(options.inferenceUrl);
   const inferenceModels = validateInferenceModels(options.modelId, options.fallbackModelIds ?? []);
-  const attemptTimeoutMs = options.attemptTimeoutMs ?? (inferenceModels.length > 1 ? defaultInferenceAttemptTimeoutMs : inferenceTimeoutMs);
-  if (!Number.isSafeInteger(attemptTimeoutMs) || attemptTimeoutMs < 1 || attemptTimeoutMs > inferenceTimeoutMs) throw new Error("invalid_chat_inference_attempt_timeout");
+  const attemptTimeoutMs = options.attemptTimeoutMs ?? defaultInferenceAttemptTimeoutMs;
+  if (!Number.isSafeInteger(attemptTimeoutMs) || attemptTimeoutMs < 1 || attemptTimeoutMs > 120_000) throw new Error("invalid_chat_inference_attempt_timeout");
   const fetcher = options.fetcher ?? fetch;
   const loadedSnapshots = new Map<string, true>();
   const runSnapshots = new Map<string, string>();
@@ -60,10 +60,18 @@ export function createPrivateToolGateway(options: PrivateGatewayOptions) {
     }
     if (request.url === "/v1/tools" && request.method === "POST") {
       const body = agentToolInputSchema.parse(await readJsonBody(request, CHAT_MAX_REQUEST_BYTES));
-      const result = body.tool === "search_research" || body.tool === "read_research"
-        ? await invokeResearch(executionGrant, body)
-        : await options.api.invokeTool(executionGrant, body);
-      return sendBoundedJson(response, 200, result, CHAT_MAX_TOOL_REPLY_BYTES);
+      try {
+        const result = body.tool === "search_research" || body.tool === "read_research"
+          ? await invokeResearch(executionGrant, body)
+          : await options.api.invokeTool(executionGrant, body);
+        return sendBoundedJson(response, 200, result, CHAT_MAX_TOOL_REPLY_BYTES);
+      } catch (error) {
+        // Preserve only the fixed, durable per-run lookup quota code.
+        if (error instanceof ChatWebApiError && error.status === 429 && error.code === "tool_limit_reached") {
+          return sendJson(response, 429, { errorCode: "tool_limit_reached" });
+        }
+        throw error;
+      }
     }
     if (request.url === "/v1/worker/events" && request.method === "POST") {
       const event = protocolEventSchema.parse(await readJsonBody(request, CHAT_MAX_EVENT_BYTES));
@@ -452,6 +460,13 @@ export function safeGatewayStatus(error: unknown): number {
 }
 
 /** Client used only inside an Iggy worker, where URL and execution grant are injected. */
+export class GatewayToolError extends Error {
+  constructor(readonly code: "tool_limit_reached" | "tool_unavailable") {
+    super(code);
+    this.name = "GatewayToolError";
+  }
+}
+
 export class GatewayToolClient {
   private contextPromise?: Promise<Readonly<{ messages: ReadonlyArray<ChatMessage>; modelId: string }>>;
 
@@ -460,7 +475,19 @@ export class GatewayToolClient {
   async execute(toolCallId: string, tool: ToolName, input: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     const request = agentToolInputSchema.parse({ toolCallId, tool, input });
     const response = await this.post("/v1/tools", request, signal);
-    if (!response.ok) throw new Error("tool_gateway_rejected");
+    if (!response.ok) {
+      if (response.status === 429) {
+        try {
+          const failure = await readBoundedResponse(response, 1_024);
+          if (failure && typeof failure === "object" && !Array.isArray(failure) && Object.keys(failure).length === 1 && (failure as Record<string, unknown>).errorCode === "tool_limit_reached") {
+            throw new GatewayToolError("tool_limit_reached");
+          }
+        } catch (error) {
+          if (error instanceof GatewayToolError) throw error;
+        }
+      }
+      throw new GatewayToolError("tool_unavailable");
+    }
     const raw = await readBoundedResponse(response, CHAT_MAX_TOOL_REPLY_BYTES);
     const replySchema = z.union([
       z.object({ status: z.literal("completed"), output: z.record(z.string(), z.unknown()) }).strict(),

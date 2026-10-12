@@ -17,7 +17,7 @@ export function createGatewayRuntime(env: Environment = process.env) {
   if (!/^https?:$/.test(inferenceUrl.protocol) || inferenceUrl.username || inferenceUrl.password || inferenceUrl.search || inferenceUrl.hash) throw new Error("invalid_chat_inference_url");
   inferenceUrl.pathname = `${inferenceUrl.pathname.replace(/\/$/, "")}/`;
   const modelId = required(env, "CHAT_INFERENCE_MODEL");
-  const maxTokens = Number.parseInt(env.CHAT_INFERENCE_MAX_TOKENS ?? "2048", 10);
+  const maxTokens = Number.parseInt(env.CHAT_INFERENCE_MAX_TOKENS ?? "6144", 10);
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 8192) throw new Error("invalid_chat_inference_max_tokens");
   const fallbackModelIds = parseFallbackModels(env.CHAT_INFERENCE_FALLBACK_MODELS, modelId);
   const attemptTimeoutMs = parseAttemptTimeout(env.CHAT_INFERENCE_ATTEMPT_TIMEOUT_MS);
@@ -55,7 +55,7 @@ function parseFallbackModels(value: string | undefined, primaryModel: string): s
 }
 
 function parseAttemptTimeout(value: string | undefined): number {
-  const timeout = value === undefined || value.trim() === "" ? 45_000 : Number(value);
+  const timeout = value === undefined || value.trim() === "" ? 120_000 : Number(value);
   if (!Number.isSafeInteger(timeout) || timeout < 1_000 || timeout > 120_000) throw new Error("invalid_chat_inference_attempt_timeout_ms");
   return timeout;
 }

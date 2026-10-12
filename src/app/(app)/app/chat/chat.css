@@ -17,3 +17,8 @@
 .chat-body summary { cursor: pointer; font-weight: 600; }
 @media (max-width: 700px) { .health-chat { grid-template-columns: 1fr; } .health-chat aside ul { display: flex; flex-wrap: wrap; gap: 8px; } }
 .chat-partial p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.chat-current-step { color: var(--text-2); }
+.chat-thinking > p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; color: var(--text-2); }
+.chat-tool-timeline { display: grid; gap: 10px; padding-left: 22px; }
+.chat-tool-timeline li { display: grid; gap: 3px; }
+.chat-tool-timeline li > span + span, .chat-tool-timeline small { color: var(--text-2); font-size: 13px; }
