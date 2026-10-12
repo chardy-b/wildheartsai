@@ -7,7 +7,7 @@ import { chatToolCall, fhirAttachment, fhirResource, healthSource, summaryEviden
 import type { Db } from "@/lib/db/types";
 import type { ChatScope } from "./contracts";
 import { invokeRecordedChatTool } from "./gateway";
-import { claimRun, createConversation, listRecordSourcePage, submitQuestionAndRun } from "./store";
+import { claimRun, createConversation, finalizeWorkerEvent, listRecordSourcePage, submitQuestionAndRun } from "./store";
 
 let db: Db;
 let alice: string;
@@ -70,6 +70,10 @@ describe("deterministic health tool acceptance", () => {
     expect(await invokeRecordedChatTool(db, scope, call)).toEqual({ status: "replay", output: JSON.parse(JSON.stringify(result.output)) });
     expect(await db.select().from(userSummary).where(eq(userSummary.id, summary.id))).toHaveLength(1);
     await expect(invokeRecordedChatTool(db, scope, { ...call, providerToolCallId: "memory_foreign", rawInput: { ...rawInput, evidence: [{ kind: "record", targetId: foreign }] } })).rejects.toThrow();
+    await finalizeWorkerEvent(db, scope, { status: "completed", event: { eventId: randomUUID(), sequence: 1, type: "completed", data: {} } });
+    const recallScope = await worker();
+    await invokeRecordedChatTool(db, recallScope, { providerToolCallId: "recall_sources", tool: "find_saved_summaries", rawInput: {} });
+    expect((await listRecordSourcePage(db, recallScope)).sources).toMatchObject([{ id: own[0], viaSummary: true }]);
   });
 
   it("reads only owned encrypted records and refuses caller-selected identity fields", async () => {

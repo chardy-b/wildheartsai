@@ -1254,7 +1254,7 @@ export function noteReadVersion(keys: UserKeys, sealedText: string): string { re
 export type RecordSourceView = {
   id: string; kind: "record" | "note"; title: string; detail: string | null;
   date: string | null; organization: string; reference: string; version: string | null;
-  earlierVersion: boolean; sections: DetailSection[]; noteExcerpt?: string; truncated: boolean;
+  earlierVersion: boolean; sections: DetailSection[]; noteExcerpt?: string; viaSummary?: boolean; truncated: boolean;
 };
 export type RecordSourcePage = { sources: RecordSourceView[]; hasMore: boolean; nextAfter: number | null };
 
@@ -1268,10 +1268,15 @@ export async function listRecordSourcePage(db: Db, scope: ChatScope, input: { af
     await ownedRun(tx, parsed);
     const keys = await keysFor(tx, parsed.userId, new Date());
     const calls = await tx.select({ id: chatToolCall.id, sealedContext: chatToolCall.sealedContext, sealedResult: chatToolCall.sealedResult, toolName: chatToolCall.toolName }).from(chatToolCall)
-      .where(and(eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.conversationId, parsed.conversationId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.status, "completed"), inArray(chatToolCall.toolName, ["find_records", "read_records", "read_stored_note", "calculate_lab_trend"])))
+      .where(and(eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.conversationId, parsed.conversationId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.status, "completed"), inArray(chatToolCall.toolName, ["find_records", "read_records", "read_stored_note", "calculate_lab_trend", "find_saved_summaries"])))
       .orderBy(asc(chatToolCall.callOrder)).limit(CHAT_MAX_TOOL_CALLS);
-    const receipts = new Map<string, ReadReceipt & { noteExcerpt?: string }>();
+    const receipts = new Map<string, ReadReceipt & { noteExcerpt?: string; viaSummary?: boolean }>();
+    const summaryEvidenceIds = new Set<string>();
     for (const call of calls) {
+      if (call.toolName === "find_saved_summaries" && call.sealedResult) {
+        const summaries = decrypted<SummaryView[]>(keys, "chat_tool_call", "result", call.id, call.sealedResult);
+        for (const summary of summaries) for (const evidence of summary.content.evidence) if (pageUuid.test(evidence.id)) summaryEvidenceIds.add(evidence.id);
+      }
       if (!call.sealedContext) continue;
       const context = decrypted<{ readEvidence?: ReadReceipt[] }>(keys, "chat_tool_call", "context", call.id, call.sealedContext);
       const note = call.toolName === "read_stored_note" && call.sealedResult
@@ -1280,6 +1285,16 @@ export async function listRecordSourcePage(db: Db, scope: ChatScope, input: { af
         if (!["record", "note"].includes(receipt.kind) || !pageUuid.test(receipt.targetId) || typeof receipt.version !== "string") continue;
         const key = `${receipt.kind}:${receipt.targetId}`;
         if (!receipts.has(key)) receipts.set(key, { ...receipt, ...(typeof note === "string" ? { noteExcerpt: note } : {}) });
+      }
+    }
+    if (summaryEvidenceIds.size) {
+      const evidence = await tx.select().from(summaryEvidence).where(and(eq(summaryEvidence.userId, parsed.userId), inArray(summaryEvidence.id, [...summaryEvidenceIds])));
+      for (const row of evidence) {
+        if (!row.sealedReference) continue;
+        const receipt = decrypted<ReadReceipt>(keys, "summary_evidence", "reference", row.id, row.sealedReference);
+        if (!["record", "note"].includes(receipt.kind) || !pageUuid.test(receipt.targetId) || typeof receipt.version !== "string") continue;
+        const key = `${receipt.kind}:${receipt.targetId}`;
+        if (!receipts.has(key)) receipts.set(key, { ...receipt, viaSummary: true });
       }
     }
     const ordered = [...receipts.values()];
@@ -1306,7 +1321,7 @@ export async function listRecordSourcePage(db: Db, scope: ChatScope, input: { af
         date: record.effectiveAt?.toISOString() ?? opened.summary.date ?? null,
         organization: organizations.find(source => source.id === record.sourceId)?.name.slice(0, 500) ?? "Saved health record",
         reference: `${record.resourceType}/${record.fhirId}`,
-        version: record.sourceVersionId, earlierVersion: record.supersededAt !== null,
+        version: record.sourceVersionId, earlierVersion: record.supersededAt !== null, ...(receipt.viaSummary ? { viaSummary: true } : {}),
         sections: boundedSections, ...(receipt.noteExcerpt ? { noteExcerpt: receipt.noteExcerpt.slice(0, 2000) } : {}),
         truncated: JSON.stringify(sections) !== JSON.stringify(boundedSections) || (receipt.noteExcerpt?.length ?? 0) > 2000,
       };

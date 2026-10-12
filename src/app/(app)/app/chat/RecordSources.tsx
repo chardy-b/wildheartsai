@@ -8,6 +8,7 @@ export function RecordSource({ source, index, runId }: { source: RecordSourceVie
   return <details className="chat-record-source" id={`source-${runId}-${source.id}`}>
     <summary><span className="chat-source-number">{index + 1}</span><span><strong>{source.title}</strong><small>{source.organization}{source.date ? ` · ${new Date(source.date).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}` : ""}{source.kind === "note" ? " · Note" : ""}</small></span><span className="chat-disclosure" aria-hidden="true">⌄</span></summary>
     <div className="chat-record-source-body">
+      {source.viaSummary && <p className="chat-source-note">Referenced by a saved health summary reviewed for this answer.</p>}
       {source.detail && <p>{source.detail}</p>}
       <dl className="chat-source-reference"><div><dt>FHIR reference</dt><dd>{source.reference}</dd></div>{source.version && <div><dt>Source version</dt><dd>{source.version}</dd></div>}</dl>
       {source.earlierVersion && <p className="chat-source-note">This is the earlier saved version reviewed for this answer. A newer version is now in your records.</p>}
