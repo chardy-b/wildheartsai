@@ -31,7 +31,8 @@ export function createAuth() {
         await sendEmail(verificationEmail({ to: user.email, url }));
       },
     },
-    session: { expiresIn: 7 * DAY, updateAge: DAY },
+    // Remember this browser for 90 days; activity renews the window once a day.
+    session: { expiresIn: 90 * DAY, updateAge: DAY },
     // On in production only (Better Auth's default). Counted in Postgres rather than in each
     // server instance's memory, so the limits hold across Vercel's instances. Keyed per IP and path.
     rateLimit: {
