@@ -53,7 +53,7 @@ describe("remote-only runtime configuration", () => {
       CHAT_INFERENCE_FALLBACK_MODELS: '["qwen3.8-27b-gsq-9070"]',
     });
     expect(configured.fallbackModelIds).toEqual(["qwen3.8-27b-gsq-9070"]);
-    expect(configured.attemptTimeoutMs).toBe(45_000);
+    expect(configured.attemptTimeoutMs).toBe(120_000);
 
     expect(createGatewayRuntime({
       ...base,

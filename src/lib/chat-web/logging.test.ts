@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ChatAuthorityError } from "./protocol";
 import { chatRequestDiagnostic, logChatPoolFailure, logChatReapedRuns } from "./logging";
 
 afterEach(() => vi.restoreAllMocks());
@@ -14,6 +15,12 @@ describe("private chat diagnostics", () => {
     expect(logged).toMatchObject({ event: "chat_request_failed", operation: "conversations/:id/runs", method: "POST", status: 503, code: "ECONNREFUSED", requestId: diagnostic.requestId });
     expect(logged.durationMs).toBeGreaterThanOrEqual(0);
     expect(JSON.stringify(spy.mock.calls)).not.toContain(secret);
+  });
+
+  it("labels lookup exhaustion without recording exception text", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    chatRequestDiagnostic({ surface: "worker", method: "POST", path: ["execution", "tools"] }).failure(429, new ChatAuthorityError("tool_limit_reached", 429));
+    expect(JSON.parse(spy.mock.calls[0][0])).toMatchObject({ status: 429, code: "CHAT_TOOL_CALL_LIMIT_REACHED" });
   });
 
   it("omits arbitrary routes, methods, codes, stacks, and circular causes", () => {

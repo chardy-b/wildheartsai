@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, type RunActivities } from "./chat-client-state";
+import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, currentToolStep, describeRunFailure, formatToolDuration, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, toolTimeline, type ActivityEvent, type RunActivities } from "./chat-client-state";
 
 import { ResearchSources } from "./ResearchSources";
 
@@ -14,7 +14,7 @@ type Message = { id: string; sequence: number; role: string; content: string; cr
 type Run = { id: string; status: string; assistantMessageId?: string | null };
 type Detail = { conversation: Conversation; messages: Message[]; runs: Run[]; hasMore: boolean; nextBefore: number | null };
 type Summary = { id: string; text?: string; content?: { text?: string }; createdAt: string };
-type RunEvent = { sequence: number; kind: string; payload: { tool?: string; status?: string; text?: string }; createdAt: string };
+type RunEvent = ActivityEvent;
 type ConversationPage = { conversations: Conversation[]; hasMore: boolean; nextCursor: string | null };
 type SummaryPage = { summaries: Summary[]; hasMore: boolean; nextCursor: string | null };
 
@@ -196,6 +196,9 @@ export function HealthChat() {
   const runStatus = latestRun?.status;
   const runActivity = runId ? activities.get(runId) : undefined;
   const terminalRefreshPending = terminalRefreshError === runId;
+  const activeRun = detail?.runs.find(isActive);
+  const timeline = runActivity ? toolTimeline(runActivity.events) : [];
+  const activeStep = runActivity ? currentToolStep(runActivity.events) : null;
 
   // The server owns each run. This effect only replays its persisted events and can
   // pause freely when the tab is hidden or this component unmounts.
@@ -368,13 +371,22 @@ export function HealthChat() {
       })}</div>
       {detail?.hasMore && <button type="button" disabled={loadingOlderMessages} onClick={() => { void loadOlderMessages(); }}>{loadingOlderMessages ? "Loading…" : "Load older messages"}</button>}
       {runActivity?.answer && detail?.runs.some(isActive) && !terminalRefreshPending && <article className="chat-partial"><strong>Wild Hearts</strong><p>{runActivity.answer}</p></article>}
-      {detail?.runs.some(isActive) && !terminalRefreshPending && <p role="status">Working on your answer. You can leave and return later.</p>}
-      {latestRun && ["failed", "cancelled", "interrupted"].includes(latestRun.status) && <div><p role="status">This response {latestRun.status === "interrupted" ? "was interrupted" : latestRun.status === "failed" ? "could not be completed" : "was cancelled"}.</p><button type="button" disabled={busy} onClick={() => { const question = detail?.messages.filter(message => message.role === "user").at(-1); if (question) { pending.current = null; setDraft(question.content); } }}>Retry this question</button></div>}
+      {activeRun && !terminalRefreshPending && <p role="status" className="chat-current-step">{activeStep ? `${activeStep}…` : activeRun.status === "queued" ? "Getting your answer ready…" : "Thinking through your question…"} You can leave and return later.</p>}
+      {runActivity && (runActivity.thinking || runActivity.thinkingTruncated) && <ThinkingDisclosure text={runActivity.thinking} truncated={runActivity.thinkingTruncated} />}
+      {latestRun && ["failed", "cancelled", "interrupted"].includes(latestRun.status) && <div><p role="status">{latestRun.status === "failed" ? describeRunFailure(runActivity?.failure) : latestRun.status === "interrupted" ? "This response was interrupted before it finished." : "This response was cancelled."}</p><button type="button" disabled={busy} onClick={() => { const question = detail?.messages.filter(message => message.role === "user").at(-1); if (question) { pending.current = null; setDraft(question.content); } }}>Retry this question</button></div>}
       <form onSubmit={event => { event.preventDefault(); void send(); }}><label htmlFor="chat-message">Ask about your records or health research</label><textarea id="chat-message" value={draft} maxLength={8000} onChange={event => setDraft(event.target.value)} rows={4} disabled={busy} /><button disabled={busy || !draft.trim() || !!detail?.runs.some(isActive)}>{busy ? "Sending…" : "Send"}</button></form>
       {detail?.runs.filter(run => isActive(run) && !(terminalRefreshPending && run.id === runId)).map(run => <button key={run.id} type="button" onClick={() => { void chatRequest(`/runs/${encodeURIComponent(run.id)}`, { method: "DELETE" }).catch(() => setError("Could not cancel the response.")); }}>Stop response</button>)}
       {terminalRefreshError === runId && <p role="alert">This response finished, but the saved conversation could not be refreshed. <button type="button" onClick={() => { setTerminalRefreshError(null); setTerminalRetry(value => value + 1); }}>Retry loading this response</button></p>}
-      <details><summary>Sources and tool activity</summary>{runActivity?.events.length ? <ol>{runActivity.events.map(event => <li key={event.sequence}>{event.payload.tool ?? "Data lookup"}: {event.kind === "tool.started" ? "started" : event.payload.status ?? "completed"}</li>)}</ol> : <p>Record and research lookups will appear here when used.</p>}</details>
+      <details><summary>Sources and tool activity</summary>{timeline.length ? <ol className="chat-tool-timeline">{timeline.map(item => <li key={item.key}><span>{item.label}</span><span>{item.status === "running" ? "In progress" : item.status === "failed" ? "Could not complete" : item.status === "rejected" ? "Could not run" : "Done"}{formatToolDuration(item.durationMs) ? ` · ${formatToolDuration(item.durationMs)}` : ""}</span>{item.failure && <small>{describeRunFailure(item.failure)}</small>}</li>)}</ol> : <p>Record and research lookups will appear here when used.</p>}</details>
       <details onToggle={event => { if (event.currentTarget.open) void loadSummaries(); }}><summary>Saved health summaries</summary><p>Helpful summaries may be saved automatically for future chats. You can remove them here.</p>{summaries.map(summary => <article key={summary.id}><p>{summary.text ?? summary.content?.text ?? "Saved health summary"}</p><button type="button" onClick={() => { void chatRequest(`/summaries/${encodeURIComponent(summary.id)}`, { method: "DELETE" }).then(loadSummaries).catch(() => setError("Could not delete this summary.")); }}>Delete summary</button></article>)}{summariesHasMore && <button type="button" disabled={loadingMoreSummaries} onClick={() => { void loadMoreSummaries(); }}>{loadingMoreSummaries ? "Loading…" : "Load more summaries"}</button>}</details>
     </div>
   </div>;
+}
+
+export function ThinkingDisclosure({ text, truncated }: { text: string; truncated: boolean }) {
+  return <details className="chat-thinking">
+    <summary>Thinking</summary>
+    {text && <p>{text}</p>}
+    {truncated && <p role="note">Only the beginning of the assistant&apos;s working notes is shown.</p>}
+  </details>;
 }

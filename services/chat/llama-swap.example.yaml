@@ -1,0 +1,18 @@
+# Merge this model entry into the inference host's private llama-swap config.
+# Keep its existing API-key protection and private listener. Replace local paths.
+models:
+  qwen3.8-27b-gsq-9070-thinking:
+    aliases: [single-9070-thinking]
+    env:
+      - "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1"
+    cmd: >-
+      /PATH/TO/llama-server
+      --host 127.0.0.1 --port ${PORT}
+      --model /PATH/TO/Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf
+      --device Vulkan2 -ngl 99 -fa on
+      --ctx-size 131072 -ctk q4_0 -ctv q4_0 -b 2048 -ub 1024
+      --spec-type draft-mtp --spec-draft-n-max 3
+      --temp 0.6 --top-p 0.95 --top-k 20
+      --reasoning on --reasoning-budget 1024 --reasoning-format deepseek
+      --parallel 1 --jinja --metrics
+    ttl: 3600

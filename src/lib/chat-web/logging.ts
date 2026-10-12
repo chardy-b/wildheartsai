@@ -40,7 +40,7 @@ export function logChatPoolFailure(pool: "data" | "queue", error: unknown): void
   console.error(JSON.stringify({ timestamp: new Date().toISOString(), level: "error", event: "chat_database_pool_failed", pool, code: diagnosticCode(error) }));
 }
 
-export function logChatRunFailure(code: "runner_start_failed" | "runner_failed" | "worker_timeout" | "coordinator_stopped" | "worker_failed" | "inference_unavailable" | "unspecified", requestId: string): void {
+export function logChatRunFailure(code: "runner_start_failed" | "runner_failed" | "worker_timeout" | "coordinator_stopped" | "worker_failed" | "inference_unavailable" | "tool_limit_reached" | "tool_unavailable" | "context_unavailable" | "event_publish_failed" | "unspecified", requestId: string): void {
   console.error(JSON.stringify({ timestamp: new Date().toISOString(), level: "error", event: "chat_run_failed", code, requestId }));
 }
 

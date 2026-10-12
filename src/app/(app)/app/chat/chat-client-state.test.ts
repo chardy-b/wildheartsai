@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, mergeOlderDetail, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration } from "./chat-client-state";
+import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, currentToolStep, describeRunFailure, formatToolDuration, mergeOlderDetail, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, toolActivityLabel, toolTimeline, type ActivityEvent, type ActivityPayload } from "./chat-client-state";
 
 const event = (sequence: number, kind: string, text?: string) => ({
   sequence, kind, payload: { text }, createdAt: "2026-01-01T00:00:00Z",
+});
+const activityEvent = (sequence: number, kind: string, payload: ActivityPayload = {}): ActivityEvent => ({
+  sequence, kind, payload, createdAt: "2026-01-01T00:00:00Z",
 });
 
 describe("chat client response ordering and run activity", () => {
@@ -110,6 +113,59 @@ describe("chat client response ordering and run activity", () => {
     state = applyRunEvents(state, "run-one", [event(2, "answer.delta", " answer"), event(3, "tool.completed")], 4);
     expect(state.get("run-one")).toMatchObject({ cursor: 3, answer: "old answer", events: [{ sequence: 3, kind: "tool.completed" }] });
     expect(state.get("run-two")?.cursor).toBe(2);
+  });
+
+  it("replays reasoning and joins tool start/completion by call id without exposing the id", () => {
+    const events = [
+      activityEvent(4, "answer.delta", { text: "The result is ready." }),
+      activityEvent(3, "tool.completed", { toolCallId: "private-call-id", tool: "find_records", status: "completed", durationMs: 2300 }),
+      activityEvent(2, "reasoning.delta", { text: "I will check the available records first." }),
+      activityEvent(1, "tool.started", { toolCallId: "private-call-id", tool: "find_records" }),
+    ];
+    const activity = applyRunEvents(new Map(), "run-one", events, 5).get("run-one");
+
+    expect(activity).toMatchObject({ answer: "The result is ready.", thinking: "I will check the available records first.", thinkingTruncated: false });
+    expect(activity?.events.map(item => item.kind)).toEqual(["tool.started", "tool.completed"]);
+    const timeline = toolTimeline(activity?.events ?? []);
+    expect(timeline).toEqual([{ key: "tool-1", label: "Finding relevant records", status: "completed", sequence: 1, durationMs: 2300 }]);
+    expect(JSON.stringify(timeline)).not.toContain("private-call-id");
+    expect(currentToolStep(activity?.events ?? [])).toBeNull();
+    expect(formatToolDuration(2300)).toBe("2.3 seconds");
+  });
+
+  it("caps thinking to 32 KiB of UTF-8 and keeps the truncation note per run", () => {
+    const longThinking = "💛".repeat(9000);
+    const first = applyRunEvents(new Map(), "run-one", [activityEvent(1, "reasoning.delta", { text: longThinking })], 2);
+    const activity = first.get("run-one");
+    expect(new TextEncoder().encode(activity?.thinking).byteLength).toBe(32 * 1024);
+    expect(activity?.thinkingTruncated).toBe(true);
+
+    const second = applyRunEvents(first, "run-two", [activityEvent(1, "reasoning.delta", { text: "Different run." })], 2);
+    expect(second.get("run-two")?.thinking).toBe("Different run.");
+    expect(second.get("run-two")?.thinkingTruncated).toBe(false);
+    expect(second.get("run-one")?.thinking).toBe(activity?.thinking);
+  });
+
+  it("shows a user-facing cause and location for failed runs without exposing raw codes", () => {
+    const state = applyRunEvents(new Map(), "run-one", [activityEvent(1, "run.failed", { status: "failed", code: "tool_limit_reached", stage: "record_lookup" })], 2);
+    expect(state.get("run-one")?.failure).toEqual({ code: "tool_limit_reached", stage: "record_lookup" });
+    expect(describeRunFailure(state.get("run-one")?.failure)).toContain("record lookup limit");
+    expect(describeRunFailure(state.get("run-one")?.failure)).toContain("shorter date range");
+    expect(describeRunFailure(state.get("run-one")?.failure)).not.toContain("tool_limit_reached");
+    expect(describeRunFailure({ code: "worker_timeout", stage: "inference" })).toContain("while generating the answer");
+    expect(describeRunFailure({ code: "toString", stage: "constructor" })).toBe("This response could not be completed.");
+    expect(toolActivityLabel("toString")).toBe("Checking information for your answer");
+  });
+
+  it("keeps legacy tool events readable when older events have no call ids or codes", () => {
+    const state = applyRunEvents(new Map(), "legacy-run", [event(1, "tool.started"), event(2, "tool.completed")], 3);
+    const activity = state.get("legacy-run");
+    expect(activity?.thinking).toBe("");
+    expect(activity?.failure).toBeUndefined();
+    expect(toolTimeline(activity?.events ?? []).map(item => item.label)).toEqual([
+      "Checking information for your answer",
+      "Checking information for your answer",
+    ]);
   });
 
   it("backs off terminal hydration failures and stops for a user retry after its attempt bound", async () => {

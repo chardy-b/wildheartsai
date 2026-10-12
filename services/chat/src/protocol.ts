@@ -61,16 +61,19 @@ export type ResearchResultInput = z.infer<typeof researchResultInputSchema>;
 export type ResearchOutput = z.infer<typeof researchOutputSchema>;
 export type ResearchErrorCode = z.infer<typeof researchErrorCodeSchema>;
 export type ResearchBeginReply = { status: "execute"; operationId: string; snapshotId: string; deadlineAt: string } | { status: "completed"; operationId: string; output: ResearchOutput } | { status: "failed"; operationId: string; errorCode: ResearchErrorCode };
+export const chatFailureCodeSchema = z.enum(["worker_failed", "worker_timeout", "inference_unavailable", "tool_limit_reached", "tool_unavailable", "context_unavailable", "event_publish_failed"]);
+export const chatFailureStageSchema = z.enum(["context", "inference", "record_lookup", "note_lookup", "research", "event_publish", "deadline"]);
 const eventData = {
   lifecycle: z.object({ status: z.enum(["started", "starting", "running"]).optional() }).strict(),
   "answer.delta": z.object({ text: z.string().min(1).max(12_000) }).strict(),
+  "reasoning.delta": z.object({ text: z.string().max(12_000), truncated: z.boolean().optional() }).strict().refine(value => value.text.length > 0 || value.truncated === true),
   "message.completed": z.object({ content: z.string().max(12_000) }).strict(),
   "tool.started": z.object({ toolCallId: toolInputSchema.shape.toolCallId, tool: z.enum(["get_data_coverage", "find_records", "read_records", "read_stored_note", "calculate_lab_trend", "find_saved_summaries", "save_summary", "search_research", "read_research"]) }).strict(),
-  "tool.completed": z.object({ toolCallId: toolInputSchema.shape.toolCallId, status: z.enum(["completed", "rejected", "failed"]) }).strict(),
+  "tool.completed": z.object({ toolCallId: toolInputSchema.shape.toolCallId, status: z.enum(["completed", "rejected", "failed"]), tool: z.enum(["get_data_coverage", "find_records", "read_records", "read_stored_note", "calculate_lab_trend", "find_saved_summaries", "save_summary", "search_research", "read_research"]).optional(), durationMs: z.number().int().min(0).max(CHAT_DEADLINE_MS).optional(), code: chatFailureCodeSchema.optional(), stage: chatFailureStageSchema.optional() }).strict(),
   "summary.suggested": z.object({ summaryId: z.uuid().optional() }).strict(),
   completed: z.object({ answer: z.string().min(1).max(12_000) }).strict(),
   cancelled: z.object({}).strict(),
-  error: z.object({ code: z.enum(["worker_failed", "worker_timeout", "inference_unavailable"]).optional() }).strict(),
+  error: z.object({ code: chatFailureCodeSchema.optional(), stage: chatFailureStageSchema.optional() }).strict(),
 };
 const eventTypes = Object.keys(eventData) as [keyof typeof eventData, ...(keyof typeof eventData)[]];
 export const protocolEventSchema = z.object({ eventId: z.uuid(), sequence: z.number().int().positive(), type: z.enum(eventTypes), data: z.record(z.string(), z.unknown()) }).strict().superRefine((event, ctx) => {
@@ -88,5 +91,5 @@ export type HeartbeatReply = { active: boolean; cancelled: boolean; deadlineAt: 
 export type ToolReply = { status: "completed"; output: Record<string, unknown> };
 export type ContextReply = { messages: ReadonlyArray<{ role: "user" | "assistant"; content: string }>; modelId: string };
 export class ChatAuthorityError extends Error {
-  constructor(readonly code: "unauthorized" | "run_not_active" | "invalid_request" | "quota_exceeded" | "claim_conflict", readonly status: number = 409) { super(code); this.name = "ChatAuthorityError"; }
+  constructor(readonly code: "unauthorized" | "run_not_active" | "invalid_request" | "quota_exceeded" | "tool_limit_reached" | "claim_conflict", readonly status: number = 409) { super(code); this.name = "ChatAuthorityError"; }
 }

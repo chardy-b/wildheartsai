@@ -11,7 +11,7 @@ import { body, empty, guarded, json, ChatRequestError } from "./http";
 
 const id = z.uuid();
 const question = z.object({ message: z.string().trim().min(1).max(12_000) }).strict();
-const eventKinds: Record<string, string> = { lifecycle: "run.started", "answer.delta": "answer.delta", "tool.started": "tool.started", "tool.completed": "tool.completed", "message.completed": "answer.completed", "summary.suggested": "tool.completed", completed: "run.completed", cancelled: "run.cancelled", error: "run.failed" };
+const eventKinds: Record<string, string> = { lifecycle: "run.started", "answer.delta": "answer.delta", "reasoning.delta": "reasoning.delta", "tool.started": "tool.started", "tool.completed": "tool.completed", "message.completed": "answer.completed", "summary.suggested": "tool.completed", completed: "run.completed", cancelled: "run.cancelled", error: "run.failed" };
 let nextReapAt = 0;
 let reaping: Promise<unknown> | undefined;
 
@@ -94,7 +94,7 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
           if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new ChatRequestError(400, "invalid_event_id");
           const after = Number(raw);
           const saved = await store.listEventsAfter(tx, owned, after);
-          const events = saved.map((event) => ({ sequence: event.sequence, kind: eventKinds[event.type] ?? "tool.completed", payload: ["completed", "cancelled", "error"].includes(event.type) ? { status: event.type === "completed" ? "completed" : event.type === "cancelled" ? "cancelled" : "failed" } : event.type === "message.completed" ? {} : event.data, createdAt: event.createdAt }));
+          const events = saved.map((event) => ({ sequence: event.sequence, kind: eventKinds[event.type] ?? "tool.completed", payload: ["completed", "cancelled", "error"].includes(event.type) ? { status: event.type === "completed" ? "completed" : event.type === "cancelled" ? "cancelled" : "failed", ...(event.type === "error" ? event.data : {}) } : event.type === "message.completed" ? {} : event.data, createdAt: event.createdAt }));
           return json({ events, status: run.status, nextSequence: events.at(-1)?.sequence ?? after });
         }
       }

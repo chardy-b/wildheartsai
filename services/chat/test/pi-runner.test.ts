@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { describe, expect, it } from "vitest";
-import { PiHealthRunner } from "../src/pi-runner.js";
+import { describe, expect, it, vi } from "vitest";
+import { classifyWorkerFailure, PiHealthRunner, WorkerExecutionError, WorkerTimeoutError } from "../src/pi-runner.js";
 import { ChatWebApi } from "../src/web-api.js";
 import { GatewayToolClient } from "../src/private-gateway.js";
 import { createPrivateToolGateway } from "../src/private-gateway.js";
@@ -10,9 +10,10 @@ import { createPrivateToolGateway } from "../src/private-gateway.js";
 const executionGrant = `whchat1.execution.${"e".repeat(43)}`;
 const context = { messages: [{ role: "user", content: "What synthetic result is available?" }], modelId: "synthetic-model" };
 
-async function fixture(inferenceResponses: ReadonlyArray<string>, options: { failAnswerDelta?: boolean; cancelled?: boolean; openInference?: boolean; context?: typeof context } = {}) {
+async function fixture(inferenceResponses: ReadonlyArray<string>, options: { failAnswerDelta?: boolean; cancelled?: boolean; openInference?: boolean; openReasoning?: boolean; toolLimitExceeded?: boolean; context?: typeof context } = {}) {
   const eventRows: Array<{ type: string; data: Record<string, unknown>; sequence: number }> = [];
   const toolRequests: Array<Record<string, unknown>> = [];
+  const inferenceBodies: Array<Record<string, unknown>> = [];
   let contextRequestCount = 0;
   let inferenceStarted!: () => void;
   let inferenceAborted!: () => void;
@@ -39,6 +40,10 @@ async function fixture(inferenceResponses: ReadonlyArray<string>, options: { fai
     if (request.url === "/api/chat/worker/v1/execution/tools" && request.method === "POST") {
       let text = ""; for await (const chunk of request) text += chunk;
       toolRequests.push(JSON.parse(text) as Record<string, unknown>);
+      if (options.toolLimitExceeded) {
+        response.writeHead(429, { "content-type": "application/json" });
+        return response.end(JSON.stringify({ error: "tool_limit_reached" }));
+      }
       response.writeHead(200, { "content-type": "application/json" });
       return response.end(JSON.stringify({ status: "completed", output: { available: true } }));
     }
@@ -54,10 +59,17 @@ async function fixture(inferenceResponses: ReadonlyArray<string>, options: { fai
     modelId: "synthetic-model",
     maxTokens: 32,
     fetcher: async (_input, init) => {
+      if (typeof init?.body === "string") inferenceBodies.push(JSON.parse(init.body) as Record<string, unknown>);
       inferenceStarted();
       if (options.openInference) {
         init?.signal?.addEventListener("abort", () => inferenceAborted(), { once: true });
         const firstDelta = 'data: {"id":"synthetic","object":"chat.completion.chunk","created":1,"model":"synthetic-model","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n';
+        const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(firstDelta)); } });
+        return new Response(body, { headers: { "content-type": "text/event-stream" } });
+      }
+      if (options.openReasoning) {
+        init?.signal?.addEventListener("abort", () => inferenceAborted(), { once: true });
+        const firstDelta = 'data: {"id":"synthetic","object":"chat.completion.chunk","created":1,"model":"synthetic-model","choices":[{"index":0,"delta":{"reasoning_content":"buffered synthetic reasoning"},"finish_reason":null}]}\n\n';
         const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(firstDelta)); } });
         return new Response(body, { headers: { "content-type": "text/event-stream" } });
       }
@@ -71,6 +83,7 @@ async function fixture(inferenceResponses: ReadonlyArray<string>, options: { fai
   return {
     eventRows,
     toolRequests,
+    inferenceBodies,
     get contextRequestCount() { return contextRequestCount; },
     inferenceStarted: inferenceStartedPromise,
     inferenceAborted: inferenceAbortedPromise,
@@ -83,7 +96,7 @@ async function fixture(inferenceResponses: ReadonlyArray<string>, options: { fai
   };
 }
 
-function stream(parts: ReadonlyArray<{ content?: string; tool_calls?: unknown[] }>, finishReason: string): string {
+function stream(parts: ReadonlyArray<{ content?: string; reasoning_content?: string; tool_calls?: unknown[] }>, finishReason: string): string {
   return [
     ...parts.map((delta) => `data: ${JSON.stringify({ id: "synthetic", object: "chat.completion.chunk", created: 1, model: "synthetic-model", choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`),
     `data: ${JSON.stringify({ id: "synthetic", object: "chat.completion.chunk", created: 1, model: "synthetic-model", choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })}\n\n`,
@@ -91,6 +104,26 @@ function stream(parts: ReadonlyArray<{ content?: string; tool_calls?: unknown[] 
   ].join("");
 }
 
+describe("Pi worker shutdown classification", () => {
+  it("reports cancelled only when a fresh authority check confirms cancellation", async () => {
+    const shutdown = new AbortController();
+    shutdown.abort();
+    await expect(classifyWorkerFailure(new DOMException("aborted", "AbortError"), shutdown.signal, async () => true)).resolves.toEqual({ type: "cancelled" });
+    await expect(classifyWorkerFailure(new DOMException("aborted", "AbortError"), shutdown.signal, async () => false)).resolves.toEqual({ type: "error", code: "worker_failed", stage: "inference" });
+    await expect(classifyWorkerFailure(new DOMException("aborted", "AbortError"), new AbortController().signal, async () => true)).resolves.toEqual({ type: "cancelled" });
+    await expect(classifyWorkerFailure(new DOMException("aborted", "AbortError"), shutdown.signal, async () => { throw new Error("authority unavailable"); })).resolves.toEqual({ type: "error", code: "worker_failed", stage: "inference" });
+  });
+
+  it("classifies the worker deadline as timeout without treating it as user cancellation", async () => {
+    const checkWebCancellation = vi.fn(async () => true);
+    await expect(classifyWorkerFailure(new WorkerTimeoutError(), new AbortController().signal, checkWebCancellation)).resolves.toEqual({ type: "error", code: "worker_timeout", stage: "deadline" });
+    expect(checkWebCancellation).not.toHaveBeenCalled();
+  });
+
+  it("keeps event publication failures in their fixed terminal category", async () => {
+    await expect(classifyWorkerFailure(new WorkerExecutionError("event_publish_failed", "event_publish"), new AbortController().signal, async () => false)).resolves.toEqual({ type: "error", code: "event_publish_failed", stage: "event_publish" });
+  });
+});
 describe("Pi health runner", () => {
   it("streams a synthetic OpenAI-compatible answer through the private data gateway", async () => {
     const web = stream([{ content: "Synthetic result [evidence-1]" }], "stop");
@@ -103,6 +136,34 @@ describe("Pi health runner", () => {
     } finally {
       await fixtureValue.close();
     }
+  });
+
+  it("keeps long final answers within the event contract and says when text was shortened", async () => {
+    const fixtureValue = await fixture([stream([{ reasoning_content: "思".repeat(20_000) }, { content: "\u0001".repeat(15_000) }], "stop")]);
+    const runner = new PiHealthRunner({ gatewayUrl: fixtureValue.gatewayUrl, capability: executionGrant, modelId: "synthetic-model" }, (event) => fixtureValue.workerGateway.publish(event, new AbortController().signal).then(() => undefined));
+    try {
+      const answer = await runner.run(new AbortController().signal);
+      const visibleAnswer = fixtureValue.eventRows.filter((event) => event.type === "answer.delta").map((event) => String(event.data.text)).join("");
+      expect(answer.length).toBeLessThanOrEqual(12_000);
+      expect(Buffer.byteLength(answer, "utf8")).toBeLessThanOrEqual(12_000);
+      expect(answer).toContain("Response shortened to fit the chat limit.");
+      expect(visibleAnswer).toBe(answer);
+      expect(fixtureValue.eventRows.find((event) => event.type === "message.completed")?.data.content).toBe(answer);
+      const reasoning = fixtureValue.eventRows.filter((event) => event.type === "reasoning.delta");
+      expect(reasoning.reduce((total, event) => total + Buffer.byteLength(String(event.data.text), "utf8"), 0)).toBeLessThanOrEqual(32 * 1024);
+      expect(fixtureValue.eventRows.reduce((total, event) => total + Buffer.byteLength(JSON.stringify(event), "utf8"), 0)).toBeLessThan(128 * 1024);
+    } finally { await fixtureValue.close(); }
+  });
+
+  it("caps timer-flushed answer progress well below the authority event-count limit", async () => {
+    const fixtureValue = await fixture([stream(Array.from({ length: 1_500 }, () => ({ content: "x" })), "stop")]);
+    const runner = new PiHealthRunner({ gatewayUrl: fixtureValue.gatewayUrl, capability: executionGrant, modelId: "synthetic-model", deltaFlushMs: 1 }, (event) => fixtureValue.workerGateway.publish(event, new AbortController().signal).then(() => undefined));
+    try {
+      await expect(runner.run(new AbortController().signal)).resolves.toHaveLength(1_500);
+      expect(fixtureValue.eventRows.filter((event) => event.type === "answer.delta").length).toBeLessThanOrEqual(96);
+      expect(fixtureValue.eventRows.length).toBeLessThan(256);
+      expect(fixtureValue.eventRows.at(-1)?.type).toBe("completed");
+    } finally { await fixtureValue.close(); }
   });
 
   it("relays arbitrary provider call IDs and preserves tool boundary event order", async () => {
@@ -120,6 +181,54 @@ describe("Pi health runner", () => {
       expect(types.indexOf("answer.delta")).toBeLessThan(types.indexOf("tool.started"));
       expect(types.indexOf("tool.started")).toBeLessThan(types.indexOf("tool.completed"));
       expect(types.at(-1)).toBe("completed");
+    } finally { await fixtureValue.close(); }
+  });
+
+  it("streams bounded reasoning separately and marks truncation within the event cap", async () => {
+    const fixtureValue = await fixture([stream([{ reasoning_content: "r".repeat(220_000) }, { content: "Synthetic answer." }], "stop")]);
+    const runner = new PiHealthRunner({ gatewayUrl: fixtureValue.gatewayUrl, capability: executionGrant, modelId: "synthetic-model" }, (event) => fixtureValue.workerGateway.publish(event, new AbortController().signal).then(() => undefined));
+    try {
+      await expect(runner.run(new AbortController().signal)).resolves.toBe("Synthetic answer.");
+      const reasoning = fixtureValue.eventRows.filter((event) => event.type === "reasoning.delta");
+      expect(reasoning.length).toBeLessThanOrEqual(16);
+      expect(reasoning.every((event) => Buffer.byteLength(String(event.data.text), "utf8") <= 32 * 1024)).toBe(true);
+      expect(reasoning.slice(0, -1).every((event) => typeof event.data.text === "string" && event.data.text.length <= 12_000)).toBe(true);
+      expect(reasoning.at(-1)?.data).toEqual({ text: "", truncated: true });
+      expect(reasoning.reduce((total, event) => total + Buffer.byteLength(String(event.data.text), "utf8"), 0)).toBeLessThanOrEqual(32 * 1024);
+      expect(fixtureValue.eventRows.at(-1)?.type).toBe("completed");
+    } finally { await fixtureValue.close(); }
+  });
+
+  it("counts calls synchronously across a tool batch and reserves a no-tool final turn", async () => {
+    const calls = Array.from({ length: 40 }, (_, index) => ({ index, id: `call_synthetic_${index}`, type: "function", function: { name: "get_data_coverage", arguments: "{}" } }));
+    const toolTurn = stream([{ tool_calls: calls }], "tool_calls");
+    const finalTurn = stream([{ content: "Partial summary based on six lookups." }], "stop");
+    const fixtureValue = await fixture([toolTurn, finalTurn]);
+    const runner = new PiHealthRunner({ gatewayUrl: fixtureValue.gatewayUrl, capability: executionGrant, modelId: "synthetic-model" }, (event) => fixtureValue.workerGateway.publish(event, new AbortController().signal).then(() => undefined));
+    try {
+      await expect(runner.run(new AbortController().signal)).resolves.toBe("Partial summary based on six lookups.");
+      expect(fixtureValue.toolRequests).toHaveLength(6);
+      expect(fixtureValue.inferenceBodies).toHaveLength(2);
+      expect(fixtureValue.inferenceBodies[1]?.tools).toEqual([]);
+      const completed = fixtureValue.eventRows.filter((event) => event.type === "tool.completed");
+      expect(completed).toHaveLength(7);
+      expect(completed.filter((event) => event.data.code === "tool_limit_reached")).toHaveLength(1);
+      expect(fixtureValue.eventRows.filter((event) => event.type === "tool.started")).toHaveLength(7);
+      expect(fixtureValue.eventRows.at(-1)?.type).toBe("completed");
+    } finally { await fixtureValue.close(); }
+  });
+
+  it("turns the typed web quota response into a fixed tool failure event", async () => {
+    const toolTurn = stream([{ tool_calls: [{ index: 0, id: "call_synthetic_quota", type: "function", function: { name: "get_data_coverage", arguments: "{}" } }] }], "tool_calls");
+    const finalTurn = stream([{ content: "The record lookup limit was reached, so this is partial." }], "stop");
+    const fixtureValue = await fixture([toolTurn, finalTurn], { toolLimitExceeded: true });
+    const runner = new PiHealthRunner({ gatewayUrl: fixtureValue.gatewayUrl, capability: executionGrant, modelId: "synthetic-model" }, (event) => fixtureValue.workerGateway.publish(event, new AbortController().signal).then(() => undefined));
+    try {
+      await expect(runner.run(new AbortController().signal)).resolves.toContain("partial");
+      expect(fixtureValue.toolRequests).toHaveLength(1);
+      expect(fixtureValue.eventRows.find((event) => event.type === "tool.completed")?.data).toMatchObject({ code: "tool_limit_reached", stage: "record_lookup", status: "failed" });
+      expect(fixtureValue.inferenceBodies).toHaveLength(2);
+      expect(fixtureValue.inferenceBodies[1]?.tools).toEqual([]);
     } finally { await fixtureValue.close(); }
   });
 
@@ -168,9 +277,23 @@ describe("Pi health runner", () => {
     try {
       const run = runner.run(new AbortController().signal);
       await fixtureValue.inferenceStarted;
-      await expect(run).rejects.toThrow();
+      await expect(run).rejects.toMatchObject({ code: "event_publish_failed", stage: "event_publish" });
       await fixtureValue.inferenceAborted;
       expect(fixtureValue.eventRows.some((event) => event.type === "answer.delta")).toBe(false);
+    } finally { await fixtureValue.close(); }
+  });
+
+  it("drops buffered reasoning when the worker is cancelled", async () => {
+    const fixtureValue = await fixture([], { openReasoning: true });
+    const controller = new AbortController();
+    const runner = new PiHealthRunner({ gatewayUrl: fixtureValue.gatewayUrl, capability: executionGrant, modelId: "synthetic-model" }, (event) => fixtureValue.workerGateway.publish(event, new AbortController().signal).then(() => undefined));
+    try {
+      const run = runner.run(controller.signal);
+      await fixtureValue.inferenceStarted;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      controller.abort();
+      await expect(run).rejects.toMatchObject({ name: "AbortError" });
+      expect(fixtureValue.eventRows.some((event) => event.type === "reasoning.delta")).toBe(false);
     } finally { await fixtureValue.close(); }
   });
 

@@ -2,7 +2,7 @@ import "server-only";
 import { webChatRuntime } from "./runtime";
 import { bearer, body, guarded, json, ChatRequestError } from "./http";
 import { logChatRunFailure } from "./logging";
-import { claimInputSchema, toolInputSchema, eventsInputSchema, finalizeInputSchema, researchBeginInputSchema, researchResultInputSchema, RESEARCH_GATEWAY_HEADER } from "./protocol";
+import { claimInputSchema, toolInputSchema, eventsInputSchema, finalizeInputSchema, researchBeginInputSchema, researchResultInputSchema, RESEARCH_GATEWAY_HEADER, chatFailureCodeSchema } from "./protocol";
 
 /** Explicit bearer-only operations; a cookie never authorizes a worker operation. */
 export function workerRequest(request: Request, path: string[]): Promise<Response> {
@@ -25,7 +25,8 @@ export function workerRequest(request: Request, path: string[]): Promise<Respons
         if (result.status === "accepted") for (const event of input.events) {
           if (event.type === "error") {
             const code = event.data.code;
-            logChatRunFailure(code === "worker_failed" || code === "worker_timeout" || code === "inference_unavailable" ? code : "unspecified", requestId);
+            const parsed = chatFailureCodeSchema.safeParse(code);
+            logChatRunFailure(parsed.success ? parsed.data : "unspecified", requestId);
           }
         }
         return json(result, 202);
