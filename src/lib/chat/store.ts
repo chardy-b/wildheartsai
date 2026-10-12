@@ -19,6 +19,8 @@ import type { Db } from "@/lib/db/types";
 import { chatScopeSchema, summaryContentSchema, workerEventSchema, type ChatScope, type SummaryContent, type WorkerEvent } from "./contracts";
 import { chatRecordsKey } from "./key";
 import { CHAT_MAX_TOOL_CALLS } from "./tools";
+import { openStoredRow } from "@/lib/sync/store";
+import { describeResource, type DetailSection } from "@/lib/fhir/describe";
 import { CHAT_MAX_RESEARCH_OUTPUT_BYTES, ChatAuthorityError, researchReadOutputSchema, researchSearchOutputSchema, type ResearchBeginInput, type ResearchOutput, type ResearchResultInput, type ResearchErrorCode } from "../chat-web/protocol";
 
 const DEFAULT_TITLE = "Health chat";
@@ -1248,6 +1250,77 @@ export async function listResearchToolPage(db: Db, scope: ChatScope, input: { af
 }
 
 export function noteReadVersion(keys: UserKeys, sealedText: string): string { return requestDigest(keys, sealedText); }
+
+export type RecordSourceView = {
+  id: string; kind: "record" | "note"; title: string; detail: string | null;
+  date: string | null; organization: string; reference: string; version: string | null;
+  earlierVersion: boolean; sections: DetailSection[]; noteExcerpt?: string; truncated: boolean;
+};
+export type RecordSourcePage = { sources: RecordSourceView[]; hasMore: boolean; nextAfter: number | null };
+
+/** References come from successful server-side read receipts, never model text or tool arguments. */
+export async function listRecordSourcePage(db: Db, scope: ChatScope, input: { after?: number; limit?: number } = {}): Promise<RecordSourcePage> {
+  const parsed = requireRunScope(scope);
+  const after = input.after ?? 0;
+  const limit = pageLimit(input.limit, 8, 16);
+  if (!Number.isSafeInteger(after) || after < 0 || after > CHAT_MAX_TOOL_CALLS * 100) throw new ChatPageCursorError();
+  return asUser(db, parsed.userId, async tx => {
+    await ownedRun(tx, parsed);
+    const keys = await keysFor(tx, parsed.userId, new Date());
+    const calls = await tx.select({ id: chatToolCall.id, sealedContext: chatToolCall.sealedContext, sealedResult: chatToolCall.sealedResult, toolName: chatToolCall.toolName }).from(chatToolCall)
+      .where(and(eq(chatToolCall.userId, parsed.userId), eq(chatToolCall.conversationId, parsed.conversationId), eq(chatToolCall.runId, parsed.runId), eq(chatToolCall.status, "completed"), inArray(chatToolCall.toolName, ["find_records", "read_records", "read_stored_note", "calculate_lab_trend"])))
+      .orderBy(asc(chatToolCall.callOrder)).limit(CHAT_MAX_TOOL_CALLS);
+    const receipts = new Map<string, ReadReceipt & { noteExcerpt?: string }>();
+    for (const call of calls) {
+      if (!call.sealedContext) continue;
+      const context = decrypted<{ readEvidence?: ReadReceipt[] }>(keys, "chat_tool_call", "context", call.id, call.sealedContext);
+      const note = call.toolName === "read_stored_note" && call.sealedResult
+        ? decrypted<{ text?: string }>(keys, "chat_tool_call", "result", call.id, call.sealedResult).text : undefined;
+      for (const receipt of context.readEvidence ?? []) {
+        if (!["record", "note"].includes(receipt.kind) || !pageUuid.test(receipt.targetId) || typeof receipt.version !== "string") continue;
+        const key = `${receipt.kind}:${receipt.targetId}`;
+        if (!receipts.has(key)) receipts.set(key, { ...receipt, ...(typeof note === "string" ? { noteExcerpt: note } : {}) });
+      }
+    }
+    const ordered = [...receipts.values()];
+    const selected = ordered.slice(after, after + limit);
+    const noteIds = selected.filter(receipt => receipt.kind === "note").map(receipt => receipt.targetId);
+    const notes = noteIds.length ? await tx.select().from(fhirAttachment).where(and(eq(fhirAttachment.userId, parsed.userId), inArray(fhirAttachment.id, noteIds))) : [];
+    const recordIds = [...selected.filter(receipt => receipt.kind === "record").map(receipt => receipt.targetId), ...notes.map(note => note.resourceId)];
+    const records = recordIds.length ? await tx.select().from(fhirResource).where(and(eq(fhirResource.userId, parsed.userId), inArray(fhirResource.id, recordIds), isNull(fhirResource.removedAt))) : [];
+    const sourceIds = [...new Set(records.map(record => record.sourceId))];
+    const organizations = sourceIds.length ? await tx.select({ id: healthSource.id, name: healthSource.organizationName }).from(healthSource).where(and(eq(healthSource.userId, parsed.userId), inArray(healthSource.id, sourceIds))) : [];
+    const sources: RecordSourceView[] = [];
+    for (const receipt of selected) {
+      const note = receipt.kind === "note" ? notes.find(note => note.id === receipt.targetId) : undefined;
+      const record = records.find(record => record.id === (receipt.kind === "record" ? receipt.targetId : note?.resourceId));
+      // Do not substitute a newer version or reveal references to foreign/deleted data.
+      if (!record || (receipt.kind === "record" ? record.contentHmac !== receipt.version : !note?.sealedText || noteReadVersion(keys, note.sealedText) !== receipt.version)) continue;
+      const opened = openStoredRow(keys, record);
+      const sections = describeResource(opened.resource);
+      const boundedSections = sections.slice(0, 20).map(section => ({ label: section.label.slice(0, 200), values: section.values.slice(0, 10).map(value => value.slice(0, 500)) }));
+      // No raw FHIR bundle, patient identifiers, attachment addresses, or tool arguments.
+      const candidate: RecordSourceView = {
+        id: receipt.targetId, kind: receipt.kind, title: opened.summary.title.slice(0, 500),
+        detail: opened.summary.detail?.slice(0, 1000) ?? null,
+        date: record.effectiveAt?.toISOString() ?? opened.summary.date ?? null,
+        organization: organizations.find(source => source.id === record.sourceId)?.name.slice(0, 500) ?? "Saved health record",
+        reference: `${record.resourceType}/${record.fhirId}`,
+        version: record.sourceVersionId, earlierVersion: record.supersededAt !== null,
+        sections: boundedSections, ...(receipt.noteExcerpt ? { noteExcerpt: receipt.noteExcerpt.slice(0, 2000) } : {}),
+        truncated: JSON.stringify(sections) !== JSON.stringify(boundedSections) || (receipt.noteExcerpt?.length ?? 0) > 2000,
+      };
+      if (encodedBytes({ sources: [...sources, candidate] }) > CHAT_BROWSER_PAGE_BYTES) {
+        if (!sources.length) throw new ChatPageSizeError();
+        return { sources, hasMore: true, nextAfter: after + selected.indexOf(receipt) };
+      }
+      sources.push(candidate);
+    }
+    const next = after + selected.length;
+    const hasMore = next < ordered.length;
+    return { sources, hasMore, nextAfter: hasMore ? next : null };
+  });
+}
 
 // Browser-only pagination. Worker/legacy helper contracts remain unchanged.
 export const CHAT_BROWSER_PAGE_BYTES = 96 * 1024;

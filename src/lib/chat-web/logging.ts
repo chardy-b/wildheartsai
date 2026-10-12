@@ -14,7 +14,7 @@ function operation(context?: ChatRequestContext): string {
   if (path.length === 1 && ["conversations", "summaries"].includes(path[0])) return path[0];
   if (path.length === 2 && ["conversations", "summaries", "runs"].includes(path[0])) return `${path[0]}/:id`;
   if (path.length === 3 && path[0] === "conversations" && path[2] === "runs") return "conversations/:id/runs";
-  if (path.length === 3 && path[0] === "runs" && ["events", "research-sources"].includes(path[2])) return `runs/:id/${path[2]}`;
+  if (path.length === 3 && path[0] === "runs" && ["events", "research-sources", "record-sources"].includes(path[2])) return `runs/:id/${path[2]}`;
   return "unknown";
 }
 
