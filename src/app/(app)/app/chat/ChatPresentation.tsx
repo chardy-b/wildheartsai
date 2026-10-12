@@ -44,20 +44,28 @@ export function ToolActivity({ events, active }: { events: ActivityEvent[]; acti
 }
 
 // Render a small, safe subset of Markdown as React text. Never interpret HTML or URLs.
-function inline(text: string) {
+type RecordReference = { id: string; label: string; target: string };
+function referencedText(text: string, references: RecordReference[], onReference?: () => void) {
+  return text.split(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi).map((part, index) => {
+    const reference = references.find(reference => reference.id === part);
+    return reference ? <a key={index} className="chat-inline-source" href={`#${reference.target}`} onClick={() => { onReference?.(); requestAnimationFrame(() => { const element = document.getElementById(reference.target); if (element instanceof HTMLDetailsElement) { element.open = true; element.scrollIntoView({ block: "nearest" }); } }); }}>{reference.label}</a> : part;
+  });
+}
+function inline(text: string, references: RecordReference[] = [], onReference?: () => void) {
   return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) => part.startsWith("**")
-    ? <strong key={index}>{part.slice(2, -2)}</strong>
-    : part.startsWith("`") ? <code key={index}>{part.slice(1, -1)}</code> : <Fragment key={index}>{part}</Fragment>);
+    ? <strong key={index}>{referencedText(part.slice(2, -2), references, onReference)}</strong>
+    : part.startsWith("`") ? <code key={index}>{referencedText(part.slice(1, -1), references, onReference)}</code> : <Fragment key={index}>{referencedText(part, references, onReference)}</Fragment>);
 }
 
-export function ChatAnswer({ text }: { text: string }) {
+export function ChatAnswer({ text, references = [], onReference }: { text: string; references?: RecordReference[]; onReference?: () => void }) {
+  const format = (text: string) => inline(text, references, onReference);
   return <div className="chat-answer">{text.split(/\n\s*\n/).map((block, index) => {
     const lines = block.split("\n");
-    if (lines.every(line => /^\s*[-*] /.test(line))) return <ul key={index}>{lines.map((line, i) => <li key={i}>{inline(line.replace(/^\s*[-*] /, ""))}</li>)}</ul>;
-    if (lines.every(line => /^\s*\d+[.)] /.test(line))) return <ol key={index}>{lines.map((line, i) => <li key={i}>{inline(line.replace(/^\s*\d+[.)] /, ""))}</li>)}</ol>;
+    if (lines.every(line => /^\s*[-*] /.test(line))) return <ul key={index}>{lines.map((line, i) => <li key={i}>{format(line.replace(/^\s*[-*] /, ""))}</li>)}</ul>;
+    if (lines.every(line => /^\s*\d+[.)] /.test(line))) return <ol key={index}>{lines.map((line, i) => <li key={i}>{format(line.replace(/^\s*\d+[.)] /, ""))}</li>)}</ol>;
     return <div key={index}>{lines.map((line, i) => /^#{1,6} /.test(line)
-      ? <h3 key={i}>{inline(line.replace(/^#{1,6} /, ""))}</h3>
-      : <Fragment key={i}>{i > 0 && <br />}{inline(line)}</Fragment>)}</div>;
+      ? <h3 key={i}>{format(line.replace(/^#{1,6} /, ""))}</h3>
+      : <Fragment key={i}>{i > 0 && <br />}{format(line)}</Fragment>)}</div>;
   })}</div>;
 }
 

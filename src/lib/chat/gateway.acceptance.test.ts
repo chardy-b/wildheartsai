@@ -7,7 +7,7 @@ import { chatToolCall, fhirAttachment, fhirResource, healthSource, summaryEviden
 import type { Db } from "@/lib/db/types";
 import type { ChatScope } from "./contracts";
 import { invokeRecordedChatTool } from "./gateway";
-import { claimRun, createConversation, submitQuestionAndRun } from "./store";
+import { claimRun, createConversation, finalizeWorkerEvent, listRecordSourcePage, submitQuestionAndRun } from "./store";
 
 let db: Db;
 let alice: string;
@@ -70,6 +70,10 @@ describe("deterministic health tool acceptance", () => {
     expect(await invokeRecordedChatTool(db, scope, call)).toEqual({ status: "replay", output: JSON.parse(JSON.stringify(result.output)) });
     expect(await db.select().from(userSummary).where(eq(userSummary.id, summary.id))).toHaveLength(1);
     await expect(invokeRecordedChatTool(db, scope, { ...call, providerToolCallId: "memory_foreign", rawInput: { ...rawInput, evidence: [{ kind: "record", targetId: foreign }] } })).rejects.toThrow();
+    await finalizeWorkerEvent(db, scope, { status: "completed", event: { eventId: randomUUID(), sequence: 1, type: "completed", data: {} } });
+    const recallScope = await worker();
+    await invokeRecordedChatTool(db, recallScope, { providerToolCallId: "recall_sources", tool: "find_saved_summaries", rawInput: {} });
+    expect((await listRecordSourcePage(db, recallScope)).sources).toMatchObject([{ id: own[0], viaSummary: true }]);
   });
 
   it("reads only owned encrypted records and refuses caller-selected identity fields", async () => {
@@ -108,5 +112,32 @@ describe("deterministic health tool acceptance", () => {
     for (let index = 2; index <= 6; index++) await invokeRecordedChatTool(db, scope, { providerToolCallId: `coverage_${index}`, tool: "get_data_coverage", rawInput: {} });
     await expect(invokeRecordedChatTool(db, scope, { providerToolCallId: "coverage_7", tool: "get_data_coverage", rawInput: {} })).rejects.toThrow();
     expect(await db.select().from(chatToolCall).where(eq(chatToolCall.runId, scope.runId!))).toHaveLength(6);
+  });
+
+  it("shows only consulted, owned record versions and notes, with bounded pagination", async () => {
+    const scope = await worker();
+    expect(await listRecordSourcePage(db, scope)).toEqual({ sources: [], hasMore: false, nextAfter: null });
+    await invokeRecordedChatTool(db, scope, { providerToolCallId: "sources_find", tool: "find_records", rawInput: { query: "potassium", limit: 2 } });
+    await invokeRecordedChatTool(db, scope, { providerToolCallId: "sources_read", tool: "read_records", rawInput: { recordIds: [own[0], foreign] } });
+    await invokeRecordedChatTool(db, scope, { providerToolCallId: "sources_note", tool: "read_stored_note", rawInput: { attachmentId: note } });
+    const first = await listRecordSourcePage(db, scope, { limit: 1 });
+    expect(first).toMatchObject({ sources: [{ id: own[0], title: "Synthetic potassium", reference: `Observation/${own[0]}`, organization: "Synthetic organization" }], hasMore: true, nextAfter: 1 });
+    const remaining = await listRecordSourcePage(db, scope, { after: first.nextAfter!, limit: 2 });
+    expect(remaining.sources.map(source => source.id)).toEqual([own[1], note]);
+    expect(remaining.sources[1]).toMatchObject({ kind: "note", truncated: true });
+    expect(remaining.sources[1].noteExcerpt).toHaveLength(2000);
+    expect(remaining.hasMore).toBe(false);
+    const serialized = JSON.stringify({ first, remaining });
+    expect(serialized).not.toContain(foreign);
+    expect(serialized).not.toContain("contentHmac");
+    expect(serialized).not.toContain("sealedResource");
+    expect(serialized).not.toContain("https://synthetic.example/note");
+    await expect(listRecordSourcePage(db, { ...scope, userId: bob })).rejects.toThrow();
+    await expect(listRecordSourcePage(db, scope, { after: -1 })).rejects.toThrow();
+    await db.update(fhirResource).set({ supersededAt: new Date() }).where(eq(fhirResource.id, own[0]));
+    expect((await listRecordSourcePage(db, scope)).sources[0].earlierVersion).toBe(true);
+    await db.update(fhirResource).set({ supersededAt: null, removedAt: new Date() }).where(eq(fhirResource.id, own[0]));
+    expect((await listRecordSourcePage(db, scope)).sources.map(source => source.id)).toEqual([own[1]]);
+    await db.update(fhirResource).set({ removedAt: null }).where(eq(fhirResource.id, own[0]));
   });
 });
