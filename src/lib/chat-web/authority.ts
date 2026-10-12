@@ -1,9 +1,9 @@
 import "server-only";
 import { logChatReapedRuns } from "./logging";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { canonicalJson } from "@/lib/crypto/user-keys";
-import { chatCoordinator, chatRun } from "@/lib/db/schema";
+import { chatCoordinator, chatModelWarmup, chatRun } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { asUser } from "@/lib/db/rls";
 import type { ChatScope } from "@/lib/chat/contracts";
@@ -12,7 +12,7 @@ import * as store from "@/lib/chat/store";
 import {
   CHAT_CLAIMS_PER_MINUTE, CHAT_DEADLINE_MS, CHAT_LEASE_MS, CHAT_MAX_CONTEXT_BYTES,
   CHAT_MAX_EVENT_BYTES, CHAT_MAX_EVENTS, CHAT_MAX_REQUEST_BYTES, CHAT_MAX_TOOL_OUTPUT_BYTES,
-  ChatAuthorityError, claimInputSchema, eventsInputSchema, finalizeInputSchema, toolInputSchema, researchBeginInputSchema, researchResultInputSchema,
+  ChatAuthorityError, claimInputSchema, modelWarmupClaimInputSchema, modelWarmupCompleteInputSchema, eventsInputSchema, finalizeInputSchema, toolInputSchema, researchBeginInputSchema, researchResultInputSchema,
   type ClaimInput, type ClaimReply, type ContextReply, type EventsInput, type FinalizeInput,
   type HeartbeatReply, type OperationAck, type ToolInput, type ToolReply, type ResearchBeginInput, type ResearchBeginReply, type ResearchResultInput,
 } from "./protocol";
@@ -30,7 +30,16 @@ const locator = {
 type LocatedRun = { [K in keyof typeof locator]: typeof chatRun.$inferSelect[K] };
 type Run = typeof chatRun.$inferSelect;
 type GrantKind = "execution" | "control";
-export type AuthorityOptions = { dataDb: Db; queueDb: Db; grantKey: Uint8Array; modelId: string; researchGatewayTokenHash?: string; now?: () => Date };
+export type AuthorityOptions = { dataDb: Db; queueDb: Db; operationalDb?: Db; grantKey: Uint8Array; modelId: string; researchGatewayTokenHash?: string; now?: () => Date };
+const WARMUP_ROW_ID = "primary";
+const WARMUP_LOCK_ID = 7_310_045_612_280_422;
+const WARMUP_LEASE_MS = 150_000;
+const WARMUP_READY_MS = 5 * 60_000;
+const WARMUP_QUEUE_MAX_MS = 90_000;
+const WARMUP_RETRY_MS = 60_000;
+const warmupGrantPattern = /^whchat1\.warmup\.[A-Za-z0-9_-]{43}$/;
+export type ModelWarmupStatus = "idle" | "queued" | "running" | "ready" | "failed";
+export type ModelWarmupLease = Readonly<{ grant: string; leaseId: string; generation: number; expiresAt: string; requestId: string; workerId: string }>;
 export function credentialHash(token: string): string { return createHash("sha256").update(token).digest("hex"); }
 function equal(a: string, b: string): boolean { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); }
 function parse<T>(schema: { safeParse(value: unknown): { success: boolean; data?: T } }, value: unknown): T {
@@ -75,6 +84,7 @@ export class ChatAuthority {
     if (!bootstrapToken || bootstrapToken.length > 256) throw new ChatAuthorityError("unauthorized", 401);
     return this.options.queueDb.transaction(async (rawTx) => {
       const tx = rawTx as unknown as Db;
+      await tx.execute(sql`select pg_advisory_xact_lock(${WARMUP_LOCK_ID})`);
       const [coordinator] = await tx.select().from(chatCoordinator).where(eq(chatCoordinator.credentialHash, credentialHash(bootstrapToken))).limit(1).for("update");
       if (!coordinator || coordinator.disabledAt) throw new ChatAuthorityError("unauthorized", 401);
       const [previous] = await tx.select(locator).from(chatRun).where(and(eq(chatRun.coordinatorId, coordinator.id), eq(chatRun.claimRequestId, input.requestId))).limit(1);
@@ -85,6 +95,7 @@ export class ChatAuthority {
         if (!locked || locked.status !== "running" || locked.grantsRevokedAt || locked.cancellationRequestedAt) throw new ChatAuthorityError("claim_conflict");
         return this.reply(locked);
       }
+      if (await this.modelWarmupBlocksClaims()) return null;
       const reset = now.getTime() - coordinator.claimWindowAt.getTime() >= 60_000;
       const count = reset ? 0 : coordinator.claimCount;
       if (count >= CHAT_CLAIMS_PER_MINUTE) throw new ChatAuthorityError("quota_exceeded", 429);
@@ -106,6 +117,152 @@ export class ChatAuthority {
       }
       return null;
     });
+  }
+
+  /** Coalesces browser requests into one fixed, global synthetic model warm-up. */
+  async requestModelWarmup(): Promise<ModelWarmupStatus> {
+    const db = this.warmupDb();
+    const now = this.now();
+    const modelFingerprint = this.modelFingerprint();
+    return this.options.queueDb.transaction(async rawQueueTx => {
+      const queueTx = rawQueueTx as unknown as Db;
+      await queueTx.execute(sql`select pg_advisory_xact_lock(${WARMUP_LOCK_ID})`);
+      return db.transaction(async rawTx => {
+      const tx = rawTx as unknown as Db;
+      let [row] = await tx.select().from(chatModelWarmup).where(eq(chatModelWarmup.id, WARMUP_ROW_ID)).limit(1).for("update");
+      if (!row) {
+        [row] = await tx.insert(chatModelWarmup).values({ id: WARMUP_ROW_ID, modelFingerprint, status: "queued", generation: 1, updatedAt: now }).returning();
+        return "queued";
+      }
+      if (row.modelFingerprint !== modelFingerprint) {
+        [row] = await tx.update(chatModelWarmup).set({ status: "queued", generation: row.generation + 1, modelFingerprint, leaseId: null, claimRequestId: null, leaseOwner: null, grantHash: null, leaseExpiresAt: null, readyUntil: null, retryAfterAt: null, updatedAt: now }).where(eq(chatModelWarmup.id, WARMUP_ROW_ID)).returning();
+        return "queued";
+      }
+      if (row.status === "ready" && row.readyUntil && row.readyUntil > now) return "ready";
+      if (row.status === "running" && row.leaseExpiresAt && row.leaseExpiresAt > now) return "running";
+      if (row.status === "queued" && now.getTime() - row.updatedAt.getTime() < WARMUP_QUEUE_MAX_MS) return "queued";
+      if (row.status === "running" || row.status === "queued") {
+        const failedAt = row.status === "running" ? (row.leaseExpiresAt ?? row.updatedAt) : new Date(row.updatedAt.getTime() + WARMUP_QUEUE_MAX_MS);
+        const retryAfterAt = new Date(failedAt.getTime() + WARMUP_RETRY_MS);
+        if (retryAfterAt > now) {
+          await tx.update(chatModelWarmup).set({ status: "failed", grantHash: null, leaseExpiresAt: null, readyUntil: null, retryAfterAt, updatedAt: now }).where(eq(chatModelWarmup.id, WARMUP_ROW_ID));
+          return "failed";
+        }
+      }
+      if (row.status === "failed" && row.retryAfterAt && row.retryAfterAt > now) return "failed";
+      [row] = await tx.update(chatModelWarmup).set({ status: "queued", generation: row.generation + 1, modelFingerprint, leaseId: null, claimRequestId: null, leaseOwner: null, grantHash: null, leaseExpiresAt: null, readyUntil: null, retryAfterAt: null, updatedAt: now }).where(eq(chatModelWarmup.id, WARMUP_ROW_ID)).returning();
+      return "queued";
+      });
+    });
+  }
+
+  /** Returns only fixed lifecycle state. It never exposes the model or a grant. */
+  async modelWarmupStatus(): Promise<Readonly<{ status: ModelWarmupStatus; retryAt: string | null; readyUntil: string | null }>> {
+    const db = this.warmupDb();
+    const [row] = await db.select().from(chatModelWarmup).where(eq(chatModelWarmup.id, WARMUP_ROW_ID)).limit(1);
+    if (!row || row.modelFingerprint !== this.modelFingerprint()) return { status: "idle", retryAt: null, readyUntil: null };
+    const now = this.now();
+    if (row.status === "ready" && row.readyUntil && row.readyUntil <= now) return { status: "idle", retryAt: null, readyUntil: null };
+    if (row.status === "running" && (!row.leaseExpiresAt || row.leaseExpiresAt <= now)) return { status: "failed", retryAt: new Date((row.leaseExpiresAt?.getTime() ?? row.updatedAt.getTime()) + WARMUP_RETRY_MS).toISOString(), readyUntil: null };
+    if (row.status === "queued" && now.getTime() - row.updatedAt.getTime() >= WARMUP_QUEUE_MAX_MS) return { status: "failed", retryAt: new Date(row.updatedAt.getTime() + WARMUP_QUEUE_MAX_MS + WARMUP_RETRY_MS).toISOString(), readyUntil: null };
+    return { status: row.status, retryAt: row.retryAfterAt?.toISOString() ?? null, readyUntil: row.status === "ready" ? row.readyUntil?.toISOString() ?? null : null };
+  }
+
+  /** Coordinator-only claim; no lease is created while any chat run is already running. */
+  async claimModelWarmup(bootstrapToken: string, raw: unknown): Promise<ModelWarmupLease | null> {
+    const input = parse<ReturnType<typeof modelWarmupClaimInputSchema.parse>>(modelWarmupClaimInputSchema, raw);
+    const db = this.warmupDb();
+    const now = this.now();
+    const modelFingerprint = this.modelFingerprint();
+    if (!bootstrapToken || bootstrapToken.length > 256) throw new ChatAuthorityError("unauthorized", 401);
+    return this.options.queueDb.transaction(async rawQueueTx => {
+      const queueTx = rawQueueTx as unknown as Db;
+      await queueTx.execute(sql`select pg_advisory_xact_lock(${WARMUP_LOCK_ID})`);
+      const [coordinator] = await queueTx.select().from(chatCoordinator).where(eq(chatCoordinator.credentialHash, credentialHash(bootstrapToken))).limit(1).for("update");
+      if (!coordinator || coordinator.disabledAt) throw new ChatAuthorityError("unauthorized", 401);
+      const [activeRun] = await queueTx.select({ id: chatRun.id }).from(chatRun).where(and(eq(chatRun.status, "running"), gt(chatRun.leaseExpiresAt, now), gt(chatRun.deadlineAt, now))).limit(1);
+      return db.transaction(async rawTx => {
+        const tx = rawTx as unknown as Db;
+        const [row] = await tx.select().from(chatModelWarmup).where(eq(chatModelWarmup.id, WARMUP_ROW_ID)).limit(1).for("update");
+        if (!row || row.modelFingerprint !== modelFingerprint) return null;
+        if (row.status === "running" && row.leaseExpiresAt && row.leaseExpiresAt > now) {
+          if (row.coordinatorId !== coordinator.id || row.claimRequestId !== input.requestId || row.leaseOwner !== input.workerId || !row.leaseId) return null;
+          return this.modelWarmupLease(row);
+        }
+        if (row.status === "ready" && row.readyUntil && row.readyUntil > now) return null;
+        if (row.status !== "queued" || now.getTime() - row.updatedAt.getTime() >= WARMUP_QUEUE_MAX_MS) return null;
+        if (activeRun) {
+          await tx.update(chatModelWarmup).set({ status: "failed", retryAfterAt: new Date(now.getTime() + WARMUP_RETRY_MS), updatedAt: now }).where(eq(chatModelWarmup.id, WARMUP_ROW_ID));
+          return null;
+        }
+        const leaseId = randomUUID();
+        const expiresAt = new Date(now.getTime() + WARMUP_LEASE_MS);
+        const [leased] = await tx.update(chatModelWarmup).set({ status: "running", coordinatorId: coordinator.id, leaseId, claimRequestId: input.requestId, leaseOwner: input.workerId, leaseExpiresAt: expiresAt, grantHash: null, updatedAt: now }).where(eq(chatModelWarmup.id, WARMUP_ROW_ID)).returning();
+        const grant = this.modelWarmupGrant(leased);
+        await tx.update(chatModelWarmup).set({ grantHash: credentialHash(grant) }).where(eq(chatModelWarmup.id, WARMUP_ROW_ID));
+        return { grant, leaseId, generation: leased.generation, expiresAt: expiresAt.toISOString(), requestId: input.requestId, workerId: input.workerId };
+      });
+    });
+  }
+
+  /** Private gateway check: only the current fixed-model lease can authorize inference. */
+  async verifyModelWarmup(grant: string): Promise<Readonly<{ active: true; expiresAt: string; modelFingerprint: string }>> {
+    if (!warmupGrantPattern.test(grant)) throw new ChatAuthorityError("unauthorized", 401);
+    const db = this.warmupDb();
+    const [row] = await db.select().from(chatModelWarmup).where(eq(chatModelWarmup.grantHash, credentialHash(grant))).limit(1);
+    const [coordinator] = row?.coordinatorId ? await this.options.queueDb.select().from(chatCoordinator).where(eq(chatCoordinator.id, row.coordinatorId)).limit(1) : [];
+    if (!row || !coordinator || coordinator.disabledAt || row.status !== "running" || !row.leaseExpiresAt || row.leaseExpiresAt <= this.now() || row.modelFingerprint !== this.modelFingerprint() || !equal(credentialHash(this.modelWarmupGrant(row)), credentialHash(grant))) throw new ChatAuthorityError("run_not_active");
+    return { active: true, expiresAt: row.leaseExpiresAt!.toISOString(), modelFingerprint: row.modelFingerprint };
+  }
+
+  /** Coordinator reports a bounded outcome; stale generations/leases cannot alter current state. */
+  async completeModelWarmup(bootstrapToken: string, raw: unknown): Promise<OperationAck> {
+    const input = parse<ReturnType<typeof modelWarmupCompleteInputSchema.parse>>(modelWarmupCompleteInputSchema, raw);
+    const db = this.warmupDb();
+    const now = this.now();
+    if (!bootstrapToken || bootstrapToken.length > 256) throw new ChatAuthorityError("unauthorized", 401);
+    return this.options.queueDb.transaction(async rawQueueTx => {
+      const queueTx = rawQueueTx as unknown as Db;
+      await queueTx.execute(sql`select pg_advisory_xact_lock(${WARMUP_LOCK_ID})`);
+      const [coordinator] = await queueTx.select().from(chatCoordinator).where(eq(chatCoordinator.credentialHash, credentialHash(bootstrapToken))).limit(1).for("update");
+      if (!coordinator || coordinator.disabledAt) throw new ChatAuthorityError("unauthorized", 401);
+      return db.transaction(async rawTx => {
+        const tx = rawTx as unknown as Db;
+        const [row] = await tx.select().from(chatModelWarmup).where(eq(chatModelWarmup.id, WARMUP_ROW_ID)).limit(1).for("update");
+        if (!row || row.leaseId !== input.leaseId || row.generation !== input.generation || row.claimRequestId !== input.requestId || row.leaseOwner !== input.workerId) throw new ChatAuthorityError("run_not_active");
+        if (row.coordinatorId !== coordinator.id) throw new ChatAuthorityError("run_not_active");
+        if (row.modelFingerprint !== this.modelFingerprint()) throw new ChatAuthorityError("run_not_active");
+        if (row.status === input.status) return { status: "duplicate" };
+        if (row.status !== "running" || !row.leaseExpiresAt || row.leaseExpiresAt <= now) throw new ChatAuthorityError("run_not_active");
+        await tx.update(chatModelWarmup).set({ status: input.status, grantHash: null, leaseExpiresAt: null, readyUntil: input.status === "ready" ? new Date(now.getTime() + WARMUP_READY_MS) : null, retryAfterAt: input.status === "failed" ? new Date(now.getTime() + WARMUP_RETRY_MS) : null, updatedAt: now }).where(eq(chatModelWarmup.id, WARMUP_ROW_ID));
+        return { status: "accepted" };
+      });
+    });
+  }
+
+  private async modelWarmupBlocksClaims(): Promise<boolean> {
+    if (!this.options.operationalDb) return false;
+    const [row] = await this.options.operationalDb.select().from(chatModelWarmup).where(eq(chatModelWarmup.id, WARMUP_ROW_ID)).limit(1);
+    return !!row && row.modelFingerprint === this.modelFingerprint() && row.status === "running" && !!row.leaseExpiresAt && row.leaseExpiresAt > this.now();
+  }
+
+  private warmupDb(): Db {
+    if (!this.options.operationalDb) throw new ChatAuthorityError("run_not_active");
+    return this.options.operationalDb;
+  }
+
+  private modelFingerprint(): string { return createHash("sha256").update(this.options.modelId).digest("hex"); }
+
+  private modelWarmupGrant(row: typeof chatModelWarmup.$inferSelect): string {
+    if (!row.leaseId || !row.claimRequestId || !row.leaseOwner || !row.leaseExpiresAt) throw new ChatAuthorityError("run_not_active");
+    if (!row.coordinatorId) throw new ChatAuthorityError("run_not_active");
+    const opaque = createHmac("sha256", this.options.grantKey).update(canonicalJson({ version: 1, purpose: "model-warmup", generation: row.generation, modelFingerprint: row.modelFingerprint, coordinatorId: row.coordinatorId, leaseId: row.leaseId, requestId: row.claimRequestId, workerId: row.leaseOwner, expiresAt: row.leaseExpiresAt.toISOString() })).digest("base64url");
+    return `whchat1.warmup.${opaque}`;
+  }
+
+  private modelWarmupLease(row: typeof chatModelWarmup.$inferSelect): ModelWarmupLease {
+    if (!row.leaseId || !row.claimRequestId || !row.leaseOwner || !row.leaseExpiresAt) throw new ChatAuthorityError("run_not_active");
+    return { grant: this.modelWarmupGrant(row), leaseId: row.leaseId, generation: row.generation, expiresAt: row.leaseExpiresAt.toISOString(), requestId: row.claimRequestId, workerId: row.leaseOwner };
   }
 
   private async locate(token: string, kind: GrantKind): Promise<LocatedRun> {

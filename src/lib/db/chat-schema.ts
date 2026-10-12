@@ -231,3 +231,22 @@ export const chatCoordinator = pgTable("chat_coordinator", {
   claimCount: integer("claim_count").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [uniqueIndex("chat_coordinator_credential_idx").on(table.credentialHash)]);
+
+// One global model-preload lease. This operational row has no user, session,
+// conversation, prompt, or provider-response fields and is accessed only by the
+// server application's primary database connection.
+export const chatModelWarmup = pgTable("chat_model_warmup", {
+  id: text("id").primaryKey(),
+  status: text("status", { enum: ["idle", "queued", "running", "ready", "failed"] }).notNull().default("idle"),
+  generation: integer("generation").notNull().default(0),
+  modelFingerprint: text("model_fingerprint").notNull(),
+  coordinatorId: uuid("coordinator_id"),
+  leaseId: uuid("lease_id"),
+  claimRequestId: uuid("claim_request_id"),
+  leaseOwner: text("lease_owner"),
+  grantHash: text("grant_hash"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  readyUntil: timestamp("ready_until", { withTimezone: true }),
+  retryAfterAt: timestamp("retry_after_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

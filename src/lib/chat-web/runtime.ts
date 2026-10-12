@@ -4,6 +4,7 @@ import { logChatPoolFailure } from "./logging";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "@/lib/db/schema";
+import { db as operationalDb } from "@/lib/db";
 import type { Db } from "@/lib/db/types";
 import { ChatAuthority } from "./authority";
 import { assertChatDatabaseRoles } from "./role-preflight";
@@ -12,10 +13,11 @@ export class ChatUnavailableError extends Error {}
 export function chatEnabled(): boolean { return process.env.CHAT_ENABLED === "1"; }
 
 type InitializationPhase = "validate_config" | "connect_role_preflight" | "construct_authority";
-function required(name: "CHAT_DATABASE_URL" | "CHAT_QUEUE_DATABASE_URL" | "CHAT_GRANT_DERIVATION_KEY" | "RECORDS_ENCRYPTION_KEY" | "CHAT_INFERENCE_MODEL"): string {
+function required(name: "DATABASE_URL" | "CHAT_DATABASE_URL" | "CHAT_QUEUE_DATABASE_URL" | "CHAT_GRANT_DERIVATION_KEY" | "RECORDS_ENCRYPTION_KEY" | "CHAT_INFERENCE_MODEL"): string {
   const value = process.env[name];
   if (value) return value;
   const codeByName: Record<typeof name, DiagnosticCode> = {
+    DATABASE_URL: "MISSING_CHAT_DATABASE_URL",
     CHAT_DATABASE_URL: "MISSING_CHAT_DATABASE_URL",
     CHAT_QUEUE_DATABASE_URL: "MISSING_CHAT_QUEUE_DATABASE_URL",
     CHAT_GRANT_DERIVATION_KEY: "MISSING_CHAT_GRANT_DERIVATION_KEY",
@@ -50,9 +52,11 @@ async function initialize(): Promise<WebChatRuntime> {
   try {
     const dataUrl = required("CHAT_DATABASE_URL");
     const queueUrl = required("CHAT_QUEUE_DATABASE_URL");
+    const primaryUrl = required("DATABASE_URL");
     const encodedKey = required("CHAT_GRANT_DERIVATION_KEY");
     const key = Buffer.from(encodedKey, "base64url");
     if (dataUrl === queueUrl) throw new InitializationFailure("CHAT_DATABASE_URLS_MUST_DIFFER");
+    if (new Set([primaryUrl, dataUrl, queueUrl].map(databaseTarget)).size !== 1) throw new InitializationFailure("CHAT_DATABASE_URLS_MUST_SHARE_TARGET");
     if (key.length < 32 || !/^[A-Za-z0-9_-]{43,128}$/.test(encodedKey) || key.toString("base64url") !== encodedKey) {
       throw new InitializationFailure("INVALID_CHAT_GRANT_DERIVATION_KEY");
     }
@@ -70,10 +74,20 @@ async function initialize(): Promise<WebChatRuntime> {
     phase = "construct_authority";
     const dataDb = drizzle(dataPool, { schema }) as unknown as Db;
     const queueDb = drizzle(queuePool, { schema }) as unknown as Db;
-    return { dataDb, queueDb, authority: new ChatAuthority({ dataDb, queueDb, grantKey: key, modelId, researchGatewayTokenHash: process.env.CHAT_RESEARCH_GATEWAY_TOKEN_HASH || undefined }) };
+    return { dataDb, queueDb, authority: new ChatAuthority({ dataDb, queueDb, operationalDb, grantKey: key, modelId, researchGatewayTokenHash: process.env.CHAT_RESEARCH_GATEWAY_TOKEN_HASH || undefined }) };
   } catch (error) {
     reportInitializationFailure(phase, error);
     await Promise.allSettled([dataPool?.end(), queuePool?.end()].filter((end): end is Promise<void> => !!end));
     throw new ChatUnavailableError("chat_unavailable");
   }
+}
+
+function databaseTarget(value: string): string {
+  const url = new URL(value);
+  const hostname = url.hostname.toLowerCase();
+  const normalizedHost = ["localhost", "127.0.0.1", "[::1]"].includes(hostname)
+    ? "loopback"
+    : hostname.endsWith(".neon.tech") ? hostname.replace(/^([^.]+)-pooler(?=\.)/, "$1") : hostname;
+  const database = decodeURIComponent(url.pathname.replace(/^\//, ""));
+  return `${url.protocol}//${normalizedHost}:${url.port || "5432"}/${database}`;
 }

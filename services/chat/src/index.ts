@@ -10,7 +10,7 @@ async function main(): Promise<void> {
 
   if (mode === "coordinator") {
     const runtime = createCoordinatorRuntime();
-    const dispatcher = new IggyRunDispatcher(runtime.api, runtime.iggy, runtime.workerId);
+    const dispatcher = new IggyRunDispatcher(runtime.api, runtime.iggy, runtime.workerId, { modelWarmup: runtime.modelWarmup });
     await runDispatchLoop(dispatcher, controller.signal);
     return;
   }

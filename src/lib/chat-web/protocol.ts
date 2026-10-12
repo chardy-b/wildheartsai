@@ -12,6 +12,8 @@ export const CHAT_MAX_EVENT_BYTES = 128 * 1024;
 export const CHAT_MAX_EVENTS = 256;
 export const CHAT_MAX_USER_QUEUED = 3;
 export const claimInputSchema = z.object({ requestId: z.uuid(), workerId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }).strict();
+export const modelWarmupClaimInputSchema = claimInputSchema;
+export const modelWarmupCompleteInputSchema = z.object({ requestId: z.uuid(), leaseId: z.uuid(), generation: z.number().int().positive(), workerId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), status: z.enum(["ready", "failed"]) }).strict();
 export const toolInputSchema = z.object({
   toolCallId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
   tool: z.enum(["get_data_coverage", "find_records", "read_records", "read_stored_note", "calculate_lab_trend", "find_saved_summaries", "save_summary"]),

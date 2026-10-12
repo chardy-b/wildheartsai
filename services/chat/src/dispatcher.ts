@@ -10,14 +10,20 @@ export interface IggyControlPlane {
 
 export interface ChatCoordinatorApi {
   claim(input: { requestId: string; workerId: string }): Promise<{ run: ClaimedWebRun | null }>;
+  claimModelWarmup?(input: { requestId: string; workerId: string }): Promise<{ warmup: ModelWarmupLease | null }>;
+  completeModelWarmup?(input: { requestId: string; leaseId: string; generation: number; workerId: string; status: "ready" | "failed" }): Promise<{ status: "accepted" | "duplicate" }>;
   heartbeat(controlGrant: string): Promise<{ active: boolean; cancelled: boolean; deadlineAt: string }>;
   finalize(controlGrant: string, input: FinalizeInput): Promise<{ status: "accepted" | "duplicate" }>;
 }
+
+export type ModelWarmupLease = Readonly<{ grant: string; leaseId: string; generation: number; expiresAt: string; requestId: string; workerId: string }>;
+export interface ModelWarmupClient { run(lease: ModelWarmupLease): Promise<boolean> }
 
 export type DispatcherOptions = Readonly<{
   monitorPollMs?: number;
   random?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  modelWarmup?: ModelWarmupClient;
 }>;
 
 /** Owns one remote lease at a time. The execution grant is sent only to Iggy. */
@@ -25,15 +31,23 @@ export class IggyRunDispatcher {
   private active = false;
   private readonly pollMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly warmup?: ModelWarmupClient;
 
   constructor(private readonly api: ChatCoordinatorApi, private readonly iggy: IggyControlPlane, private readonly workerId: string, options: DispatcherOptions = {}) {
     this.pollMs = Math.max(100, options.monitorPollMs ?? 5_000);
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.warmup = options.modelWarmup;
   }
 
   async dispatchOnce(): Promise<boolean> {
     if (this.active) return false;
     this.active = true;
+    try {
+      if (await this.dispatchWarmup()) { this.active = false; return true; }
+    } catch (error) {
+      this.active = false;
+      throw error;
+    }
     const requestId = randomUUID();
     let run: ClaimedWebRun | null;
     try {
@@ -68,6 +82,25 @@ export class IggyRunDispatcher {
       this.active = false;
     }
   }
+
+  private async dispatchWarmup(): Promise<boolean> {
+    if (!this.warmup || !this.api.claimModelWarmup || !this.api.completeModelWarmup) return false;
+    const requestId = randomUUID();
+    let warmup: ModelWarmupLease | null;
+    try { ({ warmup } = await this.api.claimModelWarmup({ requestId, workerId: this.workerId })); }
+    catch (error) {
+      // Mixed deployments may run a new coordinator against a web revision
+      // without the optional warm-up endpoints. Continue normal chat dispatch.
+      if (typeof error === "object" && error !== null && "status" in error && (error as { status?: unknown }).status === 404) return false;
+      throw error;
+    }
+    if (!warmup) return false;
+    let status: "ready" | "failed" = "failed";
+    try { if (await this.warmup.run(warmup)) status = "ready"; } catch { /* only fixed status is reported */ }
+    await this.api.completeModelWarmup({ requestId: warmup.requestId, leaseId: warmup.leaseId, generation: warmup.generation, workerId: warmup.workerId, status });
+    return true;
+  }
+
 
   private async monitor(run: ClaimedWebRun, requestId: string): Promise<void> {
     while (true) {

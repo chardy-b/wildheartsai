@@ -1,6 +1,7 @@
 import { ChatWebApi } from "./web-api.js";
 import { IggyClient } from "./iggy-client.js";
 import { ResearchCorpus } from "./research-corpus.js";
+import { GatewayWarmupClient } from "./warmup-client.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -9,6 +10,7 @@ export function createCoordinatorRuntime(env: Environment = process.env) {
     api: new ChatWebApi({ baseUrl: requiredUrl(env, "CHAT_WEB_API_URL"), coordinatorToken: required(env, "CHAT_COORDINATOR_TOKEN") }),
     iggy: new IggyClient(requiredUrl(env, "IGGY_URL"), required(env, "IGGY_BEARER_TOKEN")),
     workerId: required(env, "CHAT_WORKER_ID"),
+    modelWarmup: new GatewayWarmupClient(),
   };
 }
 

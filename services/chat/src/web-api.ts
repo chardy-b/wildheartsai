@@ -4,6 +4,8 @@ import {
   CHAT_MAX_REQUEST_BYTES,
   CHAT_MAX_TOOL_OUTPUT_BYTES,
   claimInputSchema,
+  modelWarmupClaimInputSchema,
+  modelWarmupCompleteInputSchema,
   eventsInputSchema,
   finalizeInputSchema,
   CHAT_MAX_RESEARCH_OUTPUT_BYTES,
@@ -28,6 +30,7 @@ import type { ChatMessage, ClaimedWebRun, WorkerEvent } from "./contracts.js";
 
 const grantPattern = /^whchat1\.(execution|control)\.[A-Za-z0-9_-]{43}$/;
 const researchGatewayTokenPattern = /^[A-Za-z0-9_-]{43}$/;
+const warmupGrantPattern = /^whchat1\.warmup\.[A-Za-z0-9_-]{43}$/;
 export const CHAT_MAX_TOOL_REPLY_BYTES = CHAT_MAX_TOOL_OUTPUT_BYTES + 1_024;
 
 export class ChatWebApiError extends Error {
@@ -79,6 +82,29 @@ export class ChatWebApi {
     if (body.run === null) return { run: null };
     const run = parseClaimReply(body.run);
     return { run };
+  }
+
+  async claimModelWarmup(input: { requestId: string; workerId: string }): Promise<Readonly<{ warmup: Readonly<{ grant: string; leaseId: string; generation: number; expiresAt: string; requestId: string; workerId: string }> | null }>> {
+    const request = modelWarmupClaimInputSchema.parse(input);
+    const reply = await this.post("warmup/claim", this.coordinatorToken(), request, CHAT_MAX_REQUEST_BYTES, "coordinator");
+    if (!hasExactKeys(reply, ["warmup"])) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+    if ((reply as Record<string, unknown>).warmup === null) return { warmup: null };
+    const value = (reply as Record<string, unknown>).warmup;
+    if (!hasExactKeys(value, ["grant", "leaseId", "generation", "expiresAt", "requestId", "workerId"])) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+    const item = value as Record<string, unknown>;
+    if (typeof item.grant !== "string" || !warmupGrantPattern.test(item.grant) || !validUuid(item.leaseId) || !Number.isSafeInteger(item.generation) || Number(item.generation) < 1 || !validDate(item.expiresAt) || item.requestId !== request.requestId || item.workerId !== request.workerId) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+    return { warmup: { grant: item.grant, leaseId: item.leaseId, generation: Number(item.generation), expiresAt: item.expiresAt as string, requestId: item.requestId as string, workerId: item.workerId as string } };
+  }
+
+  async completeModelWarmup(input: { requestId: string; leaseId: string; generation: number; workerId: string; status: "ready" | "failed" }): Promise<OperationAck> {
+    const request = modelWarmupCompleteInputSchema.parse(input);
+    return parseAck(await this.post("warmup/complete", this.coordinatorToken(), request, CHAT_MAX_REQUEST_BYTES, "coordinator"));
+  }
+
+  async verifyModelWarmup(grant: string): Promise<Readonly<{ active: true; expiresAt: string; modelFingerprint: string }>> {
+    const reply = await this.request("execution/warmup/verify", this.warmupGrant(grant), "POST", {}, CHAT_MAX_REQUEST_BYTES, "warmup");
+    if (!hasExactKeys(reply, ["active", "expiresAt", "modelFingerprint"]) || (reply as Record<string, unknown>).active !== true || !validDate((reply as Record<string, unknown>).expiresAt) || typeof (reply as Record<string, unknown>).modelFingerprint !== "string" || !/^[a-f0-9]{64}$/.test((reply as Record<string, unknown>).modelFingerprint as string)) throw new ChatWebApiError(502, "chat_web_api_invalid_reply");
+    return { active: true, expiresAt: (reply as { expiresAt: string }).expiresAt, modelFingerprint: (reply as { modelFingerprint: string }).modelFingerprint };
   }
 
   async heartbeat(controlGrant: string): Promise<HeartbeatReply> {
@@ -168,8 +194,9 @@ export class ChatWebApi {
     return this.request(path, this.executionGrant(executionGrant), "POST", value, CHAT_MAX_REQUEST_BYTES, "execution", gatewayToken);
   }
 
-  private async request(path: string, token: string, method: "GET" | "POST", value: unknown, maxBytes: number, kind: "coordinator" | "control" | "execution", researchGatewayToken?: string): Promise<unknown> {
+  private async request(path: string, token: string, method: "GET" | "POST", value: unknown, maxBytes: number, kind: "coordinator" | "control" | "execution" | "warmup", researchGatewayToken?: string): Promise<unknown> {
     if (researchGatewayToken && (!path.startsWith("execution/research/") || !researchGatewayTokenPattern.test(researchGatewayToken))) throw new ChatWebApiError(401, "invalid_research_gateway_token");
+    if (kind === "warmup" && (!path.startsWith("execution/warmup/") || !warmupGrantPattern.test(token))) throw new ChatWebApiError(401, "invalid_model_warmup_grant");
     const body = value === undefined ? undefined : JSON.stringify(value);
     if (body !== undefined && byteLength(body) > maxBytes) throw new ChatWebApiError(413, "chat_web_api_request_too_large");
     const url = new URL(path, this.baseUrl);
@@ -232,6 +259,11 @@ export class ChatWebApi {
 
   private executionGrant(token: string): string {
     if (!grantPattern.test(token) || !token.startsWith("whchat1.execution.")) throw new ChatWebApiError(401, "invalid_execution_grant");
+    return token;
+  }
+
+  private warmupGrant(token: string): string {
+    if (!warmupGrantPattern.test(token)) throw new ChatWebApiError(401, "invalid_model_warmup_grant");
     return token;
   }
 }

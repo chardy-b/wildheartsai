@@ -1,4 +1,5 @@
 import { request as httpRequest } from "node:http";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
@@ -8,6 +9,7 @@ import { CHAT_MAX_TOOL_OUTPUT_BYTES } from "../src/protocol.js";
 
 const executionGrant = `whchat1.execution.${"e".repeat(43)}`;
 const controlGrant = `whchat1.control.${"c".repeat(43)}`;
+const warmupGrant = `whchat1.warmup.${"w".repeat(43)}`;
 
 async function startGateway(remoteFetch: typeof fetch, modelFetch: typeof fetch = vi.fn(async () => Response.json({ choices: [] }))) {
   const api = new ChatWebApi({ baseUrl: new URL("http://127.0.0.1:8765/api/chat/worker/v1"), fetcher: remoteFetch, maxAttempts: 1 });
@@ -21,6 +23,80 @@ async function startGateway(remoteFetch: typeof fetch, modelFetch: typeof fetch 
 function headers(grant = executionGrant): Record<string, string> { return { authorization: `Bearer ${grant}`, "content-type": "application/json" }; }
 
 describe("remote worker relay", () => {
+  it("runs only the fixed synthetic warm-up after a current model-fingerprint grant", async () => {
+    const modelId = "configured-model";
+    const requests: Array<{ url: string; authorization: string; body: Record<string, unknown> }> = [];
+    const remoteFetch: typeof fetch = async (input, init) => {
+      requests.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization") ?? "", body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+      return Response.json({ active: true, expiresAt: new Date(Date.now() + 60_000).toISOString(), modelFingerprint: createHash("sha256").update(modelId).digest("hex") });
+    };
+    const modelFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.redirect).toBe("error");
+      return Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "synthetic only" } }] });
+    });
+    const api = new ChatWebApi({ baseUrl: new URL("http://127.0.0.1:8765/api/chat/worker/v1"), fetcher: remoteFetch, maxAttempts: 1 });
+    const gateway = createPrivateToolGateway({ api, inferenceUrl: new URL("http://model.internal/v1"), modelId, apiKey: "synthetic-inference-key", maxTokens: 16, fetcher: modelFetch });
+    gateway.listen(0, "127.0.0.1");
+    await once(gateway, "listening");
+    const port = (gateway.address() as AddressInfo).port;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/warmup`, { method: "POST", headers: headers(warmupGrant), body: "{}" });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ status: "ready" });
+      expect(requests).toEqual([{
+        url: "http://127.0.0.1:8765/api/chat/worker/v1/execution/warmup/verify",
+        authorization: `Bearer ${warmupGrant}`,
+        body: {},
+      }]);
+      const [url, init] = modelFetch.mock.calls[0]!;
+      expect(String(url)).toBe("http://model.internal/v1/chat/completions");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer synthetic-inference-key");
+      expect(JSON.parse(String(init?.body))).toEqual({ model: modelId, messages: [{ role: "user", content: "Reply OK." }], max_tokens: 1, stream: false, temperature: 0 });
+    } finally { gateway.closeAllConnections(); gateway.close(); await once(gateway, "close"); }
+  });
+
+  it("does not warm the configured model when the web grant fingerprint differs", async () => {
+    const remoteFetch: typeof fetch = async () => Response.json({ active: true, expiresAt: new Date(Date.now() + 60_000).toISOString(), modelFingerprint: "0".repeat(64) });
+    const modelFetch = vi.fn(async () => Response.json({ choices: [{ finish_reason: "stop" }] }));
+    const fixture = await startGateway(remoteFetch, modelFetch);
+    try {
+      const response = await fetch(`${fixture.url}/v1/warmup`, { method: "POST", headers: headers(warmupGrant), body: "{}" });
+      expect(response.status).toBe(409);
+      expect(modelFetch).not.toHaveBeenCalled();
+    } finally { await fixture.close(); }
+  });
+
+  it("does not let execution grants enter the warm-up route", async () => {
+    const remoteFetch = vi.fn(async () => Response.json({ active: true, expiresAt: new Date(Date.now() + 60_000).toISOString(), modelFingerprint: "0".repeat(64) }));
+    const modelFetch = vi.fn(async () => Response.json({ choices: [{ finish_reason: "stop" }] }));
+    const fixture = await startGateway(remoteFetch, modelFetch);
+    try {
+      const response = await fetch(`${fixture.url}/v1/warmup`, { method: "POST", headers: headers(executionGrant), body: "{}" });
+      expect(response.status).toBe(401);
+      expect(remoteFetch).not.toHaveBeenCalled();
+      expect(modelFetch).not.toHaveBeenCalled();
+    } finally { await fixture.close(); }
+  });
+
+  it("does not start provider work when the coordinator disconnects during warm-up verification", async () => {
+    let resolveVerification!: (response: Response) => void;
+    const verification = new Promise<Response>(resolve => { resolveVerification = resolve; });
+    const remoteFetch = vi.fn(() => verification);
+    const modelFetch = vi.fn(async () => Response.json({ choices: [{ finish_reason: "stop" }] }));
+    const fixture = await startGateway(remoteFetch, modelFetch);
+    const controller = new AbortController();
+    try {
+      const pending = fetch(`${fixture.url}/v1/warmup`, { method: "POST", headers: headers(warmupGrant), body: "{}", signal: controller.signal });
+      await vi.waitFor(() => expect(remoteFetch).toHaveBeenCalledTimes(1));
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      resolveVerification(Response.json({ active: true, expiresAt: new Date(Date.now() + 60_000).toISOString(), modelFingerprint: createHash("sha256").update("configured-model").digest("hex") }));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(modelFetch).not.toHaveBeenCalled();
+    } finally { await fixture.close(); }
+  });
+
   it("rejects unknown routes, wrong credential kind, and scope-bearing request bodies", async () => {
     const remoteFetch = vi.fn(async () => Response.json({ status: "accepted" }));
     const fixture = await startGateway(remoteFetch);
@@ -70,7 +146,11 @@ describe("remote worker relay", () => {
       remotePaths.push(String(input));
       return Response.json({ cancelled });
     };
-    const modelFetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } }));
+    const modelFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("http://model.internal/v1/chat/completions");
+      expect(init?.method).toBe("POST");
+      return new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    });
     const fixture = await startGateway(remoteFetch, modelFetch);
     try {
       const inferenceUrl = `${fixture.url}/v1/inference/chat/completions`;

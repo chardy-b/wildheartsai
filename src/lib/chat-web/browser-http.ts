@@ -27,6 +27,18 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
       ? { idempotencyKey: id.parse(request.headers.get("idempotency-key")), ...question.parse(await body(request)) }
       : undefined;
     const { dataDb, authority } = await webChatRuntime();
+    // Warm-up metadata is deployment-global and contains no personal data. Keep it
+    // on the server-only primary DB path, outside the patient-scoped transaction.
+    if (path.length === 1 && path[0] === "warmup") {
+      if (request.method === "GET") return json(await authority.modelWarmupStatus());
+      if (request.method === "POST") {
+        const input = await body(request, 1_024);
+        if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 0) throw new ChatRequestError(400, "invalid_request");
+        await authority.requestModelWarmup();
+        return json(await authority.modelWarmupStatus(), 202);
+      }
+      throw new ChatRequestError(405, "method_not_allowed");
+    }
     // A periodic job is authoritative; coalesce status-read cleanup per server instance.
     if (request.method === "GET" && Date.now() >= nextReapAt) {
       reaping ??= authority.reap().then(() => { nextReapAt = Date.now() + 15_000; }).finally(() => { reaping = undefined; });

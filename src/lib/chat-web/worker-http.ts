@@ -2,18 +2,21 @@ import "server-only";
 import { webChatRuntime } from "./runtime";
 import { bearer, body, guarded, json, ChatRequestError } from "./http";
 import { logChatRunFailure } from "./logging";
-import { claimInputSchema, toolInputSchema, eventsInputSchema, finalizeInputSchema, researchBeginInputSchema, researchResultInputSchema, RESEARCH_GATEWAY_HEADER, chatFailureCodeSchema } from "./protocol";
+import { claimInputSchema, modelWarmupClaimInputSchema, modelWarmupCompleteInputSchema, toolInputSchema, eventsInputSchema, finalizeInputSchema, researchBeginInputSchema, researchResultInputSchema, RESEARCH_GATEWAY_HEADER, chatFailureCodeSchema } from "./protocol";
 
 /** Explicit bearer-only operations; a cookie never authorizes a worker operation. */
 export function workerRequest(request: Request, path: string[]): Promise<Response> {
   return guarded(async (requestId) => {
     const token = bearer(request);
     const route = path.join("/");
-    const allowed = request.method === "GET" ? ["execution/context", "execution/cancellation"] : request.method === "POST" ? ["claims", "execution/tools", "execution/events", "execution/research/begin", "execution/research/result", "control/heartbeat", "control/finalize"] : [];
+    const allowed = request.method === "GET" ? ["execution/context", "execution/cancellation"] : request.method === "POST" ? ["claims", "warmup/claim", "warmup/complete", "execution/warmup/verify", "execution/tools", "execution/events", "execution/research/begin", "execution/research/result", "control/heartbeat", "control/finalize"] : [];
     if (!allowed.includes(route)) throw new ChatRequestError(404, "not_found");
     const { authority } = await webChatRuntime();
     switch (route) {
       case "claims": return json({ run: await authority.claim(token, claimInputSchema.parse(await body(request))) });
+      case "warmup/claim": return json({ warmup: await authority.claimModelWarmup(token, modelWarmupClaimInputSchema.parse(await body(request))) });
+      case "warmup/complete": return json(await authority.completeModelWarmup(token, modelWarmupCompleteInputSchema.parse(await body(request))), 202);
+      case "execution/warmup/verify": return json(await authority.verifyModelWarmup(token));
       case "execution/context": return json(await authority.context(token));
       case "execution/cancellation": return json(await authority.cancellation(token));
       case "execution/tools": return json(await authority.tool(token, toolInputSchema.parse(await body(request))));

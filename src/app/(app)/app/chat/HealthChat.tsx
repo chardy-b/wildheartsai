@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, currentToolStep, describeRunFailure, formatToolDuration, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, toolTimeline, type ActivityEvent, type RunActivities } from "./chat-client-state";
+import { useModelWarmup, type ModelReadiness } from "./use-model-warmup";
 
 import { ResearchSources } from "./ResearchSources";
 
@@ -62,6 +63,7 @@ function wait(delay: number, signal: AbortSignal): Promise<void> {
 }
 
 export function HealthChat() {
+  const { readiness, requestWarmup } = useModelWarmup();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsHasMore, setConversationsHasMore] = useState(false);
   const [conversationCursor, setConversationCursor] = useState<string | null>(null);
@@ -269,6 +271,9 @@ export function HealthChat() {
   const send = async () => {
     const text = draft.trim();
     if (busy || !text || detail?.runs.some(isActive)) return;
+    // Warmup is independent of the encrypted run submission. Start it without
+    // waiting so a message can be queued immediately while the model loads.
+    requestWarmup();
     setBusy(true);
     setError("");
     try {
@@ -359,11 +364,12 @@ export function HealthChat() {
   };
 
   return <div className="health-chat">
-    <aside aria-label="Saved chats"><button type="button" disabled={busy} onClick={() => { detailGuard.reset(); setSelected(null); setDetail(null); setError(""); setTerminalRefreshError(null); }}>New chat</button>
+    <aside aria-label="Saved chats"><button type="button" disabled={busy} onClick={() => { requestWarmup(); detailGuard.reset(); setSelected(null); setDetail(null); setError(""); setTerminalRefreshError(null); }}>New chat</button>
       <ul>{conversations.map(conversation => <li key={conversation.id}><button type="button" aria-pressed={conversation.id === selected} disabled={busy} onClick={() => { if (conversation.id === selected) return; detailGuard.select(conversation.id); setSelected(conversation.id); setDetail(null); setError(""); setTerminalRefreshError(null); }}>{conversation.title ?? "Health chat"}<small>{new Date(conversation.createdAt).toLocaleDateString()}</small></button></li>)}</ul>
       {conversationsHasMore && <button type="button" disabled={loadingMoreConversations} onClick={() => { void loadMoreConversations(); }}>{loadingMoreConversations ? "Loading…" : "Load more saved chats"}</button>}
     </aside>
     <div className="chat-body">
+      <ModelReadinessNotice readiness={readiness} onRetry={requestWarmup} />
       {error && <p role="alert">{error}</p>}
       <div aria-label="Messages" className="chat-messages">{detail?.messages.map(message => {
         const messageRun = message.role === "assistant" ? detail.runs.find(run => run.assistantMessageId === message.id) : undefined;
@@ -371,7 +377,7 @@ export function HealthChat() {
       })}</div>
       {detail?.hasMore && <button type="button" disabled={loadingOlderMessages} onClick={() => { void loadOlderMessages(); }}>{loadingOlderMessages ? "Loading…" : "Load older messages"}</button>}
       {runActivity?.answer && detail?.runs.some(isActive) && !terminalRefreshPending && <article className="chat-partial"><strong>Wild Hearts</strong><p>{runActivity.answer}</p></article>}
-      {activeRun && !terminalRefreshPending && <p role="status" className="chat-current-step">{activeStep ? `${activeStep}…` : activeRun.status === "queued" ? "Getting your answer ready…" : "Thinking through your question…"} You can leave and return later.</p>}
+      {activeRun && !terminalRefreshPending && <p role="status" className="chat-current-step">{activeRun.status === "queued" && readiness.status !== "ready" ? "Waiting for the model…" : activeStep ? `${activeStep}…` : activeRun.status === "queued" ? "Getting your answer ready…" : "Thinking through your question…"} You can leave and return later.</p>}
       {runActivity && (runActivity.thinking || runActivity.thinkingTruncated) && <ThinkingDisclosure text={runActivity.thinking} truncated={runActivity.thinkingTruncated} />}
       {latestRun && ["failed", "cancelled", "interrupted"].includes(latestRun.status) && <div><p role="status">{latestRun.status === "failed" ? describeRunFailure(runActivity?.failure) : latestRun.status === "interrupted" ? "This response was interrupted before it finished." : "This response was cancelled."}</p><button type="button" disabled={busy} onClick={() => { const question = detail?.messages.filter(message => message.role === "user").at(-1); if (question) { pending.current = null; setDraft(question.content); } }}>Retry this question</button></div>}
       <form onSubmit={event => { event.preventDefault(); void send(); }}><label htmlFor="chat-message">Ask about your records or health research</label><textarea id="chat-message" value={draft} maxLength={8000} onChange={event => setDraft(event.target.value)} rows={4} disabled={busy} /><button disabled={busy || !draft.trim() || !!detail?.runs.some(isActive)}>{busy ? "Sending…" : "Send"}</button></form>
@@ -381,6 +387,40 @@ export function HealthChat() {
       <details onToggle={event => { if (event.currentTarget.open) void loadSummaries(); }}><summary>Saved health summaries</summary><p>Helpful summaries may be saved automatically for future chats. You can remove them here.</p>{summaries.map(summary => <article key={summary.id}><p>{summary.text ?? summary.content?.text ?? "Saved health summary"}</p><button type="button" onClick={() => { void chatRequest(`/summaries/${encodeURIComponent(summary.id)}`, { method: "DELETE" }).then(loadSummaries).catch(() => setError("Could not delete this summary.")); }}>Delete summary</button></article>)}{summariesHasMore && <button type="button" disabled={loadingMoreSummaries} onClick={() => { void loadMoreSummaries(); }}>{loadingMoreSummaries ? "Loading…" : "Load more summaries"}</button>}</details>
     </div>
   </div>;
+}
+
+export function ModelReadinessNotice({ readiness, onRetry }: { readiness: ModelReadiness; onRetry: () => void }) {
+  const lastConfirmed = readiness.lastConfirmedAt === null
+    ? null
+    : new Date(readiness.lastConfirmedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  if (readiness.status === "ready") {
+    return <section className="chat-model-readiness" aria-label="Model availability" role="status">
+      <strong>Ready</strong>
+      <p>{lastConfirmed ? `Last confirmed at ${lastConfirmed}.` : "The model was just confirmed ready."} It may unload later.</p>
+    </section>;
+  }
+
+  if (readiness.checking && (readiness.status === "queued" || readiness.status === "running" || readiness.status === "idle")) {
+    return <section className="chat-model-readiness" aria-label="Model availability" role="status">
+      <strong>Loading model…</strong>
+      <p>You can send a question while it loads.</p>
+    </section>;
+  }
+
+  if (readiness.status === "failed") {
+    return <section className="chat-model-readiness" aria-label="Model availability" role="status">
+      <strong>Model warmup failed</strong>
+      <p>{readiness.message ?? "The model could not be loaded. Your question can still be sent."}</p>
+      <button type="button" onClick={onRetry}>Try loading again</button>
+    </section>;
+  }
+
+  return <section className="chat-model-readiness" aria-label="Model availability">
+    <strong>Model is idle</strong>
+    <p>{readiness.message ?? "You can ask now; your answer may wait for the model."}</p>
+    <button type="button" onClick={onRetry}>Load model</button>
+  </section>;
 }
 
 export function ThinkingDisclosure({ text, truncated }: { text: string; truncated: boolean }) {
