@@ -96,6 +96,25 @@ function appendBoundedUtf8(current: string, addition: string): { value: string; 
   return { value: current + suffix, truncated: false };
 }
 
+export function toolSteps(events: ActivityEvent[], active: boolean) {
+  const steps: { id: string; tool: string; status: string; durationMs?: number; failure?: RunFailure }[] = [];
+  for (const event of events) {
+    if (event.kind === "tool.started") {
+      steps.push({ id: event.payload.toolCallId ?? String(event.sequence), tool: event.payload.tool ?? "lookup", status: "running" });
+    } else if (event.kind === "tool.completed") {
+      const step = event.payload.toolCallId
+        ? steps.find(item => item.id === event.payload.toolCallId)
+        : steps.find(item => item.status === "running" && !!event.payload.tool && item.tool === event.payload.tool);
+      if (step) {
+        step.status = event.payload.status ?? "completed";
+        if (typeof event.payload.durationMs === "number") step.durationMs = event.payload.durationMs;
+        if (event.payload.code || event.payload.stage) step.failure = { code: event.payload.code, stage: event.payload.stage };
+      }
+    }
+  }
+  return steps.map(step => !active && step.status === "running" ? { ...step, status: "interrupted" } : step);
+}
+
 export type Identified = { id: string };
 
 export function mergeUniqueById<T extends Identified>(existing: T[], incoming: T[]): T[] {

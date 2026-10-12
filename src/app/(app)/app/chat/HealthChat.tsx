@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, currentToolStep, describeRunFailure, formatToolDuration, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, toolTimeline, type ActivityEvent, type RunActivities } from "./chat-client-state";
+import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, currentToolStep, describeRunFailure, type ActivityEvent, type RunActivities } from "./chat-client-state";
 import { useModelWarmup, type ModelReadiness } from "./use-model-warmup";
 
 import { ResearchSources } from "./ResearchSources";
+import { ChatAnswer, ChatIcon, CopyAnswer, ToolActivity } from "./ChatPresentation";
 
 const CHAT_API = "/api/chat/v1";
 const isActive = (run: Run) => ["queued", "running", "cancelling"].includes(run.status);
@@ -77,6 +78,16 @@ export function HealthChat() {
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingChats, setLoadingChats] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [stopping, setStopping] = useState<string | null>(null);
+  const [showJump, setShowJump] = useState(false);
+  const [reconnectingRun, setReconnectingRun] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const historyToggleRef = useRef<HTMLButtonElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const followOutput = useRef(true);
+  const sendingRef = useRef(false);
   const [error, setError] = useState("");
   const [activities, setActivities] = useState<RunActivities>(() => new Map());
   const [terminalRefreshError, setTerminalRefreshError] = useState<string | null>(null);
@@ -169,7 +180,7 @@ export function HealthChat() {
       }
     }).catch(() => {
       if (live && request === latestConversationRequest.current) setError("Could not load saved chats. Please refresh to try again.");
-    });
+    }).finally(() => { if (live) setLoadingChats(false); });
     return () => { live = false; };
   }, [detailGuard]);
 
@@ -198,9 +209,32 @@ export function HealthChat() {
   const runStatus = latestRun?.status;
   const runActivity = runId ? activities.get(runId) : undefined;
   const terminalRefreshPending = terminalRefreshError === runId;
+
   const activeRun = detail?.runs.find(isActive);
-  const timeline = runActivity ? toolTimeline(runActivity.events) : [];
   const activeStep = runActivity ? currentToolStep(runActivity.events) : null;
+  const responding = !!activeRun && !terminalRefreshPending;
+
+  useEffect(() => {
+    const field = textareaRef.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, 200)}px`;
+  }, [draft]);
+
+  useEffect(() => {
+    if (followOutput.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [detail, runActivity?.answer, runActivity?.events.length, runActivity?.thinking, busy]);
+
+  const stop = async () => {
+    if (!activeRun || stopping === activeRun.id) return;
+    const id = activeRun.id;
+    setStopping(id);
+    try {
+      await chatRequest(`/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setDetail(current => current ? { ...current, runs: current.runs.map(run => run.id === id && isActive(run) ? { ...run, status: "cancelling" } : run) } : current);
+    } catch { setError("Could not stop the response. Try again."); }
+    finally { setStopping(null); }
+  };
 
   // The server owns each run. This effect only replays its persisted events and can
   // pause freely when the tab is hidden or this component unmounts.
@@ -220,6 +254,7 @@ export function HealthChat() {
             { signal: controller.signal },
           );
           if (controller.signal.aborted || !detailGuard.isSelected(selection)) return;
+          setReconnectingRun(null);
           const next = applyRunEvents(activitiesRef.current, runId, result.events, result.nextSequence);
           if (next !== activitiesRef.current) {
             activitiesRef.current = next;
@@ -259,6 +294,7 @@ export function HealthChat() {
           }
         } catch {
           if (controller.signal.aborted || !detailGuard.isSelected(selection)) return;
+          setReconnectingRun(runId);
           delay = Math.min(delay * 2, 8000);
         }
         await wait(delay, controller.signal);
@@ -270,9 +306,10 @@ export function HealthChat() {
 
   const send = async () => {
     const text = draft.trim();
-    if (busy || !text || detail?.runs.some(isActive)) return;
-    // Warmup is independent of the encrypted run submission. Start it without
-    // waiting so a message can be queued immediately while the model loads.
+    if (sendingRef.current || busy || !text || loadingChats || (selected && !detail) || detail?.runs.some(isActive)) return;
+    sendingRef.current = true;
+    followOutput.current = true;
+    // Warmup runs alongside the existing idempotent submission; never gate Send on readiness.
     requestWarmup();
     setBusy(true);
     setError("");
@@ -304,7 +341,9 @@ export function HealthChat() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send your message.");
     } finally {
+      sendingRef.current = false;
       setBusy(false);
+      textareaRef.current?.focus();
     }
   };
 
@@ -363,30 +402,109 @@ export function HealthChat() {
     }
   };
 
-  return <div className="health-chat">
-    <aside aria-label="Saved chats"><button type="button" disabled={busy} onClick={() => { requestWarmup(); detailGuard.reset(); setSelected(null); setDetail(null); setError(""); setTerminalRefreshError(null); }}>New chat</button>
-      <ul>{conversations.map(conversation => <li key={conversation.id}><button type="button" aria-pressed={conversation.id === selected} disabled={busy} onClick={() => { if (conversation.id === selected) return; detailGuard.select(conversation.id); setSelected(conversation.id); setDetail(null); setError(""); setTerminalRefreshError(null); }}>{conversation.title ?? "Health chat"}<small>{new Date(conversation.createdAt).toLocaleDateString()}</small></button></li>)}</ul>
-      {conversationsHasMore && <button type="button" disabled={loadingMoreConversations} onClick={() => { void loadMoreConversations(); }}>{loadingMoreConversations ? "Loading…" : "Load more saved chats"}</button>}
+  const selectChat = (id: string | null) => {
+    if (id === selected && id !== null) { setHistoryOpen(false); return; }
+    if (id === null) requestWarmup();
+    if (id === null) detailGuard.reset(); else detailGuard.select(id);
+    setSelected(id); setDetail(null); setError(""); setTerminalRefreshError(null);
+    setDraft(""); setHistoryOpen(false); followOutput.current = true; setShowJump(false);
+    textareaRef.current?.focus();
+  };
+  const loadingConversation = loadingChats || (!!selected && !detail);
+  const empty = !loadingConversation && !detail?.messages.length && !busy;
+  const suggestions = ["Help me understand my recent lab results", "Summarize my health records", "Help me prepare for my next appointment"];
+
+  return <div className="health-chat" data-history-open={historyOpen} onKeyDown={event => { if (event.key === "Escape" && historyOpen) { setHistoryOpen(false); historyToggleRef.current?.focus(); } }}>
+    <aside className="chat-sidebar" id="chat-history" aria-label="Saved chats">
+      <button className="chat-new" type="button" disabled={busy} onClick={() => selectChat(null)}><ChatIcon name="plus" />New chat</button>
+      <div className="chat-sidebar-label">Your conversations</div>
+      {loadingChats && <p className="chat-sidebar-empty" role="status">Loading your chats…</p>}
+      {!loadingChats && !conversations.length && <p className="chat-sidebar-empty">Your conversations will appear here.</p>}
+      <ul className="chat-history-list">{conversations.map(conversation => <li key={conversation.id}>
+        <button type="button" aria-pressed={conversation.id === selected} disabled={busy} onClick={() => selectChat(conversation.id)}>
+          <ChatIcon name="chat" /><span><span className="chat-history-title">{conversation.title || "Health chat"}</span><small>{new Date(conversation.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small></span>
+        </button>
+      </li>)}</ul>
+      {conversationsHasMore && <button className="chat-text-button" type="button" disabled={loadingMoreConversations} onClick={() => { void loadMoreConversations(); }}>{loadingMoreConversations ? "Loading…" : "More conversations"}</button>}
+      <details className="chat-summaries" onToggle={event => { if (event.currentTarget.open) void loadSummaries(); }}>
+        <summary>Saved health summaries</summary>
+        <p>Helpful context saved for future chats. Remove a summary any time.</p>
+        {loadingMoreSummaries && <p role="status">Loading summaries…</p>}
+        {!loadingMoreSummaries && !summaries.length && <p>No saved summaries yet.</p>}
+        {summaries.map(summary => <article key={summary.id}><p>{summary.text ?? summary.content?.text ?? "Saved health summary"}</p><button type="button" onClick={() => { void chatRequest(`/summaries/${encodeURIComponent(summary.id)}`, { method: "DELETE" }).then(loadSummaries).catch(() => setError("Could not delete this summary.")); }}>Delete summary</button></article>)}
+        {summariesHasMore && <button type="button" disabled={loadingMoreSummaries} onClick={() => { void loadMoreSummaries(); }}>More summaries</button>}
+      </details>
     </aside>
     <div className="chat-body">
-      <ModelReadinessNotice readiness={readiness} onRetry={requestWarmup} />
-      {error && <p role="alert">{error}</p>}
-      <div aria-label="Messages" className="chat-messages">{detail?.messages.map(message => {
-        const messageRun = message.role === "assistant" ? detail.runs.find(run => run.assistantMessageId === message.id) : undefined;
-        return <article key={message.id}><strong>{message.role === "user" ? "You" : "Wild Hearts"}</strong><p>{message.content}</p>{message.truncated && <p role="note">This saved message was shortened to fit the history page.</p>}{messageRun && <ResearchSources key={messageRun.id} runId={messageRun.id} />}</article>;
-      })}</div>
-      {detail?.hasMore && <button type="button" disabled={loadingOlderMessages} onClick={() => { void loadOlderMessages(); }}>{loadingOlderMessages ? "Loading…" : "Load older messages"}</button>}
-      {runActivity?.answer && detail?.runs.some(isActive) && !terminalRefreshPending && <article className="chat-partial"><strong>Wild Hearts</strong><p>{runActivity.answer}</p></article>}
-      {activeRun && !terminalRefreshPending && <p role="status" className="chat-current-step">{activeRun.status === "queued" && readiness.status !== "ready" ? "Waiting for the model…" : activeStep ? `${activeStep}…` : activeRun.status === "queued" ? "Getting your answer ready…" : "Thinking through your question…"} You can leave and return later.</p>}
-      {runActivity && (runActivity.thinking || runActivity.thinkingTruncated) && <ThinkingDisclosure text={runActivity.thinking} truncated={runActivity.thinkingTruncated} />}
-      {latestRun && ["failed", "cancelled", "interrupted"].includes(latestRun.status) && <div><p role="status">{latestRun.status === "failed" ? describeRunFailure(runActivity?.failure) : latestRun.status === "interrupted" ? "This response was interrupted before it finished." : "This response was cancelled."}</p><button type="button" disabled={busy} onClick={() => { const question = detail?.messages.filter(message => message.role === "user").at(-1); if (question) { pending.current = null; setDraft(question.content); } }}>Retry this question</button></div>}
-      <form onSubmit={event => { event.preventDefault(); void send(); }}><label htmlFor="chat-message">Ask about your records or health research</label><textarea id="chat-message" value={draft} maxLength={8000} onChange={event => setDraft(event.target.value)} rows={4} disabled={busy} /><button disabled={busy || !draft.trim() || !!detail?.runs.some(isActive)}>{busy ? "Sending…" : "Send"}</button></form>
-      {detail?.runs.filter(run => isActive(run) && !(terminalRefreshPending && run.id === runId)).map(run => <button key={run.id} type="button" onClick={() => { void chatRequest(`/runs/${encodeURIComponent(run.id)}`, { method: "DELETE" }).catch(() => setError("Could not cancel the response.")); }}>Stop response</button>)}
-      {terminalRefreshError === runId && <p role="alert">This response finished, but the saved conversation could not be refreshed. <button type="button" onClick={() => { setTerminalRefreshError(null); setTerminalRetry(value => value + 1); }}>Retry loading this response</button></p>}
-      <details><summary>Sources and tool activity</summary>{timeline.length ? <ol className="chat-tool-timeline">{timeline.map(item => <li key={item.key}><span>{item.label}</span><span>{item.status === "running" ? "In progress" : item.status === "failed" ? "Could not complete" : item.status === "rejected" ? "Could not run" : "Done"}{formatToolDuration(item.durationMs) ? ` · ${formatToolDuration(item.durationMs)}` : ""}</span>{item.failure && <small>{describeRunFailure(item.failure)}</small>}</li>)}</ol> : <p>Record and research lookups will appear here when used.</p>}</details>
-      <details onToggle={event => { if (event.currentTarget.open) void loadSummaries(); }}><summary>Saved health summaries</summary><p>Helpful summaries may be saved automatically for future chats. You can remove them here.</p>{summaries.map(summary => <article key={summary.id}><p>{summary.text ?? summary.content?.text ?? "Saved health summary"}</p><button type="button" onClick={() => { void chatRequest(`/summaries/${encodeURIComponent(summary.id)}`, { method: "DELETE" }).then(loadSummaries).catch(() => setError("Could not delete this summary.")); }}>Delete summary</button></article>)}{summariesHasMore && <button type="button" disabled={loadingMoreSummaries} onClick={() => { void loadMoreSummaries(); }}>{loadingMoreSummaries ? "Loading…" : "Load more summaries"}</button>}</details>
+      <header className="chat-header">
+        <button ref={historyToggleRef} className="chat-history-toggle" type="button" aria-label="Toggle chat history" aria-expanded={historyOpen} aria-controls="chat-history" onClick={() => setHistoryOpen(value => !value)}><ChatIcon name="menu" /></button>
+        <div><h1>Health chat</h1><span>Your records. A little more clarity.</span></div>
+        <span className="chat-header-badge"><ChatIcon name="spark" />Wild Hearts</span>
+      </header>
+      <div className="chat-scroll" ref={scrollRef} onScroll={event => {
+        const element = event.currentTarget;
+        const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
+        followOutput.current = nearBottom; setShowJump(!nearBottom);
+      }}>
+        <div className="chat-thread">
+          <ModelReadinessNotice readiness={readiness} onRetry={requestWarmup} />
+          {loadingConversation && <div className="chat-loading" role="status"><span className="chat-tool-indicator is-running" />Loading your conversation…</div>}
+          {empty && <div className="chat-welcome">
+            <div className="chat-welcome-mark"><ChatIcon name="spark" /></div>
+            <p className="chat-eyebrow">A space to make sense of your health</p>
+            <h2>What’s on your mind?</h2>
+            <p>Explore your saved records, understand health research, or get ready for your next visit.</p>
+            <div className="chat-suggestions">{suggestions.map((suggestion, i) => <button key={suggestion} type="button" onClick={() => { setDraft(suggestion); textareaRef.current?.focus(); }}><ChatIcon name={i === 0 ? "spark" : i === 1 ? "chat" : "plus"} /><span>{suggestion}</span><span aria-hidden="true">↗</span></button>)}</div>
+          </div>}
+          {detail?.hasMore && <button className="chat-older" type="button" disabled={loadingOlderMessages} onClick={() => { void loadOlderMessages(); }}>{loadingOlderMessages ? "Loading…" : "Load earlier messages"}</button>}
+          <div aria-label="Messages" className="chat-messages">{detail?.messages.map(message => {
+            const messageRun = message.role === "assistant" ? detail.runs.find(run => run.assistantMessageId === message.id) : undefined;
+            const activity = messageRun ? activities.get(messageRun.id) : undefined;
+            return <article className={`chat-message chat-message-${message.role === "user" ? "user" : "assistant"}`} key={message.id}>
+              <div className="chat-message-author">{message.role !== "user" && <span className="chat-avatar"><ChatIcon name="spark" /></span>}{message.role === "user" ? "You" : "Wild Hearts"}</div>
+              {activity && (activity.thinking || activity.thinkingTruncated) && <ThinkingDisclosure text={activity.thinking} truncated={activity.thinkingTruncated} />}
+              {activity && <ToolActivity events={activity.events} active={false} />}
+              <ChatAnswer text={message.content} />
+              {message.truncated && <p className="chat-notice" role="note">This saved message was shortened to fit the history page.</p>}
+              {messageRun && <><ResearchSources key={messageRun.id} runId={messageRun.id} /><CopyAnswer text={message.content} /></>}
+            </article>;
+          })}</div>
+          {(busy || responding || (latestRun && isTerminal(latestRun.status) && !latestRun.assistantMessageId && !!runActivity && (!!runActivity.answer || !!runActivity.events.length || !!runActivity.thinking || runActivity.thinkingTruncated))) && <article className="chat-message chat-message-assistant chat-partial" aria-label="Current response">
+            <div className="chat-message-author"><span className="chat-avatar"><ChatIcon name="spark" /></span>Wild Hearts</div>
+            {!busy && runActivity && (runActivity.thinking || runActivity.thinkingTruncated) && <ThinkingDisclosure text={runActivity.thinking} truncated={runActivity.thinkingTruncated} />}
+            {!busy && runActivity && <ToolActivity events={runActivity.events} active={responding} />}
+            {!busy && runActivity?.answer && <ChatAnswer text={runActivity.answer} />}
+            {(busy || responding) && <div className="chat-run-status" role="status"><span className="chat-status-dots" aria-hidden="true"><i /><i /><i /></span>{busy ? "Sending your message" : reconnectingRun === runId ? "Reconnecting to your response…" : activeRun?.status === "cancelling" || stopping === activeRun?.id ? "Stopping…" : activeRun?.status === "queued" && readiness.status !== "ready" ? "Waiting for the model" : activeRun?.status === "queued" ? "Waiting to start" : runActivity?.answer ? "Writing your answer" : activeStep ? `${activeStep}…` : "Thinking through your question"}</div>}
+          </article>}
+          {latestRun && ["failed", "cancelled", "interrupted"].includes(latestRun.status) && <div className="chat-notice"><p role="status">{latestRun.status === "cancelled" ? "Response stopped." : latestRun.status === "failed" ? describeRunFailure(runActivity?.failure) : "This response was interrupted."}</p><button type="button" disabled={busy} onClick={() => { const question = detail?.messages.filter(message => message.role === "user").at(-1); if (question) { pending.current = null; setDraft(question.content); textareaRef.current?.focus(); } }}>Retry question</button></div>}
+          {terminalRefreshPending && <div className="chat-notice" role="alert">Your response finished, but could not be loaded. <button type="button" onClick={() => { setTerminalRefreshError(null); setTerminalRetry(value => value + 1); }}>Retry loading</button></div>}
+        </div>
+      </div>
+      <div className="chat-composer-area">
+        {showJump && <button className="chat-jump" type="button" onClick={() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; followOutput.current = true; setShowJump(false); }}><ChatIcon name="down" />Latest message</button>}
+        {error && <div className="chat-error" role="alert">{error}{selected && !detail && <button type="button" onClick={() => { void refreshDetail(selected).then(() => setError("")).catch(() => setError("Could not load this conversation. Try again.")); }}>Retry loading</button>}</div>}
+        <form className="chat-composer" onSubmit={event => { event.preventDefault(); void send(); }}>
+          <label className="chat-sr-only" htmlFor="chat-message">Message Wild Hearts</label>
+          <textarea ref={textareaRef} id="chat-message" value={draft} maxLength={8000} placeholder="Ask about your records or health research…" onChange={event => setDraft(event.target.value)} onKeyDown={event => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!responding) event.currentTarget.form?.requestSubmit(); }
+          }} rows={1} readOnly={busy} />
+          <div className="chat-composer-toolbar"><span>{responding ? "You can leave and return to this chat." : <><span className="chat-keyboard-hint">Enter to send · Shift + Enter for a new line</span><span className="chat-mobile-hint">Ask a follow-up any time</span></>}</span>
+            {responding ? <button className="chat-send chat-stop" type="button" aria-label="Stop" title="Stop" disabled={stopping === activeRun?.id || activeRun?.status === "cancelling"} onClick={() => { void stop(); }}><ChatIcon name="stop" /></button>
+              : <button className="chat-send" type="submit" aria-label={busy ? "Sending message" : "Send message"} title="Send message" disabled={busy || loadingConversation || !draft.trim() || !!activeRun}><ChatIcon name="arrow" /></button>}
+          </div>
+        </form>
+        <p className="chat-disclaimer">Wild Hearts can make mistakes. Check important details with your care team.</p>
+      </div>
     </div>
   </div>;
+}
+
+export function ThinkingDisclosure({ text, truncated }: { text: string; truncated: boolean }) {
+  return <details className="chat-thinking">
+    <summary>Thinking</summary>
+    {text && <p>{text}</p>}
+    {truncated && <p role="note">Only the beginning of the assistant&apos;s working notes is shown.</p>}
+  </details>;
 }
 
 export function ModelReadinessNotice({ readiness, onRetry }: { readiness: ModelReadiness; onRetry: () => void }) {
@@ -421,12 +539,4 @@ export function ModelReadinessNotice({ readiness, onRetry }: { readiness: ModelR
     <p>{readiness.message ?? "You can ask now; your answer may wait for the model."}</p>
     <button type="button" onClick={onRetry}>Load model</button>
   </section>;
-}
-
-export function ThinkingDisclosure({ text, truncated }: { text: string; truncated: boolean }) {
-  return <details className="chat-thinking">
-    <summary>Thinking</summary>
-    {text && <p>{text}</p>}
-    {truncated && <p role="note">Only the beginning of the assistant&apos;s working notes is shown.</p>}
-  </details>;
 }
