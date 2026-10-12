@@ -1,4 +1,5 @@
 import { AppNav } from "@/components/app/AppNav";
+import { SessionRefresh } from "@/components/app/SessionRefresh";
 import { requireSession } from "@/lib/session";
 import "@/components/app/app.css";
 
@@ -12,6 +13,7 @@ export default async function AppLayout({ children }: LayoutProps<"/app">) {
   await requireSession();
   return (
     <div className="app-shell">
+      <SessionRefresh />
       <AppNav links={LINKS} />
       <main className="wrap app-main" id="main-content">
         {children}

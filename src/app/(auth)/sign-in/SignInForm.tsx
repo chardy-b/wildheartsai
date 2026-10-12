@@ -18,6 +18,7 @@ export function SignInForm({ notice }: { notice?: string }) {
     const { error } = await authClient.signIn.email({
       email: String(form.get("email")),
       password: String(form.get("password")),
+      rememberMe: true,
     });
     setPending(false);
     if (error) {
