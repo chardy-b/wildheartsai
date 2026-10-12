@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import { toolSteps, type ActivityEvent } from "./chat-client-state";
+import { describeRunFailure, formatToolDuration, toolSteps, type ActivityEvent } from "./chat-client-state";
 
 export function ChatIcon({ name }: { name: "plus" | "arrow" | "stop" | "chat" | "spark" | "copy" | "down" | "menu" }) {
   const paths = {
@@ -37,8 +37,8 @@ export function ToolActivity({ events, active }: { events: ActivityEvent[]; acti
     </summary>
     <ol>{steps.map(step => <li key={step.id}>
       <span className={`chat-tool-indicator ${step.status === "running" ? "is-running" : ""}`} aria-hidden="true">{step.status === "running" ? "" : step.status === "completed" ? "✓" : "!"}</span>
-      <span>{TOOL_LABELS[step.tool] ?? "Looking up information"}</span>
-      <span className="chat-tool-status">{step.status === "running" ? "In progress" : step.status === "completed" ? "Done" : step.status === "interrupted" ? "Stopped" : "Unavailable"}</span>
+      <span>{TOOL_LABELS[step.tool] ?? "Looking up information"}{step.failure && <small className="chat-tool-failure">{describeRunFailure(step.failure)}</small>}</span>
+      <span className="chat-tool-status">{step.status === "running" ? "In progress" : step.status === "completed" ? "Done" : step.status === "interrupted" ? "Stopped" : "Unavailable"}{formatToolDuration(step.durationMs) && <small>{formatToolDuration(step.durationMs)}</small>}</span>
     </li>)}</ol>
   </details>;
 }

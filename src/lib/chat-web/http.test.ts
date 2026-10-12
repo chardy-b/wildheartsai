@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ runtime: vi.fn(), claim: vi.fn(), context: vi.fn(), tool: vi.fn(), heartbeat: vi.fn(), researchBegin: vi.fn(), researchResult: vi.fn(), getSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({ runtime: vi.fn(), claim: vi.fn(), context: vi.fn(), tool: vi.fn(), heartbeat: vi.fn(), events: vi.fn(), finalize: vi.fn(), researchBegin: vi.fn(), researchResult: vi.fn(), getSession: vi.fn() }));
 vi.mock("./runtime", () => ({ webChatRuntime: mocks.runtime, ChatUnavailableError: class extends Error {} }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: mocks.getSession } } }));
 vi.mock("@/lib/env", () => ({ appUrl: () => "https://wildhearts.example" }));
@@ -11,8 +11,39 @@ const token = `whchat1.execution.${"a".repeat(43)}`;
 function request(method: string, value?: unknown, authorization = `Bearer ${token}`) {
   return new Request("https://wildhearts.example/api/chat/worker/v1/execution/tools", { method, headers: { authorization, "content-type": "application/json" }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) });
 }
-afterEach(() => vi.clearAllMocks());
+afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 describe("web chat transport boundary", () => {
+  it("correlates a sanitized failure with a fresh server-generated request ID", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.runtime.mockRejectedValueOnce(Object.assign(new Error("private-record-token-canary"), { code: "ECONNRESET" }));
+    const req = request("GET");
+    req.headers.set("X-Chat-Request-Id", "caller-private-canary");
+    const response = await workerRequest(req, ["execution", "context"]);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "chat_unavailable" });
+    const requestId = response.headers.get("X-Chat-Request-Id");
+    expect(requestId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(JSON.parse(spy.mock.calls[0][0])).toMatchObject({ requestId, operation: "execution/context", code: "ECONNRESET" });
+    expect(JSON.stringify(spy.mock.calls)).not.toContain("canary");
+    const success = await guarded(async () => json({ ok: true }));
+    expect(success.headers.get("X-Chat-Request-Id")).not.toBe(requestId);
+  });
+  it("logs accepted terminal failures once and keeps duplicate retries quiet", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.runtime.mockResolvedValue({ authority: { events: mocks.events, finalize: mocks.finalize } });
+    mocks.events.mockResolvedValueOnce({ status: "accepted" }).mockResolvedValueOnce({ status: "duplicate" });
+    const input = { events: [{ eventId: "5d83b16b-75dd-4b78-978e-fb0a57d508d1", sequence: 1, type: "error", data: { code: "inference_unavailable" } }] };
+    const response = await workerRequest(request("POST", input), ["execution", "events"]);
+    await workerRequest(request("POST", input), ["execution", "events"]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(spy.mock.calls[0][0])).toMatchObject({ event: "chat_run_failed", code: "inference_unavailable", requestId: response.headers.get("X-Chat-Request-Id") });
+    mocks.finalize.mockResolvedValueOnce({ status: "accepted" }).mockResolvedValueOnce({ status: "duplicate" });
+    const finalization = { requestId: input.events[0].eventId, status: "failed", errorCode: "runner_start_failed" };
+    await workerRequest(request("POST", finalization), ["control", "finalize"]);
+    await workerRequest(request("POST", finalization), ["control", "finalize"]);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(spy.mock.calls[1][0])).toMatchObject({ event: "chat_run_failed", code: "runner_start_failed" });
+  });
   it("rejects cookie-only worker requests before runtime access", async () => {
     const response = await workerRequest(new Request("https://wildhearts.example/api/chat/worker/v1/execution/context", { headers: { cookie: "synthetic-session-cookie" } }), ["execution", "context"]);
     expect(response.status).toBe(401);

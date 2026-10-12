@@ -46,6 +46,16 @@ describe("web authority HTTP adapter", () => {
     expect(delays).toEqual([2_000]);
   });
 
+  it("does not retry a durable lookup quota or expose arbitrary error text", async () => {
+    const fetcher = vi.fn(async () => Response.json({ error: "tool_limit_reached" }, { status: 429 }));
+    const api = new ChatWebApi({ baseUrl: localBase, fetcher, sleep: async () => undefined });
+    await expect(api.invokeTool(executionGrant, { toolCallId: "six_done", tool: "get_data_coverage", input: {} })).rejects.toMatchObject({ status: 429, code: "tool_limit_reached" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const privateError = vi.fn(async () => Response.json({ error: "patient-secret-canary" }, { status: 429 }));
+    const other = new ChatWebApi({ baseUrl: localBase, fetcher: privateError, maxAttempts: 1 });
+    await expect(other.invokeTool(executionGrant, { toolCallId: "quota", tool: "get_data_coverage", input: {} })).rejects.toMatchObject({ code: "chat_web_api_rate_limited" });
+  });
+
   it("fails closed on an HTTP redirect before any worker credential can be forwarded", async () => {
     const fetcher: typeof fetch = vi.fn(async (_input, init) => {
       expect(init?.redirect).toBe("error");

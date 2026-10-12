@@ -1,4 +1,5 @@
 import "server-only";
+import { logChatReapedRuns } from "./logging";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { canonicalJson } from "@/lib/crypto/user-keys";
@@ -115,12 +116,12 @@ export class ChatAuthority {
   }
 
   private scope(run: Run): ChatScope { return { userId: run.userId, conversationId: run.conversationId, runId: run.id, runAttempt: run.attempt, workerId: run.grantedWorkerId ?? undefined }; }
-  private active(run: Run, kind: GrantKind, allowTerminal: boolean): void {
+  private active(run: Run, kind: GrantKind, allowTerminal: boolean, readCancellation = false): void {
     const now = this.now();
-    if ((run.status === "running" && run.leaseOwner !== run.grantedWorkerId) || run.grantsRevokedAt || !run.deadlineAt || run.deadlineAt <= now || (!allowTerminal && (!run.leaseExpiresAt || run.leaseExpiresAt <= now || run.status !== "running")) || (allowTerminal && !terminal(run.status) && (!run.leaseExpiresAt || run.leaseExpiresAt <= now || run.status !== "running")) || (kind === "execution" && run.cancellationRequestedAt)) throw new ChatAuthorityError("run_not_active");
+    if ((run.status === "running" && run.leaseOwner !== run.grantedWorkerId) || run.grantsRevokedAt || !run.deadlineAt || run.deadlineAt <= now || (!allowTerminal && (!run.leaseExpiresAt || run.leaseExpiresAt <= now || run.status !== "running")) || (allowTerminal && !terminal(run.status) && (!run.leaseExpiresAt || run.leaseExpiresAt <= now || run.status !== "running")) || (kind === "execution" && run.cancellationRequestedAt && !readCancellation)) throw new ChatAuthorityError("run_not_active");
   }
 
-  private async authorized<T>(token: string, kind: GrantKind, allowTerminal: boolean, work: (tx: Db, run: Run, scope: ChatScope) => Promise<T>): Promise<T> {
+  private async authorized<T>(token: string, kind: GrantKind, allowTerminal: boolean, work: (tx: Db, run: Run, scope: ChatScope) => Promise<T>, readCancellation = false): Promise<T> {
     const located = await this.locate(token, kind);
     return asUser(this.options.dataDb, located.userId, async (tx) => {
       // Every worker operation and operator disablement shares this lock order.
@@ -130,10 +131,10 @@ export class ChatAuthority {
       const [run] = await tx.select().from(chatRun).where(and(eq(chatRun.id, located.id), eq(chatRun.userId, located.userId), eq(chatRun.conversationId, located.conversationId))).limit(1).for("update");
       if (!run || run.coordinatorId !== located.coordinatorId || run.initiatingSessionId !== located.initiatingSessionId || run.attempt !== located.attempt || (kind === "execution" ? run.executionGrantHash : run.controlGrantHash) !== credentialHash(token)) throw new ChatAuthorityError("run_not_active");
       if (!equal(credentialHash(this.grant(run, kind)), credentialHash(token))) throw new ChatAuthorityError("run_not_active");
-      this.active(run, kind, allowTerminal);
+      this.active(run, kind, allowTerminal, readCancellation);
       const result = await work(tx, run, this.scope(run));
       // Clock/session expiry during an in-flight call rolls back writes and refuses PHI.
-      this.active(run, kind, allowTerminal);
+      this.active(run, kind, allowTerminal, readCancellation);
       await lockInitiatingSession(tx, run.initiatingSessionId!, run.userId, this.now());
       return result;
     });
@@ -157,8 +158,9 @@ export class ChatAuthority {
   }
 
   async cancellation(token: string): Promise<{ cancelled: boolean }> {
-    try { return await this.authorized(token, "execution", false, async () => ({ cancelled: false })); }
-    catch (error) { if (error instanceof ChatAuthorityError && error.code === "run_not_active") return { cancelled: true }; throw error; }
+    // This read may observe a cancellation request, but every other grant/session/
+    // coordinator/lease/deadline fence remains mandatory. Inactivity is not cancellation.
+    return this.authorized(token, "execution", false, async (_tx, run) => ({ cancelled: !!run.cancellationRequestedAt }), true);
   }
 
   async tool(token: string, raw: ToolInput): Promise<ToolReply> {
@@ -239,6 +241,10 @@ export class ChatAuthority {
         } else {
           const result = await store.appendWorkerEvent(tx, scope, event, this.now());
           if (result.status === "out_of_order") throw new ChatAuthorityError("invalid_request", 409);
+          if (result.status === "appended" && event.type === "reasoning.delta") {
+            await this.budget(tx, run, "reasoningBytes", Buffer.byteLength(event.data.text as string, "utf8"), 32 * 1024);
+            await this.budget(tx, run, "reasoningEvents", 1, 16);
+          }
           accepted ||= result.status === "appended";
         }
       }
@@ -311,6 +317,7 @@ export class ChatAuthority {
       await store.closePendingResearchCalls(tx, { userId: run.userId, conversationId: run.conversationId, runId: run.id }, at);
       return 1;
     });
+    logChatReapedRuns(count);
     return count;
   }
 

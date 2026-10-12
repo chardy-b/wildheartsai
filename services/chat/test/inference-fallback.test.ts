@@ -205,7 +205,7 @@ describe("private gateway inference fallback", () => {
     const actualNow = Date.now;
     const now = vi.spyOn(Date, "now").mockImplementation(() => actualNow() + clockOffsetMs);
     const modelFetch: typeof fetch = vi.fn(async () => {
-      clockOffsetMs = 120_001;
+      clockOffsetMs = 240_001;
       return new Response("", { status: 503 });
     });
     const fixture = await startFixture(modelFetch, { fallbackModelIds: [backup] });
@@ -237,6 +237,42 @@ describe("private gateway inference fallback", () => {
     } finally { await fixture.close(); }
   });
 
+  it("finishes a slow primary and cold backup within one 240-second inference budget", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    const models: string[] = [];
+    let primaryStarted!: () => void;
+    let backupStarted!: () => void;
+    const primaryRequest = new Promise<void>((resolve) => { primaryStarted = resolve; });
+    const backupRequest = new Promise<void>((resolve) => { backupStarted = resolve; });
+    const modelFetch: typeof fetch = vi.fn(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { model: string };
+      models.push(body.model);
+      if (models.length === 1) {
+        primaryStarted();
+        await new Promise((resolve) => setTimeout(resolve, 119_000));
+        return new Response("", { status: 503 });
+      }
+      backupStarted();
+      await new Promise((resolve) => setTimeout(resolve, 119_000));
+      return stream("cold-start response");
+    });
+    const fixture = await startFixture(modelFetch, { fallbackModelIds: [backup], attemptTimeoutMs: 120_000 });
+    try {
+      const responsePromise = fetch(fixture.url, { method: "POST", headers: headers(), body: JSON.stringify(inferenceRequest) });
+      await primaryRequest;
+      await vi.advanceTimersByTimeAsync(119_000);
+      await backupRequest;
+      await vi.advanceTimersByTimeAsync(119_000);
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-wh-chat-model")).toBe(backup);
+      expect(await response.text()).toContain("cold-start response");
+      expect(models).toEqual([primary, backup]);
+    } finally {
+      vi.useRealTimers();
+      await fixture.close();
+    }
+  });
   it("rechecks web cancellation before a fallback attempt", async () => {
     let cancellationChecks = 0;
     const api = new ChatWebApi({

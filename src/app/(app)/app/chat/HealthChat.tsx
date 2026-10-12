@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, type RunActivities } from "./chat-client-state";
+import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, currentToolStep, describeRunFailure, type ActivityEvent, type RunActivities } from "./chat-client-state";
 
 import { ResearchSources } from "./ResearchSources";
 import { ChatAnswer, ChatIcon, CopyAnswer, ToolActivity } from "./ChatPresentation";
@@ -15,7 +15,7 @@ type Message = { id: string; sequence: number; role: string; content: string; cr
 type Run = { id: string; status: string; assistantMessageId?: string | null };
 type Detail = { conversation: Conversation; messages: Message[]; runs: Run[]; hasMore: boolean; nextBefore: number | null };
 type Summary = { id: string; text?: string; content?: { text?: string }; createdAt: string };
-type RunEvent = { sequence: number; kind: string; payload: { tool?: string; toolCallId?: string; status?: string; text?: string }; createdAt: string };
+type RunEvent = ActivityEvent;
 type ConversationPage = { conversations: Conversation[]; hasMore: boolean; nextCursor: string | null };
 type SummaryPage = { summaries: Summary[]; hasMore: boolean; nextCursor: string | null };
 
@@ -209,6 +209,7 @@ export function HealthChat() {
   const terminalRefreshPending = terminalRefreshError === runId;
 
   const activeRun = detail?.runs.find(isActive);
+  const activeStep = runActivity ? currentToolStep(runActivity.events) : null;
   const responding = !!activeRun && !terminalRefreshPending;
 
   useEffect(() => {
@@ -220,7 +221,7 @@ export function HealthChat() {
 
   useEffect(() => {
     if (followOutput.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [detail, runActivity?.answer, runActivity?.events.length, busy]);
+  }, [detail, runActivity?.answer, runActivity?.events.length, runActivity?.thinking, busy]);
 
   const stop = async () => {
     if (!activeRun || stopping === activeRun.id) return;
@@ -455,19 +456,21 @@ export function HealthChat() {
             const activity = messageRun ? activities.get(messageRun.id) : undefined;
             return <article className={`chat-message chat-message-${message.role === "user" ? "user" : "assistant"}`} key={message.id}>
               <div className="chat-message-author">{message.role !== "user" && <span className="chat-avatar"><ChatIcon name="spark" /></span>}{message.role === "user" ? "You" : "Wild Hearts"}</div>
+              {activity && (activity.thinking || activity.thinkingTruncated) && <ThinkingDisclosure text={activity.thinking} truncated={activity.thinkingTruncated} />}
               {activity && <ToolActivity events={activity.events} active={false} />}
               <ChatAnswer text={message.content} />
               {message.truncated && <p className="chat-notice" role="note">This saved message was shortened to fit the history page.</p>}
               {messageRun && <><ResearchSources key={messageRun.id} runId={messageRun.id} /><CopyAnswer text={message.content} /></>}
             </article>;
           })}</div>
-          {(busy || responding || (latestRun && isTerminal(latestRun.status) && !latestRun.assistantMessageId && !!runActivity && (!!runActivity.answer || !!runActivity.events.length))) && <article className="chat-message chat-message-assistant chat-partial" aria-label="Current response">
+          {(busy || responding || (latestRun && isTerminal(latestRun.status) && !latestRun.assistantMessageId && !!runActivity && (!!runActivity.answer || !!runActivity.events.length || !!runActivity.thinking || runActivity.thinkingTruncated))) && <article className="chat-message chat-message-assistant chat-partial" aria-label="Current response">
             <div className="chat-message-author"><span className="chat-avatar"><ChatIcon name="spark" /></span>Wild Hearts</div>
+            {!busy && runActivity && (runActivity.thinking || runActivity.thinkingTruncated) && <ThinkingDisclosure text={runActivity.thinking} truncated={runActivity.thinkingTruncated} />}
             {!busy && runActivity && <ToolActivity events={runActivity.events} active={responding} />}
             {!busy && runActivity?.answer && <ChatAnswer text={runActivity.answer} />}
-            {(busy || responding) && <div className="chat-run-status" role="status"><span className="chat-status-dots" aria-hidden="true"><i /><i /><i /></span>{busy ? "Sending your message" : reconnectingRun === runId ? "Reconnecting to your response…" : activeRun?.status === "cancelling" || stopping === activeRun?.id ? "Stopping…" : activeRun?.status === "queued" ? "Waiting to start" : runActivity?.answer ? "Writing your answer" : "Working on your question"}</div>}
+            {(busy || responding) && <div className="chat-run-status" role="status"><span className="chat-status-dots" aria-hidden="true"><i /><i /><i /></span>{busy ? "Sending your message" : reconnectingRun === runId ? "Reconnecting to your response…" : activeRun?.status === "cancelling" || stopping === activeRun?.id ? "Stopping…" : activeRun?.status === "queued" ? "Waiting to start" : runActivity?.answer ? "Writing your answer" : activeStep ? `${activeStep}…` : "Thinking through your question"}</div>}
           </article>}
-          {latestRun && ["failed", "cancelled", "interrupted"].includes(latestRun.status) && <div className="chat-notice"><p role="status">{latestRun.status === "cancelled" ? "Response stopped." : latestRun.status === "failed" ? "This response could not be completed." : "This response was interrupted."}</p><button type="button" disabled={busy} onClick={() => { const question = detail?.messages.filter(message => message.role === "user").at(-1); if (question) { pending.current = null; setDraft(question.content); textareaRef.current?.focus(); } }}>Retry question</button></div>}
+          {latestRun && ["failed", "cancelled", "interrupted"].includes(latestRun.status) && <div className="chat-notice"><p role="status">{latestRun.status === "cancelled" ? "Response stopped." : latestRun.status === "failed" ? describeRunFailure(runActivity?.failure) : "This response was interrupted."}</p><button type="button" disabled={busy} onClick={() => { const question = detail?.messages.filter(message => message.role === "user").at(-1); if (question) { pending.current = null; setDraft(question.content); textareaRef.current?.focus(); } }}>Retry question</button></div>}
           {terminalRefreshPending && <div className="chat-notice" role="alert">Your response finished, but could not be loaded. <button type="button" onClick={() => { setTerminalRefreshError(null); setTerminalRetry(value => value + 1); }}>Retry loading</button></div>}
         </div>
       </div>
@@ -488,4 +491,12 @@ export function HealthChat() {
       </div>
     </div>
   </div>;
+}
+
+export function ThinkingDisclosure({ text, truncated }: { text: string; truncated: boolean }) {
+  return <details className="chat-thinking">
+    <summary>Thinking</summary>
+    {text && <p>{text}</p>}
+    {truncated && <p role="note">Only the beginning of the assistant&apos;s working notes is shown.</p>}
+  </details>;
 }

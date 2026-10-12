@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { ChatAuthorityError } from "./protocol";
 import { ChatUnavailableError } from "./runtime";
+import { chatRequestDiagnostic, type ChatRequestContext } from "./logging";
 
 export const privateHeaders = { "Cache-Control": "private, no-store", Pragma: "no-cache", "X-Content-Type-Options": "nosniff" };
 export class ChatRequestError extends Error {
@@ -37,16 +38,25 @@ export function bearer(request: Request): string {
   if (!token) throw new ChatRequestError(401, "unauthorized");
   return token;
 }
-export async function guarded(work: () => Promise<Response>): Promise<Response> {
-  try { return await work(); }
+export async function guarded(work: (requestId: string) => Promise<Response>, context?: ChatRequestContext): Promise<Response> {
+  const diagnostic = chatRequestDiagnostic(context);
+  let response: Response;
+  try { response = await work(diagnostic.requestId); }
   catch (error) {
-    if (error instanceof ChatRequestError || error instanceof ChatAuthorityError) return json({ error: error.code }, error.status);
-    if (error instanceof ChatUnavailableError) return json({ error: "chat_unavailable" }, 503);
-    if (error instanceof z.ZodError || error instanceof SyntaxError) return json({ error: "invalid_request" }, 400);
-    if (error instanceof Error && "code" in error && error.code === "CHAT_RUN_BUSY") return json({ error: "conversation_busy" }, 409);
-    if (error instanceof Error && "code" in error && error.code === "CHAT_INVALID_CURSOR") return json({ error: "invalid_cursor" }, 400);
-    if (error instanceof Error && "code" in error && error.code === "CHAT_PAGE_TOO_LARGE") return json({ error: "response_too_large" }, 413);
-    // Exceptions can contain connection strings, identifiers or health context.
-    return json({ error: "chat_unavailable" }, 503);
+    response = errorResponse(error);
+    diagnostic.failure(response.status, error);
   }
+  response.headers.set("X-Chat-Request-Id", diagnostic.requestId);
+  return response;
+}
+
+function errorResponse(error: unknown): Response {
+  if (error instanceof ChatRequestError || error instanceof ChatAuthorityError) return json({ error: error.code }, error.status);
+  if (error instanceof ChatUnavailableError) return json({ error: "chat_unavailable" }, 503);
+  if (error instanceof z.ZodError || error instanceof SyntaxError) return json({ error: "invalid_request" }, 400);
+  if (error instanceof Error && "code" in error && error.code === "CHAT_RUN_BUSY") return json({ error: "conversation_busy" }, 409);
+  if (error instanceof Error && "code" in error && error.code === "CHAT_INVALID_CURSOR") return json({ error: "invalid_cursor" }, 400);
+  if (error instanceof Error && "code" in error && error.code === "CHAT_PAGE_TOO_LARGE") return json({ error: "response_too_large" }, 413);
+  // Exceptions can contain connection strings, identifiers or health context.
+  return json({ error: "chat_unavailable" }, 503);
 }
