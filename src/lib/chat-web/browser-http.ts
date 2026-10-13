@@ -101,6 +101,11 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
           if (rawAfter !== null && (!/^[1-9][0-9]*$/.test(rawAfter) || !Number.isSafeInteger(Number(rawAfter)))) throw new ChatRequestError(400, "invalid_cursor");
           return json(await store.listResearchToolPage(tx, owned, { after: rawAfter === null ? undefined : Number(rawAfter) }));
         }
+        if (request.method === "GET" && operation === "record-sources") {
+          const rawAfter = url.searchParams.get("after");
+          if (rawAfter !== null && (!/^(0|[1-9][0-9]*)$/.test(rawAfter) || !Number.isSafeInteger(Number(rawAfter)))) throw new ChatRequestError(400, "invalid_cursor");
+          return json(await store.listRecordSourcePage(tx, owned, { after: rawAfter === null ? undefined : Number(rawAfter) }));
+        }
         if (request.method === "GET" && operation === "events") {
           const raw = new URL(request.url).searchParams.get("after") ?? "0";
           if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new ChatRequestError(400, "invalid_event_id");

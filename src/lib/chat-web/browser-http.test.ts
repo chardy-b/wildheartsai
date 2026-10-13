@@ -151,4 +151,19 @@ describe("same-origin browser chat against the restricted data role", () => {
     await f.db.delete(session).where(eq(session.id, f.identity.session.id));
     expect((await f.call("GET", path)).status).toBe(401);
   });
+
+  it("authenticates FHIR record references and validates pagination", async () => {
+    const f = await fixture();
+    const submitted = await submitQuestionAndRun(f.dataDb, { userId: f.alice, conversationId: f.aliceConversation.id }, { message: "Synthetic record question", idempotencyKey: randomUUID(), initiatingSessionId: f.identity.session.id });
+    const path = ["runs", submitted.run.id, "record-sources"];
+    const response = await f.call("GET", path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ sources: [], hasMore: false, nextAfter: null });
+    for (const cursor of ["-1", "01", "1.5", "9007199254740992", "601", "not-a-number"]) {
+      expect((await f.call("GET", path, undefined, randomUUID(), `?after=${cursor}`)).status).toBe(400);
+    }
+    mocks.getSession.mockResolvedValue({ user: { id: f.bob, emailVerified: true }, session: { id: `session-${f.bob}` } });
+    expect((await f.call("GET", path)).status).toBe(404);
+  });
 });

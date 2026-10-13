@@ -159,3 +159,26 @@
 .chat-model-readiness { padding: 12px 16px; margin-bottom: 18px; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
 .chat-model-readiness p { margin: 4px 0 0; color: var(--muted); }
 .chat-model-readiness button { margin-top: 10px; font-size: 12px; }
+.chat-record-sources { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--text-2); font-size: 12px; }
+.chat-record-sources > p { color: var(--muted); font-size: 12px; margin: 10px 0 14px; }
+.chat-record-source { border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; background: rgb(255 255 255 / .015); }
+.chat-record-source > summary { display: flex; align-items: center; gap: 10px; list-style: none; padding: 12px; }
+.chat-record-source > summary::-webkit-details-marker { display: none; }
+.chat-record-source summary strong { display: block; color: var(--text); font-weight: 600; font-size: 13px; }
+.chat-record-source summary small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.chat-source-number { display: grid; place-items: center; flex-shrink: 0; width: 23px; height: 23px; border-radius: 7px; background: var(--rasp-soft); color: var(--rose); font-size: 11px; }
+.chat-record-source[open] > summary .chat-disclosure { transform: rotate(180deg); }
+.chat-record-source-body { border-top: 1px solid var(--line); padding: 12px 16px; overflow-wrap: anywhere; }
+.chat-record-source-body > p { margin: 0 0 12px; }
+.chat-source-reference, .chat-source-fields { margin: 0; }
+.chat-source-reference > div, .chat-source-fields > div { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 2fr); gap: 12px; margin-block: 8px; }
+.chat-source-reference dt, .chat-source-fields dt { color: var(--muted); }
+.chat-source-reference dd, .chat-source-fields dd { margin: 0; }
+.chat-source-reference { font-size: 11px; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 10px; }
+.chat-source-reference dd { font-family: ui-monospace, monospace; }
+.chat-source-note { color: var(--muted); font-size: 11px; margin-top: 12px !important; }
+.chat-source-excerpt { margin-top: 14px; }
+.chat-source-excerpt h4 { margin: 0 0 8px; font-size: 12px; font-weight: 600; }
+.chat-source-excerpt p { margin: 0; white-space: pre-wrap; }
+.chat-inline-source { display: inline; padding: 1px 5px; border-radius: 5px; background: var(--rasp-soft); color: var(--rose); font-size: .85em; text-decoration: none; white-space: nowrap; }
+.chat-inline-source:hover { text-decoration: underline; }

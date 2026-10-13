@@ -5,6 +5,7 @@ import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, mergeOld
 import { useModelWarmup, type ModelReadiness } from "./use-model-warmup";
 
 import { ResearchSources } from "./ResearchSources";
+import { AnswerWithRecordSources } from "./RecordSources";
 import { ChatAnswer, ChatIcon, CopyAnswer, ToolActivity } from "./ChatPresentation";
 
 const CHAT_API = "/api/chat/v1";
@@ -464,7 +465,7 @@ export function HealthChat() {
               <div className="chat-message-author">{message.role !== "user" && <span className="chat-avatar"><ChatIcon name="spark" /></span>}{message.role === "user" ? "You" : "Wild Hearts"}</div>
               {activity && (activity.thinking || activity.thinkingTruncated) && <ThinkingDisclosure text={activity.thinking} truncated={activity.thinkingTruncated} />}
               {activity && <ToolActivity events={activity.events} active={false} />}
-              <ChatAnswer text={message.content} />
+              {messageRun ? <AnswerWithRecordSources key={messageRun.id} runId={messageRun.id} text={message.content} /> : <ChatAnswer text={message.content} />}
               {message.truncated && <p className="chat-notice" role="note">This saved message was shortened to fit the history page.</p>}
               {messageRun && <><ResearchSources key={messageRun.id} runId={messageRun.id} /><CopyAnswer text={message.content} /></>}
             </article>;
