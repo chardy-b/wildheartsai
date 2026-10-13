@@ -3,6 +3,10 @@ import { z } from "zod";
 const schema = z
   .object({
     DATABASE_URL: z.url(),
+    R2_ACCOUNT_ID: z.string().regex(/^[a-f0-9]{32}$/).optional(),
+    R2_BUCKET_NAME: z.string().min(3).optional(),
+    R2_ACCESS_KEY_ID: z.string().min(1).optional(),
+    R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
     // Optional verifier only; the raw research credential belongs exclusively to the VPS gateway.
     CHAT_RESEARCH_GATEWAY_TOKEN_HASH: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     BETTER_AUTH_SECRET: z.string().min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
@@ -51,6 +55,12 @@ const schema = z
       .refine((value) => Buffer.from(value, "base64").length === 32, "RECORDS_ENCRYPTION_KEY must be 32 bytes, base64-encoded"),
   })
   .superRefine((value, ctx) => {
+    const r2Keys = ["R2_ACCOUNT_ID", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] as const;
+    if (r2Keys.some((key) => value[key])) {
+      for (const key of r2Keys) {
+        if (!value[key]) ctx.addIssue({ code: "custom", path: [key], message: "Set all four R2 storage variables together" });
+      }
+    }
     if (value.RECORDS_ENCRYPTION_KEY === value.TOKEN_ENCRYPTION_KEY) {
       ctx.addIssue({ code: "custom", path: ["RECORDS_ENCRYPTION_KEY"], message: "RECORDS_ENCRYPTION_KEY must differ from TOKEN_ENCRYPTION_KEY" });
     }

@@ -54,6 +54,16 @@ Copy `.env.example` to `.env.local` for local placeholders. Never commit real cr
 
 Vercel should hold preview and production values separately after the GitHub project is imported.
 
+## Wildcards file storage
+
+Wildcards at `/app/wildcards` accepts multiple PDFs, UTF-8 text files, PNGs, JPEGs, GIFs, and WebP images. Each file is limited to 3 MB; each person can store up to 100 MB or 200 files. The UI lists original names, detected types, server upload timestamps (UTC), and sizes, with authenticated viewing, original download, and deletion. PDFs render page by page in the app; embedded PDF scripts, forms, and links are not executed. Extraction and tagging are not stored yet.
+
+Create a **private Cloudflare R2 Standard** bucket for production, and a separate bucket for preview/development. Keep public access (`r2.dev` and custom domains) disabled. Browser uploads and downloads go through the authenticated app, so the bucket needs no browser CORS policy. Create an R2 S3 API credential with **Object Read & Write** permission scoped only to the appropriate bucket. Store its values in Vercel's server environment (and `.env.local` for local development): `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`. Never use `NEXT_PUBLIC_` variables or paste credentials into chat. All four settings must be provided together; leaving all four unset disables new uploads without affecting the rest of the app.
+
+Apply migration `0011_wildcard_files` locally with `npm run db:migrate`; Vercel runs it during deployment. Neon stores ownership, size, status, timestamp, opaque object key, and encrypted filename/type metadata. R2 stores only AES-256-GCM ciphertext, bound to the owner's data key and file ID. No public or signed file URLs are generated, and R2 credentials remain server-only. The compact envelope adds 29 bytes per original file. Preserve the existing `RECORDS_ENCRYPTION_KEY` and database user keys: losing either makes stored files unreadable.
+
+Pending uploads reserve quota before the network request; only ready files can be viewed or downloaded. Failed upload cleanup and failed deletion remain visible for the owner to retry. R2 operations run outside database transactions. If account deletion is added in the future, include R2 object cleanup alongside database cascades; deleting database rows alone does not delete objects in R2. No real-user uploads should be used for QA; storage isolation, encryption, failure recovery, and API tests use in-memory objects and made-up data.
+
 ## Metriport sandbox
 
 Set the optional, server-only `METRIPORT_API_KEY` to a Metriport sandbox key to show five sample patients on Connections. Leave it unset to hide the option. Apply migration `0010_metriport_connection` with `npm run db:migrate` locally; Vercel applies it during the build. Record imports also need the existing Inngest configuration (locally, `INNGEST_DEV=1` and the Inngest dev server).

@@ -23,6 +23,7 @@
     "chat:coordinator": "node scripts/provision-chat-coordinator.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1150.0",
     "@better-auth/drizzle-adapter": "^1.7.5",
     "@vercel/analytics": "^2.0.1",
     "better-auth": "^1.7.5",
@@ -31,6 +32,7 @@
     "jose": "^6.2.12",
     "next": "16.3.6",
     "nodemailer": "^10.0.10",
+    "pdfjs-dist": "^6.4.299",
     "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
