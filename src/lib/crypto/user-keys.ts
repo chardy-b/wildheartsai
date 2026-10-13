@@ -1,5 +1,5 @@
 import "server-only";
-import { createHmac, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { userDataKey } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
@@ -60,6 +60,24 @@ export function sealField(keys: UserKeys, plaintext: string, location: FieldLoca
 
 export function unsealField(keys: UserKeys, sealed: string, location: FieldLocation): string {
   return unseal(sealed, keys.encryptionKey, aadFor(keys, location));
+}
+
+// Compact binary envelope for object storage: version, 12-byte IV, 16-byte tag,
+// ciphertext. Unlike text sealing this adds only 29 bytes to each original file.
+export function sealBinaryField(keys: UserKeys, bytes: Buffer, location: FieldLocation): Buffer {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", keys.encryptionKey, iv);
+  cipher.setAAD(Buffer.from(aadFor(keys, location)));
+  const content = Buffer.concat([cipher.update(bytes), cipher.final()]);
+  return Buffer.concat([Buffer.from([1]), iv, cipher.getAuthTag(), content]);
+}
+
+export function unsealBinaryField(keys: UserKeys, sealed: Buffer, location: FieldLocation): Buffer {
+  if (sealed.length < 29 || sealed[0] !== 1) throw new Error("Invalid binary envelope");
+  const decipher = createDecipheriv("aes-256-gcm", keys.encryptionKey, sealed.subarray(1, 13));
+  decipher.setAAD(Buffer.from(aadFor(keys, location)));
+  decipher.setAuthTag(sealed.subarray(13, 29));
+  return Buffer.concat([decipher.update(sealed.subarray(29)), decipher.final()]);
 }
 
 // JSON with object keys sorted at every level, so equal resources hash equally
