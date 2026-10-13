@@ -54,9 +54,9 @@ Copy `.env.example` to `.env.local` for local placeholders. Never commit real cr
 
 Vercel should hold preview and production values separately after the GitHub project is imported.
 
-## Wildcards file storage
+## Documents file storage
 
-Wildcards at `/app/wildcards` accepts multiple PDFs, UTF-8 text files, PNGs, JPEGs, GIFs, and WebP images. Each file is limited to 3 MB; each person can store up to 100 MB or 200 files. The UI lists original names, detected types, server upload timestamps (UTC), and sizes, with authenticated viewing, original download, and deletion. PDFs render page by page in the app; embedded PDF scripts, forms, and links are not executed. Extraction and tagging are not stored yet.
+Documents at `/app/wildcards` accepts multiple PDFs, UTF-8 text files, PNGs, JPEGs, GIFs, and WebP images. Each file is limited to 3 MB; each person can store up to 100 MB or 200 files. The UI lists original names, detected types, server upload timestamps (UTC), and sizes, with authenticated viewing, original download, and deletion. PDFs render page by page in the app; embedded PDF scripts, forms, and links are not executed. Extraction and tagging are not stored yet.
 
 Create a **private Cloudflare R2 Standard** bucket for production, and a separate bucket for preview/development. Keep public access (`r2.dev` and custom domains) disabled. Browser uploads and downloads go through the authenticated app, so the bucket needs no browser CORS policy. Create an R2 S3 API credential with **Object Read & Write** permission scoped only to the appropriate bucket. Store its values in Vercel's server environment (and `.env.local` for local development): `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`. Never use `NEXT_PUBLIC_` variables or paste credentials into chat. All four settings must be provided together; leaving all four unset disables new uploads without affecting the rest of the app.
 

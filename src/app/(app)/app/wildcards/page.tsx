@@ -10,7 +10,7 @@ export default async function WildcardsPage() {
   const session = await requireSession();
   const files = await listFiles(db, recordsKey(), session.user.id);
   return <section className="app-page wildcards">
-    <h1>Wildcards</h1>
+    <h1>Documents</h1>
     <p className="lede">A private place for the files you want to keep with your health record. Only you can access them through your account.</p>
     <Wildcards files={files} available={r2Configured()} />
   </section>;
