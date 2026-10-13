@@ -49,7 +49,7 @@ export async function storeFile(db: Db, kek: Buffer, userId: string, name: strin
     const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::int` })
       .from(wildcardFile).where(eq(wildcardFile.userId, userId));
     if (usage.count >= MAX_FILES || usage.bytes + bytes.length > MAX_STORAGE_BYTES) {
-      throw new FileInputError("Your Wildcards storage is full (100 MB or 200 files). Delete a file before uploading more.");
+      throw new FileInputError("Your Documents storage is full (100 MB or 200 files). Delete a file before uploading more.");
     }
     const now = new Date();
     const keys = await userKeysFor(tx, kek, userId, now);
