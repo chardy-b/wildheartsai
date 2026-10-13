@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { CHAT_MAX_CONTEXT_BYTES, CHAT_MAX_EVENT_BYTES, CHAT_MAX_REQUEST_BYTES, CHAT_MAX_RESEARCH_OUTPUT_BYTES, CHAT_MAX_TOOL_OUTPUT_BYTES, agentToolInputSchema, protocolEventSchema, researchErrorCodeSchema, researchOutputSchema } from "./protocol.js";
 import { CHAT_MAX_TOOL_REPLY_BYTES, ChatWebApi, ChatWebApiError } from "./web-api.js";
@@ -6,6 +7,7 @@ import type { ChatMessage, ToolName, WorkerEvent } from "./contracts.js";
 import type { ResearchBeginReply, ResearchErrorCode, ResearchOutput } from "./protocol.js";
 
 const executionGrantPattern = /^whchat1\.execution\.[A-Za-z0-9_-]{43}$/;
+const warmupGrantPattern = /^whchat1\.warmup\.[A-Za-z0-9_-]{43}$/;
 const inferenceRequestLimit = 512 * 1024;
 const inferenceStreamLimit = 4 * 1024 * 1024;
 const inferenceTimeoutMs = 240_000;
@@ -49,6 +51,7 @@ export function createPrivateToolGateway(options: PrivateGatewayOptions) {
   });
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (request.url === "/v1/warmup" && request.method === "POST") return warmup(request, response);
     const executionGrant = request.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
     if (!executionGrant || !executionGrantPattern.test(executionGrant)) return sendJson(response, 401, { error: "unauthorized" });
     if (request.url === "/v1/worker/context" && request.method === "GET") {
@@ -82,6 +85,58 @@ export function createPrivateToolGateway(options: PrivateGatewayOptions) {
       return streamInference(request, response, executionGrant);
     }
     return sendJson(response, 404, { error: "not_found" });
+  }
+
+  async function warmup(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const grant = request.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    if (!grant || !warmupGrantPattern.test(grant)) return sendJson(response, 401, { error: "unauthorized" });
+    const body = await readJsonBody(request, 1_024);
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 0) return sendJson(response, 400, { error: "invalid_request" });
+    const controller = new AbortController();
+    let clientGone = false;
+    const abort = () => { clientGone = true; controller.abort(); };
+    const socket = request.socket;
+    request.once("aborted", abort);
+    socket.once("close", abort);
+    response.once("close", abort);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const lease = await options.api.verifyModelWarmup(grant);
+      if (clientGone || controller.signal.aborted || request.aborted || request.socket.destroyed || response.destroyed) return;
+      const expectedFingerprint = createHash("sha256").update(options.modelId).digest("hex");
+      if (lease.modelFingerprint !== expectedFingerprint) return sendJson(response, 409, { error: "model_mismatch" });
+      const remainingMs = Date.parse(lease.expiresAt) - Date.now() - 10_000;
+      const timeoutMs = Math.min(120_000, remainingMs);
+      if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) return sendJson(response, 409, { error: "lease_expired" });
+      timeout = setTimeout(() => controller.abort(), timeoutMs);
+      const upstream = await fetcher(new URL("chat/completions", inferenceUrl), {
+        method: "POST",
+        redirect: "error",
+        signal: controller.signal,
+        headers: { "content-type": "application/json", ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}) },
+        body: JSON.stringify({ model: options.modelId, messages: [{ role: "user", content: "Reply OK." }], max_tokens: 1, stream: false, temperature: 0 }),
+      });
+      if (!upstream.ok) {
+        await upstream.body?.cancel().catch(() => undefined);
+        return sendJson(response, 502, { status: "failed" });
+      }
+      const payload = await readWarmupResponseText(upstream, 4_096);
+      if (!payload) return sendJson(response, 502, { status: "failed" });
+      let parsed: unknown;
+      try { parsed = JSON.parse(payload); } catch { return sendJson(response, 502, { status: "failed" }); }
+      const choices = parsed && typeof parsed === "object" ? (parsed as { choices?: unknown }).choices : undefined;
+      const choice = Array.isArray(choices) ? choices[0] : undefined;
+      if (!choice || typeof choice !== "object" || !["stop", "length"].includes(String((choice as { finish_reason?: unknown }).finish_reason))) return sendJson(response, 502, { status: "failed" });
+      return sendJson(response, 200, { status: "ready" });
+    } catch {
+      if (clientGone || request.aborted || request.socket.destroyed || response.destroyed) return;
+      return sendJson(response, 502, { status: "failed" });
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      request.off("aborted", abort);
+      socket.off("close", abort);
+      response.off("close", abort);
+    }
   }
 
   async function streamInference(request: IncomingMessage, response: ServerResponse, executionGrant: string): Promise<void> {
@@ -436,6 +491,31 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise
 
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
   catch { throw new ChatWebApiError(400, "invalid_worker_request"); }
+}
+
+async function readWarmupResponseText(response: Response, maxBytes: number): Promise<string | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const item = await reader.read();
+      if (item.done) break;
+      size += item.value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(item.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const combined = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { combined.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(combined);
 }
 
 function sendBoundedJson(response: ServerResponse, status: number, body: unknown, maxBytes: number): void {

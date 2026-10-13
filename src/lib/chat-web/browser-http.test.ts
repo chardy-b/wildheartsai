@@ -33,18 +33,37 @@ async function fixture() {
   for (const userId of [alice, bob]) await db.insert(session).values({ id: `session-${userId}`, userId, token: `synthetic-${userId}`, expiresAt: new Date(now.getTime() + 3600_000), createdAt: now, updatedAt: now });
   const identity = { user: { id: alice, emailVerified: true }, session: { id: `session-${alice}` } };
   mocks.getSession.mockResolvedValue(identity);
-  mocks.runtime.mockResolvedValue({ dataDb, authority: { reap: async () => 0 } });
+  const authority = {
+    reap: vi.fn(async () => 0),
+    modelWarmupStatus: vi.fn(async (): Promise<{ status: "idle" | "queued" | "running" | "ready" | "failed"; retryAt: string | null; readyUntil: string | null }> => ({ status: "idle", retryAt: null, readyUntil: null })),
+    requestModelWarmup: vi.fn(async () => "queued"),
+  };
+  mocks.runtime.mockResolvedValue({ dataDb, authority });
   const aliceConversation = await createConversation(dataDb, { userId: alice });
   const bobConversation = await createConversation(dataDb, { userId: bob });
   const call = (method: string, path: string[], value?: unknown, idempotencyKey = randomUUID(), search = "") => browserRequest(new Request(`https://wildhearts.example/api/chat/v1/${path.join("/")}${search}`, {
     method, headers: { origin: "https://wildhearts.example", "content-type": "application/json", "idempotency-key": idempotencyKey },
     ...(value === undefined ? {} : { body: JSON.stringify(value) }),
   }), path);
-  return { db, dataDb, alice, bob, aliceConversation, bobConversation, call, identity };
+  return { db, dataDb, authority, alice, bob, aliceConversation, bobConversation, call, identity };
 }
 beforeEach(() => vi.clearAllMocks());
 
 describe("same-origin browser chat against the restricted data role", () => {
+  it("returns only bounded warm-up state before opening a patient-scoped data transaction", async () => {
+    const f = await fixture();
+    f.authority.modelWarmupStatus.mockResolvedValue({ status: "ready", retryAt: null, readyUntil: "2026-10-08T20:05:00.000Z" });
+    const status = await f.call("GET", ["warmup"]);
+    expect(status.status).toBe(200);
+    expect(await status.json()).toEqual({ status: "ready", retryAt: null, readyUntil: "2026-10-08T20:05:00.000Z" });
+    const started = await f.call("POST", ["warmup"], {});
+    expect(started.status).toBe(202);
+    expect(await started.json()).toEqual({ status: "ready", retryAt: null, readyUntil: "2026-10-08T20:05:00.000Z" });
+    expect(f.authority.requestModelWarmup).toHaveBeenCalledTimes(1);
+    expect(f.authority.reap).not.toHaveBeenCalled();
+    expect((await f.call("POST", ["warmup"], { modelId: "caller-selected" })).status).toBe(400);
+  });
+
   it("persists one turn across duplicate submissions and binds work to the authenticated session", async () => {
     const f = await fixture(); const key = randomUUID(); const path = ["conversations", f.aliceConversation.id, "runs"];
     const first = await f.call("POST", path, { message: "Synthetic question" }, key);

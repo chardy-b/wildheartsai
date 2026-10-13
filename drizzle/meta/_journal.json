@@ -78,6 +78,13 @@
       "when": 1791524757750,
       "tag": "0010_metriport_connection",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791785824776,
+      "tag": "0011_chat_model_warmup",
+      "breakpoints": true
     }
   ]
 }

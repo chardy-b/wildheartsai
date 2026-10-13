@@ -13,13 +13,33 @@ const run: ClaimedWebRun = {
 };
 
 describe("remote run dispatcher", () => {
+  it("completes one pending warm-up before claiming a saved chat run", async () => {
+    const order: string[] = [];
+    let warmupClaimed = false;
+    const lease = { grant: `whchat1.warmup.${"w".repeat(43)}`, leaseId: "20000000-0000-4000-8000-000000000002", generation: 3, expiresAt: new Date(Date.now() + 120_000).toISOString(), requestId: "20000000-0000-4000-8000-000000000003", workerId: "worker-test" };
+    const api = {
+      claimModelWarmup: async () => { order.push("warmup-claim"); if (warmupClaimed) return { warmup: null }; warmupClaimed = true; return { warmup: lease }; },
+      completeModelWarmup: async (input: unknown) => { order.push("warmup-complete"); expect(input).toMatchObject({ leaseId: lease.leaseId, generation: lease.generation, status: "ready" }); return { status: "accepted" as const }; },
+      claim: async () => { order.push("chat-claim"); return { run: null }; },
+      heartbeat: async () => ({ active: false, cancelled: false, deadlineAt: run.deadlineAt }),
+      finalize: async () => ({ status: "accepted" as const }),
+    };
+    const iggy = { startHealthRun: async () => undefined, cancelHealthRun: async () => undefined, getHealthRunStatus: async () => "completed" as const };
+    const modelWarmup = { run: async (input: typeof lease) => { order.push("model-warmup"); expect(input).toEqual(lease); return true; } };
+    const dispatcher = new IggyRunDispatcher(api, iggy, "worker-test", { modelWarmup });
+    await expect(dispatcher.dispatchOnce()).resolves.toBe(true);
+    expect(order).toEqual(["warmup-claim", "model-warmup", "warmup-complete"]);
+    await expect(dispatcher.dispatchOnce()).resolves.toBe(false);
+    expect(order).toEqual(["warmup-claim", "model-warmup", "warmup-complete", "warmup-claim", "chat-claim"]);
+  });
+
   it("sends execution grants to Iggy and keeps control grants on the coordinator", async () => {
     const iggyStarts: unknown[] = [];
     const iggyCancels: string[] = [];
     const heartbeats: string[] = [];
     const finalizations: Array<{ grant: string; value: unknown }> = [];
     const api = {
-      claim: vi.fn(async (input: { requestId: string; workerId: string }) => ({ run: { ...run } })),
+      claim: vi.fn(async (input: { requestId: string; workerId: string }) => { expect(input.workerId).toBe("worker-test"); expect(input.requestId).toMatch(/^[0-9a-f-]{36}$/); return { run: { ...run } }; }),
       heartbeat: vi.fn(async (grant: string) => { heartbeats.push(grant); return { active: false, cancelled: true, deadlineAt: run.deadlineAt }; }),
       finalize: vi.fn(async (grant: string, value: unknown) => { finalizations.push({ grant, value }); return { status: "accepted" as const }; }),
     };

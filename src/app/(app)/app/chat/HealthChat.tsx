@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyRunEvents, createDetailReadGuard, createRequestLifecycle, mergeOlderDetailIfCurrent, mergeUniqueById, retryTerminalHydration, currentToolStep, describeRunFailure, type ActivityEvent, type RunActivities } from "./chat-client-state";
+import { useModelWarmup, type ModelReadiness } from "./use-model-warmup";
 
 import { ResearchSources } from "./ResearchSources";
 import { AnswerWithRecordSources } from "./RecordSources";
@@ -64,6 +65,7 @@ function wait(delay: number, signal: AbortSignal): Promise<void> {
 }
 
 export function HealthChat() {
+  const { readiness, requestWarmup } = useModelWarmup();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsHasMore, setConversationsHasMore] = useState(false);
   const [conversationCursor, setConversationCursor] = useState<string | null>(null);
@@ -308,6 +310,8 @@ export function HealthChat() {
     if (sendingRef.current || busy || !text || loadingChats || (selected && !detail) || detail?.runs.some(isActive)) return;
     sendingRef.current = true;
     followOutput.current = true;
+    // Warmup runs alongside the existing idempotent submission; never gate Send on readiness.
+    requestWarmup();
     setBusy(true);
     setError("");
     try {
@@ -401,6 +405,7 @@ export function HealthChat() {
 
   const selectChat = (id: string | null) => {
     if (id === selected && id !== null) { setHistoryOpen(false); return; }
+    if (id === null) requestWarmup();
     if (id === null) detailGuard.reset(); else detailGuard.select(id);
     setSelected(id); setDetail(null); setError(""); setTerminalRefreshError(null);
     setDraft(""); setHistoryOpen(false); followOutput.current = true; setShowJump(false);
@@ -443,6 +448,7 @@ export function HealthChat() {
         followOutput.current = nearBottom; setShowJump(!nearBottom);
       }}>
         <div className="chat-thread">
+          <ModelReadinessNotice readiness={readiness} onRetry={requestWarmup} />
           {loadingConversation && <div className="chat-loading" role="status"><span className="chat-tool-indicator is-running" />Loading your conversation…</div>}
           {empty && <div className="chat-welcome">
             <div className="chat-welcome-mark"><ChatIcon name="spark" /></div>
@@ -469,7 +475,7 @@ export function HealthChat() {
             {!busy && runActivity && (runActivity.thinking || runActivity.thinkingTruncated) && <ThinkingDisclosure text={runActivity.thinking} truncated={runActivity.thinkingTruncated} />}
             {!busy && runActivity && <ToolActivity events={runActivity.events} active={responding} />}
             {!busy && runActivity?.answer && <ChatAnswer text={runActivity.answer} />}
-            {(busy || responding) && <div className="chat-run-status" role="status"><span className="chat-status-dots" aria-hidden="true"><i /><i /><i /></span>{busy ? "Sending your message" : reconnectingRun === runId ? "Reconnecting to your response…" : activeRun?.status === "cancelling" || stopping === activeRun?.id ? "Stopping…" : activeRun?.status === "queued" ? "Waiting to start" : runActivity?.answer ? "Writing your answer" : activeStep ? `${activeStep}…` : "Thinking through your question"}</div>}
+            {(busy || responding) && <div className="chat-run-status" role="status"><span className="chat-status-dots" aria-hidden="true"><i /><i /><i /></span>{busy ? "Sending your message" : reconnectingRun === runId ? "Reconnecting to your response…" : activeRun?.status === "cancelling" || stopping === activeRun?.id ? "Stopping…" : activeRun?.status === "queued" && readiness.status !== "ready" ? "Waiting for the model" : activeRun?.status === "queued" ? "Waiting to start" : runActivity?.answer ? "Writing your answer" : activeStep ? `${activeStep}…` : "Thinking through your question"}</div>}
           </article>}
           {latestRun && ["failed", "cancelled", "interrupted"].includes(latestRun.status) && <div className="chat-notice"><p role="status">{latestRun.status === "cancelled" ? "Response stopped." : latestRun.status === "failed" ? describeRunFailure(runActivity?.failure) : "This response was interrupted."}</p><button type="button" disabled={busy} onClick={() => { const question = detail?.messages.filter(message => message.role === "user").at(-1); if (question) { pending.current = null; setDraft(question.content); textareaRef.current?.focus(); } }}>Retry question</button></div>}
           {terminalRefreshPending && <div className="chat-notice" role="alert">Your response finished, but could not be loaded. <button type="button" onClick={() => { setTerminalRefreshError(null); setTerminalRetry(value => value + 1); }}>Retry loading</button></div>}
@@ -500,4 +506,38 @@ export function ThinkingDisclosure({ text, truncated }: { text: string; truncate
     {text && <p>{text}</p>}
     {truncated && <p role="note">Only the beginning of the assistant&apos;s working notes is shown.</p>}
   </details>;
+}
+
+export function ModelReadinessNotice({ readiness, onRetry }: { readiness: ModelReadiness; onRetry: () => void }) {
+  const lastConfirmed = readiness.lastConfirmedAt === null
+    ? null
+    : new Date(readiness.lastConfirmedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  if (readiness.status === "ready") {
+    return <section className="chat-model-readiness" aria-label="Model availability" role="status">
+      <strong>Ready</strong>
+      <p>{lastConfirmed ? `Last confirmed at ${lastConfirmed}.` : "The model was just confirmed ready."} It may unload later.</p>
+    </section>;
+  }
+
+  if (readiness.checking && (readiness.status === "queued" || readiness.status === "running" || readiness.status === "idle")) {
+    return <section className="chat-model-readiness" aria-label="Model availability" role="status">
+      <strong>Loading model…</strong>
+      <p>You can send a question while it loads.</p>
+    </section>;
+  }
+
+  if (readiness.status === "failed") {
+    return <section className="chat-model-readiness" aria-label="Model availability" role="status">
+      <strong>Model warmup failed</strong>
+      <p>{readiness.message ?? "The model could not be loaded. Your question can still be sent."}</p>
+      <button type="button" onClick={onRetry}>Try loading again</button>
+    </section>;
+  }
+
+  return <section className="chat-model-readiness" aria-label="Model availability">
+    <strong>Model is idle</strong>
+    <p>{readiness.message ?? "You can ask now; your answer may wait for the model."}</p>
+    <button type="button" onClick={onRetry}>Load model</button>
+  </section>;
 }

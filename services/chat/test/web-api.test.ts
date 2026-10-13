@@ -3,9 +3,26 @@ import { ChatWebApi } from "../src/web-api.js";
 
 const executionGrant = `whchat1.execution.${"e".repeat(43)}`;
 const controlGrant = `whchat1.control.${"c".repeat(43)}`;
+const warmupGrant = `whchat1.warmup.${"w".repeat(43)}`;
 const localBase = new URL("http://127.0.0.1:8765/api/chat/worker/v1");
 
 describe("web authority HTTP adapter", () => {
+  it("accepts only a bounded private warm-up verification reply", async () => {
+    const seen: Array<{ url: string; authorization: string | null; body: string | undefined }> = [];
+    const fingerprint = "a".repeat(64);
+    const api = new ChatWebApi({
+      baseUrl: localBase,
+      fetcher: async (input, init) => {
+        seen.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization"), body: init?.body as string | undefined });
+        return Response.json({ active: true, expiresAt: "2026-10-08T20:00:00.000Z", modelFingerprint: fingerprint });
+      },
+    });
+    await expect(api.verifyModelWarmup(warmupGrant)).resolves.toEqual({ active: true, expiresAt: "2026-10-08T20:00:00.000Z", modelFingerprint: fingerprint });
+    expect(seen).toEqual([{ url: "http://127.0.0.1:8765/api/chat/worker/v1/execution/warmup/verify", authorization: `Bearer ${warmupGrant}`, body: "{}" }]);
+    const invalid = new ChatWebApi({ baseUrl: localBase, fetcher: async () => Response.json({ active: true, expiresAt: "2026-10-08T20:00:00.000Z", modelFingerprint: "not-a-fingerprint" }) });
+    await expect(invalid.verifyModelWarmup(warmupGrant)).rejects.toMatchObject({ code: "chat_web_api_invalid_reply" });
+  });
+
   it("retries claims with the same request ID and serialized body", async () => {
     const seen: Array<{ url: string; body: string | undefined; authorization: string | undefined }> = [];
     const api = new ChatWebApi({

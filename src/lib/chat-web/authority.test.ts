@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createTestDb, createTestUser } from "@/test/db";
 import { sealField, userKeysFor } from "@/lib/crypto/user-keys";
-import { chatCoordinator, chatEvent, chatRun, chatToolCall, fhirAttachment, fhirResource, healthSource, session, userSummary } from "@/lib/db/schema";
+import { chatCoordinator, chatEvent, chatModelWarmup, chatRun, chatToolCall, fhirAttachment, fhirResource, healthSource, session, userSummary } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { createConversation, listMessages, requestRunCancellation, submitQuestionAndRun } from "@/lib/chat/store";
 import { ChatAuthority, credentialHash } from "./authority";
@@ -14,6 +14,10 @@ import { CHAT_DEADLINE_MS, type ClaimReply } from "./protocol";
 
 async function fixture() {
   const db = await createTestDb();
+  // Warm-up rows use the server-only primary connection in production. A second
+  // PGlite instance models its separate pool so queue and primary transactions
+  // do not deadlock on one in-memory connection.
+  const operationalDb = await createTestDb();
   const client = (db as unknown as { $client: PGlite }).$client;
   const provisioning = await readFile("scripts/provision-chat-roles.sql", "utf8");
   await client.exec(provisioning.slice(provisioning.indexOf("BEGIN;")).replace(/PASSWORD :'chat_(data|queue)_password'/g, ""));
@@ -29,7 +33,7 @@ async function fixture() {
   for (const userId of [alice, bob]) await db.insert(session).values({ id: `session-${userId}`, userId, token: `synthetic-${userId}`, expiresAt: new Date(time.getTime() + 3600_000), createdAt: time, updatedAt: time });
   const bootstrap = "synthetic-bootstrap-credential-with-32-bytes";
   const [coordinator] = await db.insert(chatCoordinator).values({ credentialHash: credentialHash(bootstrap), claimWindowAt: time }).returning();
-  const authority = new ChatAuthority({ dataDb, queueDb, grantKey: Buffer.alloc(32, 9), modelId: "synthetic-model", now: () => time });
+  const authority = new ChatAuthority({ dataDb, queueDb, operationalDb, grantKey: Buffer.alloc(32, 9), modelId: "synthetic-model", now: () => time });
   const conversations = new Map<string, string>();
   for (const userId of [alice, bob]) conversations.set(userId, (await createConversation(dataDb, { userId })).id);
   const submit = async (userId = alice, initiatingSessionId: string | undefined = `session-${userId}`) => submitQuestionAndRun(dataDb, { userId, conversationId: conversations.get(userId)! }, { message: "Synthetic health question", idempotencyKey: randomUUID(), initiatingSessionId, now: time });
@@ -49,11 +53,68 @@ async function fixture() {
     await db.insert(fhirAttachment).values({ id, userId, sourceId: parent.sourceId, resourceId: recordId, sealedUrl: "synthetic-unused", urlHmac: id, sealedText: sealField(keys, "Synthetic note text", { table: "fhir_attachment", field: "text", rowId: id }), fetchedAt: time });
     return id;
   };
-  return { db, dataDb, queueDb, authority, bootstrap, coordinator, alice, bob, conversations, submit, claim, record, note, time: () => time, advance: (ms: number) => { time = new Date(time.getTime() + ms); }, dataClient: roleClient("wildhearts_chat_data"), queueClient: roleClient("wildhearts_chat_queue") };
+  return { db, operationalDb, dataDb, queueDb, authority, bootstrap, coordinator, alice, bob, conversations, submit, claim, record, note, time: () => time, advance: (ms: number) => { time = new Date(time.getTime() + ms); }, dataClient: roleClient("wildhearts_chat_data"), queueClient: roleClient("wildhearts_chat_queue") };
 }
 const completion = (sequence = 1) => ({ eventId: randomUUID(), sequence, type: "completed" as const, data: { answer: "Synthetic complete answer" } });
 
 describe("web-owned chat authority with constrained PostgreSQL roles", () => {
+  it("coalesces a global warm-up request, prioritizes its bounded lease over queued chat, then releases claims", async () => {
+    const f = await fixture();
+    await f.submit();
+    expect(await f.authority.requestModelWarmup()).toBe("queued");
+    const [queued] = await f.operationalDb.select().from(chatModelWarmup);
+    expect(await f.authority.requestModelWarmup()).toBe("queued");
+    const [coalesced] = await f.operationalDb.select().from(chatModelWarmup);
+    expect(coalesced?.updatedAt).toEqual(queued?.updatedAt);
+    const request = { requestId: randomUUID(), workerId: "worker-1" };
+    const lease = await f.authority.claimModelWarmup(f.bootstrap, request);
+    expect(lease).toMatchObject({ requestId: request.requestId, workerId: request.workerId, generation: 1 });
+    expect(await f.authority.modelWarmupStatus()).toMatchObject({ status: "running" });
+    expect(await f.authority.claim(f.bootstrap, { requestId: randomUUID(), workerId: "worker-1" })).toBeNull();
+    const verified = await f.authority.verifyModelWarmup(lease!.grant);
+    expect(verified).toMatchObject({ active: true, modelFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(await f.authority.completeModelWarmup(f.bootstrap, { ...request, leaseId: lease!.leaseId, generation: lease!.generation, status: "ready" })).toEqual({ status: "accepted" });
+    expect(await f.authority.modelWarmupStatus()).toMatchObject({ status: "ready", retryAt: null });
+    const changedModelAuthority = new ChatAuthority({ dataDb: f.dataDb, queueDb: f.queueDb, operationalDb: f.operationalDb, grantKey: Buffer.alloc(32, 9), modelId: "changed-synthetic-model", now: f.time });
+    await expect(changedModelAuthority.completeModelWarmup(f.bootstrap, { ...request, leaseId: lease!.leaseId, generation: lease!.generation, status: "ready" })).rejects.toMatchObject({ code: "run_not_active" });
+    expect(await f.authority.claim(f.bootstrap, { requestId: randomUUID(), workerId: "worker-1" })).toMatchObject({ id: expect.any(String) });
+  });
+
+  it("rejects warm-up verification after coordinator disablement and keeps duplicate requests from extending leases", async () => {
+    const f = await fixture();
+    await f.authority.requestModelWarmup();
+    const request = { requestId: randomUUID(), workerId: "worker-1" };
+    const lease = await f.authority.claimModelWarmup(f.bootstrap, request);
+    expect(lease).not.toBeNull();
+    await f.authority.requestModelWarmup();
+    const [unchanged] = await f.operationalDb.select().from(chatModelWarmup);
+    expect(unchanged?.leaseExpiresAt?.toISOString()).toBe(lease!.expiresAt);
+    await f.db.update(chatCoordinator).set({ disabledAt: f.time() }).where(eq(chatCoordinator.id, f.coordinator.id));
+    await expect(f.authority.verifyModelWarmup(lease!.grant)).rejects.toMatchObject({ code: "run_not_active" });
+    await expect(f.authority.completeModelWarmup(f.bootstrap, { ...request, leaseId: lease!.leaseId, generation: lease!.generation, status: "ready" })).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("does not create a warm-up lease while a live chat is running and lets queued chat pass", async () => {
+    const f = await fixture();
+    await f.submit();
+    await f.claim();
+    expect(await f.authority.requestModelWarmup()).toBe("queued");
+    expect(await f.authority.claimModelWarmup(f.bootstrap, { requestId: randomUUID(), workerId: "worker-1" })).toBeNull();
+    expect(await f.authority.modelWarmupStatus()).toMatchObject({ status: "failed" });
+    expect((await f.operationalDb.select().from(chatModelWarmup))[0]?.grantHash).toBeNull();
+  });
+
+  it("keeps cooldown anchored to the expired lease instead of sliding on a late POST", async () => {
+    const f = await fixture();
+    await f.authority.requestModelWarmup();
+    const lease = await f.authority.claimModelWarmup(f.bootstrap, { requestId: randomUUID(), workerId: "worker-1" });
+    expect(lease).not.toBeNull();
+    f.advance(211_000);
+    expect(await f.authority.modelWarmupStatus()).toMatchObject({ status: "failed" });
+    expect(await f.authority.requestModelWarmup()).toBe("queued");
+    expect((await f.operationalDb.select().from(chatModelWarmup))[0]?.status).toBe("queued");
+  });
+
   it("passes role preflight, resolves an opaque grant through metadata role and stores only hashes", async () => {
     const f = await fixture();
     const client = (f.db as unknown as { $client: PGlite }).$client;

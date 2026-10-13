@@ -19,7 +19,7 @@ describe("remote-only runtime configuration", () => {
     expect(coordinator.workerId).toBe("worker-test");
     expect(gateway.modelId).toBe("synthetic-model");
     expect(gateway.maxTokens).toBe(1024);
-    expect(Object.keys(coordinator)).toEqual(["api", "iggy", "workerId"]);
+    expect(Object.keys(coordinator)).toEqual(["api", "iggy", "workerId", "modelWarmup"]);
     expect(Object.keys(gateway)).toEqual(["api", "inferenceUrl", "modelId", "apiKey", "maxTokens"]);
   });
 
