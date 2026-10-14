@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import type { WildcardFile } from "@/lib/wildcards";
 
-export function FileViewer({ file }: { file: WildcardFile }) {
+export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFile; onPageChange?: (page: number) => void; overlays?: { box: [number, number, number, number]; label: string }[] }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
   const [error, setError] = useState("");
@@ -15,6 +15,7 @@ export function FileViewer({ file }: { file: WildcardFile }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const url = `/api/wildcards/${file.id}`;
+  useEffect(() => { onPageChange?.(page); }, [page, onPageChange]);
 
   useEffect(() => {
     const element = container.current;
@@ -86,7 +87,9 @@ export function FileViewer({ file }: { file: WildcardFile }) {
           <span aria-live="polite">Page {page} of {pdf.numPages}</span>
           <button type="button" disabled={page === pdf.numPages || rendering} onClick={() => setPage((value) => value + 1)}>Next page</button>
         </div>
-        <canvas ref={canvas} aria-label={`Page ${page} of ${file.name}`} />
+        <div className="workbench-overlay"><canvas ref={canvas} aria-label={`Page ${page} of ${file.name}`} />
+          {overlays?.map(({ box: [x, y, r, b], label }, i) => <span key={i} className="workbench-overlay-mark" title={label} style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${(r - x) * 100}%`, height: `${(b - y) * 100}%` }} />)}
+        </div>
         {pageText && <details><summary>Read page text</summary><p>{pageText}</p></details>}
       </>}
     </> : file.type.startsWith("image/") ?

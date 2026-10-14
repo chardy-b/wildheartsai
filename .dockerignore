@@ -8,3 +8,5 @@
 .vercel
 .pglite
 src/test/fixtures
+.extraction-private
+**/__pycache__
