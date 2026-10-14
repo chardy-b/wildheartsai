@@ -6,7 +6,7 @@ import { wildcardFile } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { asUser } from "@/lib/db/rls";
 import { deleteFile, listFiles, readFile, storeFile, validateFile } from "./wildcards-store";
-import { MAX_FILE_BYTES, MAX_FILES } from "./wildcards";
+import { MAX_FILE_BYTES, MAX_FILES, MAX_STORAGE_BYTES } from "./wildcards";
 
 let db: Db;
 const kek = randomBytes(32);
@@ -89,12 +89,10 @@ describe("private file storage", () => {
 
   it("enforces quotas before inserting", async () => {
     const owner = await createTestUser(db, "files_quota");
-    await db.insert(wildcardFile).values(Array.from({ length: MAX_FILES }, () => ({
-      userId: owner, sealedMetadata: "test", objectKey: crypto.randomUUID(), sizeBytes: 1,
-    })));
-    await expect(storeFile(db, kek, owner, "extra.txt", Buffer.from("extra"), objects)).rejects.toThrow("limit is 200 files");
+    await db.execute(sql`insert into wildcard_file (id, user_id, sealed_metadata, object_key, size_bytes) select gen_random_uuid(), ${owner}, 'test', gen_random_uuid()::text, 1 from generate_series(1, ${MAX_FILES})`);
+    await expect(storeFile(db, kek, owner, "extra.txt", Buffer.from("extra"), objects)).rejects.toThrow(`limit is ${MAX_FILES} files`);
     await db.delete(wildcardFile).where(eq(wildcardFile.userId, owner));
-    await db.insert(wildcardFile).values({ userId: owner, sealedMetadata: "test", objectKey: crypto.randomUUID(), sizeBytes: 100 * 1024 * 1024 });
+    await db.insert(wildcardFile).values(Array.from({ length: Math.ceil(MAX_STORAGE_BYTES / MAX_FILE_BYTES) }, (_, index) => ({ userId: owner, sealedMetadata: "test", objectKey: crypto.randomUUID(), sizeBytes: Math.min(MAX_FILE_BYTES, MAX_STORAGE_BYTES - index * MAX_FILE_BYTES) })));
     await expect(storeFile(db, kek, owner, "extra.txt", Buffer.from("extra"), objects)).rejects.toThrow("only 0.0 KB available");
   });
 

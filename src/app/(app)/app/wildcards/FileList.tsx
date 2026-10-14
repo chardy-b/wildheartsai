@@ -4,9 +4,8 @@ import { Fragment, useState } from "react";
 import { fileSize, type WildcardFile } from "@/lib/wildcards";
 import { buildFileTree, type FileFolder } from "@/lib/wildcards-paths";
 
-export function FileList({ files, busy, deleting, onDelete }: {
+export function FileList({ files, deleting, onDelete }: {
   files: WildcardFile[];
-  busy: boolean;
   deleting: string | null;
   onDelete: (file: WildcardFile) => void;
 }) {
@@ -23,14 +22,14 @@ export function FileList({ files, busy, deleting, onDelete }: {
     const path = file.relativePath ?? file.name;
     return <tr key={file.id}>
       <th scope="row"><div style={{ paddingInlineStart: depth * 20 }}>
-        {file.status === "ready" ? <a href={`/app/wildcards/${file.id}`} title={path}>{file.name}</a> : <>{file.name}<p className="wildcard-hint">{file.status === "deleting" ? "Deletion incomplete. Try Delete again." : "Upload incomplete. Delete and upload again."}</p></>}
+        {file.status === "ready" ? <a href={`/app/wildcards/${file.id}`} title={path}>{file.name}</a> : <>{file.name}<p className="wildcard-hint">{file.status === "deleting" ? "Deletion incomplete. Try Delete again." : file.status === "finalizing" ? "Checking and saving your file…" : "Upload incomplete. Reselect this file in the same browser to resume, or delete it."}</p></>}
         {view === "list" && file.relativePath && <p className="wildcard-file-path">{file.relativePath}</p>}
       </div></th>
       <td>{file.status !== "ready" ? "Incomplete" : file.type === "application/pdf" ? "PDF" : file.type.startsWith("text/") ? "Text" : file.type.split("/")[1].toUpperCase()}</td>
       <td><time dateTime={file.uploadedAt}>{file.uploadedAt.slice(0, 16).replace("T", " ")} UTC</time></td>
       <td>{fileSize(file.sizeBytes)}</td>
       <td><div className="wildcard-actions">{file.status === "ready" && <a href={`/api/wildcards/${file.id}?download=1`} download>Download<span className="sr-only"> {path}</span></a>}
-        <button type="button" disabled={deleting !== null || busy} onClick={() => onDelete(file)}>{deleting === file.id ? "Deleting…" : "Delete"}<span className="sr-only"> {path}</span></button></div></td>
+        <button type="button" disabled={deleting !== null} onClick={() => onDelete(file)}>{deleting === file.id ? "Deleting…" : "Delete"}<span className="sr-only"> {path}</span></button></div></td>
     </tr>;
   }
   function folderRows(folder: FileFolder, depth = 0): React.ReactNode {

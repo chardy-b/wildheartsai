@@ -4,7 +4,7 @@ vi.mock("@/lib/session", () => ({ getSession: mocks.session }));
 vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/lib/records-keys", () => ({ recordsKey: () => Buffer.alloc(32) }));
 vi.mock("@/lib/wildcards-r2", () => ({ fileObjects: () => "test-objects", r2Configured: mocks.configured }));
-vi.mock("@/lib/wildcards-store", async (original) => ({ ...await original<typeof import("@/lib/wildcards-store")>(), beginUpload: mocks.begin, uploadPart: mocks.part, completeUpload: mocks.complete }));
+vi.mock("@/lib/wildcards-store", async (original) => ({ ...await original<typeof import("@/lib/wildcards-store")>(), cleanupExpiredUploads: vi.fn(), beginUpload: mocks.begin, uploadPart: mocks.part, completeUpload: mocks.complete }));
 import { POST as begin } from "./route";
 import { PUT as part } from "./[id]/[part]/route";
 import { POST as complete } from "./[id]/complete/route";
@@ -36,7 +36,7 @@ describe("bounded document upload endpoints", () => {
   it("uses the session owner and sends private responses", async () => {
     const response = await begin(request("POST", JSON.stringify({ name: "photo.jpg", size: 10_000_000, userId: "other" })));
     expect(response.status).toBe(201); expect(response.headers.get("cache-control")).toContain("no-store");
-    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "photo.jpg", 10_000_000, undefined, undefined, "test-objects");
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "photo.jpg", 10_000_000, undefined, undefined, undefined, "test-objects");
     expect((await part(request("PUT", "hello", "application/octet-stream"), context)).status).toBe(204);
     expect(mocks.part).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", id, 0, Buffer.from("hello"), "test-objects");
     expect((await complete(request(), context)).status).toBe(200);
@@ -52,7 +52,7 @@ describe("bounded document upload endpoints", () => {
   it("passes relative paths with the authenticated owner and rejects non-string paths", async () => {
     const response = await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, relativePath: "Records/Visits/note.txt", userId: "other" })));
     expect(response.status).toBe(201);
-    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, "Records/Visits/note.txt", undefined, "test-objects");
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, "Records/Visits/note.txt", undefined, undefined, "test-objects");
     mocks.begin.mockClear();
     for (const relativePath of [null, 1, [], {}]) {
       expect((await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, relativePath })))).status).toBe(400);
@@ -73,7 +73,7 @@ describe("bounded document upload endpoints", () => {
     const response = await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, sha256 })));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ duplicate: true });
-    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, undefined, sha256, "test-objects");
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, undefined, undefined, sha256, "test-objects");
     mocks.complete.mockResolvedValue({ duplicate: true });
     const completed = await complete(request("POST", JSON.stringify({ sha256 })), context);
     expect(await completed.json()).toEqual({ ok: true, duplicate: true });

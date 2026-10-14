@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { sealBinaryField, sealField, unsealBinaryField, unsealField, userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { hmacFor, sealBinaryField, sealField, unsealBinaryField, unsealField, userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
 import { asUser } from "@/lib/db/rls";
 import { wildcardFile } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
@@ -43,38 +43,39 @@ export function validateFile(name: string, bytes: Buffer): { name: string; type:
 }
 
 function location(id: string, field: string) { return { table: "wildcard_file", rowId: id, field }; }
-type FileMetadata = { name: string; type: string; relativePath?: string; sha256?: string };
+type FileMetadata = { name: string; type: string; relativePath?: string; sha256?: string; expectedSha256?: string };
 function metadata(keys: UserKeys, row: { id: string; sealedMetadata: string }) {
   return JSON.parse(unsealField(keys, row.sealedMetadata, location(row.id, "metadata"))) as FileMetadata;
 }
 function publicMetadata(meta: FileMetadata) { return { name: meta.name, type: meta.type, relativePath: meta.relativePath }; }
 function hash(bytes: Buffer) { return createHash("sha256").update(bytes).digest("hex"); }
+function fingerprint(keys: UserKeys, sha256: string) { return hmacFor(keys, `wildcard_file.sha256:${sha256}`); }
 async function lockFiles(tx: Db, userId: string) {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
 }
 
-async function readyFiles(tx: Db, userId: string, size?: number) {
-  return tx.select({ id: wildcardFile.id, sealedMetadata: wildcardFile.sealedMetadata, objectKey: wildcardFile.objectKey })
-    .from(wildcardFile).where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), size === undefined ? undefined : eq(wildcardFile.sizeBytes, size)))
-    .orderBy(asc(wildcardFile.uploadedAt), asc(wildcardFile.id));
-}
-
-// The account is bounded to 200 files. Keep hashes inside encrypted metadata,
-// rather than exposing content fingerprints in a plaintext database index.
 async function findDuplicate(tx: Db, keys: UserKeys, userId: string, size: number | undefined, sha256: string) {
-  return (await readyFiles(tx, userId, size)).find((row) => metadata(keys, row).sha256 === sha256);
+  const [row] = await tx.select({ id: wildcardFile.id }).from(wildcardFile)
+    .where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), eq(wildcardFile.contentHmac, fingerprint(keys, sha256)),
+      size === undefined ? undefined : eq(wildcardFile.sizeBytes, size)))
+    .orderBy(asc(wildcardFile.uploadedAt), asc(wildcardFile.id)).limit(1);
+  return row;
 }
 
 // Older files acquire a verified hash lazily. Reads from R2 stay outside DB
 // transactions; the conditional update cannot resurrect a deleted file or
 // overwrite metadata changed since this snapshot. No old uploads are removed.
-async function backfillHashes(db: Db, kek: Buffer, userId: string, size: number, objects: FileObjects) {
-  const { keys, rows } = await asUser(db, userId, async (tx) => ({
-    keys: await userKeysFor(tx, kek, userId, new Date()), rows: await readyFiles(tx, userId, size),
-  }));
+async function backfillHashes(db: Db, kek: Buffer, userId: string, size: number, sha256: string, objects: FileObjects) {
+  const missing = and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), eq(wildcardFile.sizeBytes, size), isNull(wildcardFile.contentHmac));
+  const { keys, rows } = await asUser(db, userId, async (tx) => {
+    const keys = await userKeysFor(tx, kek, userId, new Date());
+    if (await findDuplicate(tx, keys, userId, size, sha256)) return { keys, rows: [] };
+    const rows = await tx.select({ id: wildcardFile.id, sealedMetadata: wildcardFile.sealedMetadata, objectKey: wildcardFile.objectKey })
+      .from(wildcardFile).where(missing).limit(10);
+    return { keys, rows };
+  });
   for (const row of rows) {
     const meta = metadata(keys, row);
-    if (meta.sha256) continue;
     let bytes: Buffer;
     try { bytes = unsealBinaryField(keys, await objects.get(row.objectKey), location(row.id, "content")); }
     catch (error) {
@@ -83,20 +84,29 @@ async function backfillHashes(db: Db, kek: Buffer, userId: string, size: number,
       if (!stillReady.length) continue;
       throw error;
     }
-    await asUser(db, userId, (tx) => tx.update(wildcardFile).set({
-      sealedMetadata: sealField(keys, JSON.stringify({ ...meta, sha256: hash(bytes) }), location(row.id, "metadata")),
-    }).where(and(eq(wildcardFile.id, row.id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), eq(wildcardFile.sealedMetadata, row.sealedMetadata))));
+    const actualHash = hash(bytes);
+    const updated = await asUser(db, userId, (tx) => tx.update(wildcardFile).set({
+      contentHmac: fingerprint(keys, actualHash),
+      sealedMetadata: sealField(keys, JSON.stringify({ ...meta, sha256: actualHash }), location(row.id, "metadata")),
+    }).where(and(eq(wildcardFile.id, row.id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), eq(wildcardFile.sealedMetadata, row.sealedMetadata))).returning({ id: wildcardFile.id }));
+    if (actualHash === sha256 && updated.length) return;
   }
+  await asUser(db, userId, async (tx) => {
+    if (await findDuplicate(tx, keys, userId, size, sha256)) return;
+    if ((await tx.select({ id: wildcardFile.id }).from(wildcardFile).where(missing).limit(1)).length) {
+      throw new FileInputError("Still checking older uploads for duplicates. Resume the queue to continue.", 503);
+    }
+  });
 }
 
 async function reserveQuota(tx: Db, userId: string, size: number): Promise<void> {
-  const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::int` })
+  const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::float8` })
     .from(wildcardFile).where(eq(wildcardFile.userId, userId));
   if (usage.count >= MAX_FILES) throw new FileInputError(`You have ${usage.count} documents; the limit is ${MAX_FILES} files. Delete a file before uploading another.`, 409);
   if (usage.bytes + size > MAX_STORAGE_BYTES) throw new FileInputError(`This file needs ${fileSize(size)}, but Documents has only ${fileSize(Math.max(0, MAX_STORAGE_BYTES - usage.bytes))} available (${fileSize(usage.bytes)} of ${fileSize(MAX_STORAGE_BYTES)} used). Delete files to free space, then try again.`, 409);
 }
 
-export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number, relativePath?: string, sha256?: string, objects?: FileObjects) {
+export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number, relativePath?: string, requestId?: string, sha256?: string, objects?: FileObjects) {
   validateFileName(name);
   const pathError = relativePathError(name, relativePath);
   if (pathError) throw new FileInputError(pathError);
@@ -106,22 +116,31 @@ export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, s
   if (!/\.(pdf|txt|png|jpe?g|gif|webp)$/i.test(name)) throw new FileInputError("This file type is not supported. Choose a PDF, .txt, PNG, JPEG, GIF, or WebP file.", 415);
   if (sha256 !== undefined && !/^[a-f0-9]{64}$/.test(sha256)) throw new FileInputError("The file hash could not be read. Choose the file again.");
   return (async () => {
-    if (sha256 && objects) await backfillHashes(db, kek, userId, size, objects);
+    if (sha256 && objects) await backfillHashes(db, kek, userId, size, sha256, objects);
     return asUser(db, userId, async (tx) => {
       await lockFiles(tx, userId);
       const keys = await userKeysFor(tx, kek, userId, new Date());
+      if (requestId) {
+        const [existing] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, requestId), eq(wildcardFile.userId, userId)));
+        if (existing) {
+          const meta = metadata(keys, existing);
+          if (existing.sizeBytes !== size || meta.name !== name || meta.relativePath !== relativePath ||
+            (sha256 && (meta.sha256 ?? meta.expectedSha256) && (meta.sha256 ?? meta.expectedSha256) !== sha256)) throw new FileInputError("This upload ID belongs to a different file.", 409);
+          return { id: existing.id, chunkBytes: UPLOAD_CHUNK_BYTES, status: existing.status, parts: Object.keys(existing.uploadParts ?? {}), duplicate: existing.status === "ready" };
+        }
+      }
       if (sha256) {
         const existing = await findDuplicate(tx, keys, userId, size, sha256);
-        if (existing) return { id: existing.id, chunkBytes: UPLOAD_CHUNK_BYTES, duplicate: true };
+        if (existing) return { id: existing.id, chunkBytes: UPLOAD_CHUNK_BYTES, status: "ready", parts: [] as string[], duplicate: true };
       }
       await reserveQuota(tx, userId, size);
-      const id = randomUUID();
+      const id = requestId ?? randomUUID();
       await tx.insert(wildcardFile).values({ id, userId, objectKey: `wildcards/${randomUUID()}`, sizeBytes: size,
         uploadChunkCount: Math.ceil(size / UPLOAD_CHUNK_BYTES), uploadParts: {}, status: "pending",
-        sealedMetadata: sealField(keys, JSON.stringify({ name, type: "application/octet-stream", relativePath }), location(id, "metadata")),
+        sealedMetadata: sealField(keys, JSON.stringify({ name, type: "application/octet-stream", relativePath, expectedSha256: sha256 }), location(id, "metadata")),
       });
       // A client hash is a lookup hint, never the hash of a newly stored file.
-      return { id, chunkBytes: UPLOAD_CHUNK_BYTES, duplicate: false };
+      return { id, chunkBytes: UPLOAD_CHUNK_BYTES, status: "pending", parts: [] as string[], duplicate: false };
     });
   })();
 }
@@ -153,7 +172,7 @@ export async function uploadPart(db: Db, kek: Buffer, userId: string, id: string
       const [stored] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).for("update");
       const row = requirePending(stored);
       const previous = row.uploadParts?.[String(index)];
-      await tx.update(wildcardFile).set({ uploadParts: { ...row.uploadParts, [index]: key } }).where(eq(wildcardFile.id, id));
+      await tx.update(wildcardFile).set({ uploadParts: { ...row.uploadParts, [index]: key }, uploadedAt: new Date() }).where(eq(wildcardFile.id, id));
       return previous;
     });
   } catch (error) {
@@ -175,11 +194,14 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
       const keys = await userKeysFor(tx, kek, userId, new Date());
       if (await findDuplicate(tx, keys, userId, undefined, sha256)) return { duplicate: true };
     }
-    const row = requirePending(stored);
+    if (stored?.status === "finalizing" && Date.now() - stored.uploadedAt.getTime() < 5 * 60_000) throw new FileInputError("Your file is still being saved. Please wait.", 202);
+    // A finalizer cannot outlive its 120-second route deadline. After a longer
+    // lease, another request can assemble the frozen pieces after a crash.
+    const row = requirePending(stored?.status === "finalizing" ? { ...stored, status: "pending", uploadedAt: new Date() } : stored);
     const partKeys = Array.from({ length: row.uploadChunkCount! }, (_, index) => row.uploadParts?.[String(index)]);
     if (partKeys.some((key) => !key)) throw new FileInputError("Some of this file has not arrived. Try uploading it again.", 409);
     const keys = await userKeysFor(tx, kek, userId, new Date());
-    await tx.update(wildcardFile).set({ status: "finalizing" }).where(eq(wildcardFile.id, id));
+    await tx.update(wildcardFile).set({ status: "finalizing", uploadedAt: new Date() }).where(eq(wildcardFile.id, id));
     return { row, keys, partKeys: partKeys as string[] };
   });
   if ("duplicate" in upload) return { duplicate: upload.duplicate === true };
@@ -195,7 +217,7 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
     const bytes = Buffer.concat(chunks, row.sizeBytes);
     const original = metadata(keys, row);
     const meta = { ...validateFile(original.name, bytes), relativePath: original.relativePath, sha256: hash(bytes) };
-    await backfillHashes(db, kek, userId, row.sizeBytes, objects);
+    await backfillHashes(db, kek, userId, row.sizeBytes, meta.sha256, objects);
     await objects.put(row.objectKey, sealBinaryField(keys, bytes, location(id, "content")));
     const duplicate = await asUser(db, userId, async (tx) => {
       // Serialize publication so simultaneous uploads cannot both become ready.
@@ -205,7 +227,7 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
       if (current?.status !== "finalizing") throw new FileInputError("This upload was cancelled. Choose the file again.", 409);
       if (await findDuplicate(tx, keys, userId, row.sizeBytes, meta.sha256)) return true;
       await tx.update(wildcardFile).set({
-        sealedMetadata: sealField(keys, JSON.stringify(meta), location(id, "metadata")), status: "ready", uploadedAt: new Date(),
+        sealedMetadata: sealField(keys, JSON.stringify(meta), location(id, "metadata")), contentHmac: fingerprint(keys, meta.sha256), status: "ready", uploadedAt: new Date(),
       }).where(eq(wildcardFile.id, id));
       return false;
     });
@@ -214,6 +236,11 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
       return { duplicate: true };
     }
   } catch (error) {
+    if (error instanceof FileInputError && error.status === 503) {
+      await asUser(db, userId, (tx) => tx.update(wildcardFile).set({ status: "pending", uploadedAt: new Date() })
+        .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "finalizing"))));
+      throw error;
+    }
     try { await deleteFile(db, userId, id, objects); } catch { /* Retain failed cleanup for owner retry. */ }
     throw error;
   }
@@ -228,7 +255,7 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
 
 export async function storeFile(db: Db, kek: Buffer, userId: string, name: string, bytes: Buffer, objects: FileObjects) {
   const meta = { ...validateFile(name, bytes), sha256: hash(bytes) };
-  await backfillHashes(db, kek, userId, bytes.length, objects);
+  await backfillHashes(db, kek, userId, bytes.length, meta.sha256, objects);
   const id = randomUUID();
   const objectKey = `wildcards/${randomUUID()}`;
   const encrypted = await asUser(db, userId, async (tx) => {
@@ -256,7 +283,7 @@ export async function storeFile(db: Db, kek: Buffer, userId: string, name: strin
       if (current?.status !== "pending") throw new Error("Upload was cancelled");
       const keys = await userKeysFor(tx, kek, userId, new Date());
       if (await findDuplicate(tx, keys, userId, bytes.length, meta.sha256)) return true;
-      await tx.update(wildcardFile).set({ status: "ready", uploadedAt: new Date() }).where(eq(wildcardFile.id, id));
+      await tx.update(wildcardFile).set({ status: "ready", contentHmac: fingerprint(keys, meta.sha256), uploadedAt: new Date() }).where(eq(wildcardFile.id, id));
       return false;
     });
     if (duplicate) await deleteFile(db, userId, id, objects);
@@ -267,16 +294,33 @@ export async function storeFile(db: Db, kek: Buffer, userId: string, name: strin
   }
 }
 
-export function listFiles(db: Db, kek: Buffer, userId: string): Promise<WildcardFile[]> {
+export function listFiles(db: Db, kek: Buffer, userId: string, page = 1): Promise<WildcardFile[]> {
   return asUser(db, userId, async (tx) => {
     // Never select the large encrypted contents for the listing.
     const rows = await tx.select({ id: wildcardFile.id, sealedMetadata: wildcardFile.sealedMetadata,
       sizeBytes: wildcardFile.sizeBytes, uploadedAt: wildcardFile.uploadedAt, status: wildcardFile.status })
-      .from(wildcardFile).where(eq(wildcardFile.userId, userId)).orderBy(desc(wildcardFile.uploadedAt), desc(wildcardFile.id));
+      .from(wildcardFile).where(eq(wildcardFile.userId, userId)).orderBy(desc(wildcardFile.uploadedAt), desc(wildcardFile.id)).limit(50).offset((page - 1) * 50);
     if (!rows.length) return [];
     const keys = await userKeysFor(tx, kek, userId, new Date());
     return rows.map((row) => ({ id: row.id, ...publicMetadata(metadata(keys, row)), sizeBytes: row.sizeBytes, uploadedAt: row.uploadedAt.toISOString(), status: row.status }));
   });
+}
+
+export function fileUsage(db: Db, userId: string) {
+  return asUser(db, userId, async (tx) => {
+    const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::float8` })
+      .from(wildcardFile).where(eq(wildcardFile.userId, userId));
+    return usage;
+  });
+}
+
+// Reclaim abandoned reservations lazily, in bounded batches. Network work is
+// outside transactions; the age predicate is checked again when claiming rows.
+export async function cleanupExpiredUploads(db: Db, userId: string, objects: FileObjects) {
+  const before = new Date(Date.now() - 60 * 60 * 1000);
+  const expired = await asUser(db, userId, (tx) => tx.select({ id: wildcardFile.id }).from(wildcardFile)
+    .where(and(eq(wildcardFile.userId, userId), inArray(wildcardFile.status, ["pending", "finalizing", "deleting"]), lt(wildcardFile.uploadedAt, before))).limit(25));
+  for (const row of expired) await deleteFile(db, userId, row.id, objects, before);
 }
 
 export async function readFile(db: Db, kek: Buffer, userId: string, id: string, objects: FileObjects) {
@@ -291,9 +335,9 @@ export async function readFile(db: Db, kek: Buffer, userId: string, id: string, 
   return { ...stored.meta, bytes: unsealBinaryField(stored.keys, encrypted, location(id, "content")) };
 }
 
-export async function deleteFile(db: Db, userId: string, id: string, objects: FileObjects) {
+export async function deleteFile(db: Db, userId: string, id: string, objects: FileObjects, expiredBefore?: Date) {
   const [row] = await asUser(db, userId, (tx) => tx.update(wildcardFile).set({ status: "deleting" })
-    .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).returning({ objectKey: wildcardFile.objectKey, uploadParts: wildcardFile.uploadParts }));
+    .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), expiredBefore ? and(inArray(wildcardFile.status, ["pending", "finalizing", "deleting"]), lt(wildcardFile.uploadedAt, expiredBefore)) : undefined)).returning({ objectKey: wildcardFile.objectKey, uploadParts: wildcardFile.uploadParts }));
   if (!row) return false;
   // Retain the row until deletion succeeds. Retrying a failed deletion is safe.
   await objects.delete(row.objectKey);
