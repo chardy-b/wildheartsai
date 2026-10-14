@@ -2,8 +2,49 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileSizeError, MAX_FILE_BYTES, UPLOAD_CHUNK_BYTES } from "./wildcards";
 import { uploadDocument } from "./wildcards-client";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe("document upload feedback", () => {
+  it("retries a lost start response with the same idempotency ID", async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/uploads")) {
+        bodies.push(init.body as string);
+        if (bodies.length === 1) throw new TypeError("lost response");
+        return Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES });
+      }
+      return new Response(null, { status: 204 });
+    }));
+    await uploadDocument(new File(["hello"], "a.txt"), () => {});
+    expect(bodies).toHaveLength(2); expect(bodies[0]).toBe(bodies[1]);
+  });
+  it("polls an in-progress save after a lost completion response without deleting it", async () => {
+    const methods: string[] = [];
+    let completes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      methods.push(init.method!);
+      if (url.endsWith("/uploads")) return Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES });
+      if (url.endsWith("/complete")) {
+        completes++;
+        if (completes === 1) throw new TypeError("lost response");
+        if (completes === 2) return Response.json({ error: "Saving" }, { status: 202 });
+      }
+      return new Response(null, { status: 204 });
+    }));
+    await uploadDocument(new File(["hello"], "a.txt"), () => {});
+    expect(completes).toBe(3); expect(methods).not.toContain("DELETE");
+  });
+  it("bounds a hung request and lets the user abort without deleting data", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      expect(init.signal).toBeDefined();
+      init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+    }));
+    vi.stubGlobal("fetch", fetcher);
+    const pending = uploadDocument(new File(["hello"], "a.txt"), () => {}, { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   it("distinguishes empty files and reports the actual size and limit", () => {
     expect(fileSizeError(0)).toContain("empty (0 bytes)");
     expect(fileSizeError(28.4 * 1024 * 1024)).toContain("28.4 MB; the limit is 25.0 MB");
@@ -39,7 +80,7 @@ describe("document upload feedback", () => {
     await uploadDocument(new File(["hello"], "a.txt"), () => {});
     expect(starts).toBe(1); expect(parts).toBe(2);
   });
-  it("attempts cleanup and explains connection loss when retries fail", async () => {
+  it("preserves the upload and explains connection loss when retries fail", async () => {
     const remove = vi.fn();
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
       if (url.endsWith("/uploads")) return Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES });
@@ -47,6 +88,6 @@ describe("document upload feedback", () => {
       throw new TypeError("offline");
     }));
     await expect(uploadDocument(new File(["hello"], "a.txt"), () => {})).rejects.toThrow("connection was lost");
-    expect(remove).toHaveBeenCalledOnce();
+    expect(remove).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { sealBinaryField, sealField, unsealBinaryField, unsealField, userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
 import { asUser } from "@/lib/db/rls";
 import { wildcardFile } from "@/lib/db/schema";
@@ -48,27 +48,38 @@ function metadata(keys: UserKeys, row: { id: string; sealedMetadata: string }) {
 
 async function reserveQuota(tx: Db, userId: string, size: number): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
-  const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::int` })
+  const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::float8` })
     .from(wildcardFile).where(eq(wildcardFile.userId, userId));
   if (usage.count >= MAX_FILES) throw new FileInputError(`You have ${usage.count} documents; the limit is ${MAX_FILES} files. Delete a file before uploading another.`, 409);
   if (usage.bytes + size > MAX_STORAGE_BYTES) throw new FileInputError(`This file needs ${fileSize(size)}, but Documents has only ${fileSize(Math.max(0, MAX_STORAGE_BYTES - usage.bytes))} available (${fileSize(usage.bytes)} of ${fileSize(MAX_STORAGE_BYTES)} used). Delete files to free space, then try again.`, 409);
 }
 
-export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number) {
+export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number, requestId?: string) {
   validateFileName(name);
   if (!Number.isSafeInteger(size) || size < 0) throw new FileInputError("The file size could not be read. Choose the file again.");
   const sizeError = fileSizeError(size);
   if (sizeError) throw new FileInputError(sizeError, size === 0 ? 400 : 413);
   if (!/\.(pdf|txt|png|jpe?g|gif|webp)$/i.test(name)) throw new FileInputError("This file type is not supported. Choose a PDF, .txt, PNG, JPEG, GIF, or WebP file.", 415);
   return asUser(db, userId, async (tx) => {
+    // The same opaque client ID reserves capacity only once, even when the
+    // original response is lost. Serialize retries before looking up the row.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
+    if (requestId) {
+      const [existing] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, requestId), eq(wildcardFile.userId, userId)));
+      if (existing) {
+        const keys = await userKeysFor(tx, kek, userId, new Date());
+        if (existing.sizeBytes !== size || metadata(keys, existing).name !== name) throw new FileInputError("This upload ID belongs to a different file.", 409);
+        return { id: existing.id, chunkBytes: UPLOAD_CHUNK_BYTES, status: existing.status, parts: Object.keys(existing.uploadParts ?? {}) };
+      }
+    }
     await reserveQuota(tx, userId, size);
-    const id = randomUUID();
+    const id = requestId ?? randomUUID();
     const keys = await userKeysFor(tx, kek, userId, new Date());
     await tx.insert(wildcardFile).values({ id, userId, objectKey: `wildcards/${randomUUID()}`, sizeBytes: size,
       uploadChunkCount: Math.ceil(size / UPLOAD_CHUNK_BYTES), uploadParts: {}, status: "pending",
       sealedMetadata: sealField(keys, JSON.stringify({ name, type: "application/octet-stream" }), location(id, "metadata")),
     });
-    return { id, chunkBytes: UPLOAD_CHUNK_BYTES };
+    return { id, chunkBytes: UPLOAD_CHUNK_BYTES, status: "pending", parts: [] as string[] };
   });
 }
 
@@ -99,7 +110,7 @@ export async function uploadPart(db: Db, kek: Buffer, userId: string, id: string
       const [stored] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).for("update");
       const row = requirePending(stored);
       const previous = row.uploadParts?.[String(index)];
-      await tx.update(wildcardFile).set({ uploadParts: { ...row.uploadParts, [index]: key } }).where(eq(wildcardFile.id, id));
+      await tx.update(wildcardFile).set({ uploadParts: { ...row.uploadParts, [index]: key }, uploadedAt: new Date() }).where(eq(wildcardFile.id, id));
       return previous;
     });
   } catch (error) {
@@ -114,6 +125,7 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
     const [stored] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).for("update");
     // Completing a successful upload again is harmless after a lost response.
     if (stored?.status === "ready") return null;
+    if (stored?.status === "finalizing") throw new FileInputError("Your file is still being saved. Please wait.", 202);
     const row = requirePending(stored);
     const partKeys = Array.from({ length: row.uploadChunkCount! }, (_, index) => row.uploadParts?.[String(index)]);
     if (partKeys.some((key) => !key)) throw new FileInputError("Some of this file has not arrived. Try uploading it again.", 409);
@@ -184,16 +196,33 @@ export async function storeFile(db: Db, kek: Buffer, userId: string, name: strin
   }
 }
 
-export function listFiles(db: Db, kek: Buffer, userId: string): Promise<WildcardFile[]> {
+export function listFiles(db: Db, kek: Buffer, userId: string, page = 1): Promise<WildcardFile[]> {
   return asUser(db, userId, async (tx) => {
     // Never select the large encrypted contents for the listing.
     const rows = await tx.select({ id: wildcardFile.id, sealedMetadata: wildcardFile.sealedMetadata,
       sizeBytes: wildcardFile.sizeBytes, uploadedAt: wildcardFile.uploadedAt, status: wildcardFile.status })
-      .from(wildcardFile).where(eq(wildcardFile.userId, userId)).orderBy(desc(wildcardFile.uploadedAt), desc(wildcardFile.id));
+      .from(wildcardFile).where(eq(wildcardFile.userId, userId)).orderBy(desc(wildcardFile.uploadedAt), desc(wildcardFile.id)).limit(50).offset((page - 1) * 50);
     if (!rows.length) return [];
     const keys = await userKeysFor(tx, kek, userId, new Date());
     return rows.map((row) => ({ id: row.id, ...metadata(keys, row), sizeBytes: row.sizeBytes, uploadedAt: row.uploadedAt.toISOString(), status: row.status }));
   });
+}
+
+export function fileUsage(db: Db, userId: string) {
+  return asUser(db, userId, async (tx) => {
+    const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::float8` })
+      .from(wildcardFile).where(eq(wildcardFile.userId, userId));
+    return usage;
+  });
+}
+
+// Reclaim abandoned reservations lazily, in bounded batches. Network work is
+// outside transactions; the age predicate is checked again when claiming rows.
+export async function cleanupExpiredUploads(db: Db, userId: string, objects: FileObjects) {
+  const before = new Date(Date.now() - 60 * 60 * 1000);
+  const expired = await asUser(db, userId, (tx) => tx.select({ id: wildcardFile.id }).from(wildcardFile)
+    .where(and(eq(wildcardFile.userId, userId), inArray(wildcardFile.status, ["pending", "finalizing", "deleting"]), lt(wildcardFile.uploadedAt, before))).limit(25));
+  for (const row of expired) await deleteFile(db, userId, row.id, objects, before);
 }
 
 export async function readFile(db: Db, kek: Buffer, userId: string, id: string, objects: FileObjects) {
@@ -208,9 +237,9 @@ export async function readFile(db: Db, kek: Buffer, userId: string, id: string, 
   return { ...stored.meta, bytes: unsealBinaryField(stored.keys, encrypted, location(id, "content")) };
 }
 
-export async function deleteFile(db: Db, userId: string, id: string, objects: FileObjects) {
+export async function deleteFile(db: Db, userId: string, id: string, objects: FileObjects, expiredBefore?: Date) {
   const [row] = await asUser(db, userId, (tx) => tx.update(wildcardFile).set({ status: "deleting" })
-    .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).returning({ objectKey: wildcardFile.objectKey, uploadParts: wildcardFile.uploadParts }));
+    .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), expiredBefore ? and(inArray(wildcardFile.status, ["pending", "finalizing", "deleting"]), lt(wildcardFile.uploadedAt, expiredBefore)) : undefined)).returning({ objectKey: wildcardFile.objectKey, uploadParts: wildcardFile.uploadParts }));
   if (!row) return false;
   // Retain the row until deletion succeeds. Retrying a failed deletion is safe.
   await objects.delete(row.objectKey);
