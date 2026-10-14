@@ -20,7 +20,7 @@ async function request(url: string, options: RequestInit, retry = false): Promis
   }
 }
 
-export async function uploadDocument(file: File, progress: (message: string) => void, relativePath = file.webkitRelativePath || undefined): Promise<void> {
+export async function uploadDocument(file: File, progress: (message: string) => void, relativePath = file.webkitRelativePath || undefined): Promise<{ duplicate: boolean }> {
   const pathError = relativePathError(file.name, relativePath);
   if (pathError) throw new UploadError(pathError);
   const sizeError = fileSizeError(file.size);
@@ -28,8 +28,13 @@ export async function uploadDocument(file: File, progress: (message: string) => 
   if (!/\.(pdf|txt|png|jpe?g|gif|webp)$/i.test(file.name)) throw new UploadError("This file type is not supported. Choose a PDF, .txt, PNG, JPEG, GIF, or WebP file.");
   let id: string | undefined;
   try {
-    const started = await request("/api/wildcards/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: file.name, size: file.size, relativePath }) });
-    const upload = await started.json() as { id: string; chunkBytes: number };
+    progress("Checking for duplicates…");
+    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const started = await request("/api/wildcards/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: file.name, size: file.size, relativePath, sha256 }) });
+    const upload = await started.json() as { id: string; chunkBytes: number; duplicate?: boolean };
+    // This ID belongs to the original file. Never put it in the cleanup path.
+    if (upload.duplicate) return { duplicate: true };
     id = upload.id;
     if (!Number.isSafeInteger(upload.chunkBytes) || upload.chunkBytes <= 0) throw new UploadError("The upload could not start. Refresh Documents and try again.");
     for (let offset = 0, part = 0; offset < file.size; offset += upload.chunkBytes, part++) {
@@ -37,7 +42,9 @@ export async function uploadDocument(file: File, progress: (message: string) => 
       progress(`Uploading… ${Math.round(Math.min(offset + upload.chunkBytes, file.size) / file.size * 100)}%`);
     }
     progress("Checking and saving your file…");
-    await request(`/api/wildcards/uploads/${id}/complete`, { method: "POST" }, true);
+    const completed = await request(`/api/wildcards/uploads/${id}/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sha256 }) }, true);
+    const result = await completed.json();
+    return { duplicate: result.duplicate === true };
   } catch (error) {
     if (id) { try { await fetch(`/api/wildcards/${id}`, { method: "DELETE" }); } catch { /* Incomplete uploads remain visible for cleanup. */ } }
     throw error;

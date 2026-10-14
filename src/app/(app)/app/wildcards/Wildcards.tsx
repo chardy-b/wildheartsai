@@ -32,8 +32,8 @@ export function Wildcards({ files, available }: { files: WildcardFile[]; availab
       for (const [index, { file, relativePath }] of selected.entries()) {
         update(index, "Preparing upload…");
         try {
-          await uploadDocument(file, (message) => update(index, message), relativePath);
-          update(index, "Uploaded");
+          const result = await uploadDocument(file, (message) => update(index, message), relativePath);
+          update(index, result.duplicate ? "Already uploaded — skipped" : "Uploaded");
         } catch (error) { update(index, `Not uploaded: ${error instanceof Error ? error.message : "Could not complete the upload. Please try again."}`); }
       }
     } catch (error) { setError(error instanceof Error ? error.message : "Could not read the selected folder. Use Choose folder or try a smaller folder."); }
@@ -73,7 +73,7 @@ export function Wildcards({ files, available }: { files: WildcardFile[]; availab
         <input ref={folderInput} type="file" multiple {...{ webkitdirectory: "" }} disabled={busy || !available}
           onChange={(event) => { if (event.target.files?.length) void upload(selectedFiles(event.target.files)); }} />
       </label></div>
-      <p className="wildcard-hint">Folder uploads keep the selected folder and its subfolders. Unsupported files are not uploaded; empty folders are not kept. Files are stored as originals; parsing and indexing are not available yet.</p>
+      <p className="wildcard-hint">Folder uploads keep the selected folder and its subfolders. Identical files are skipped, keeping the first upload’s name and location. Unsupported files are not uploaded; empty folders are not kept. Files are stored as originals; parsing and indexing are not available yet.</p>
     </div>
     <div aria-live="polite" aria-atomic="true">
       {results.length > 0 && <ul className="wildcard-results" aria-label="Upload results">
