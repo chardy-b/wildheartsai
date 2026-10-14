@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileSizeError, MAX_FILE_BYTES, UPLOAD_CHUNK_BYTES } from "./wildcards";
-import { uploadDocument } from "./wildcards-client";
+import { filesFromDrop, selectedFiles, uploadDocument } from "./wildcards-client";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("document upload feedback", () => {
@@ -29,6 +29,29 @@ describe("document upload feedback", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "Documents has 99 MB used. Delete files to free space." }, { status: 409 })));
     await expect(uploadDocument(new File(["hello"], "a.txt"), () => {})).rejects.toThrow("Delete files to free space");
   });
+  it("sends folder-picker relative paths and explicit drop paths without changing the filename", async () => {
+    const starts: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/uploads")) { starts.push(JSON.parse(init.body as string)); return Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES }); }
+      return new Response(null, { status: 204 });
+    }));
+    const file = new File(["hello"], "note.txt");
+    Object.defineProperty(file, "webkitRelativePath", { value: "Records/Visits/note.txt" });
+    expect(selectedFiles([file])).toEqual([{ file, relativePath: "Records/Visits/note.txt" }]);
+    await uploadDocument(file, () => {});
+    await uploadDocument(new File(["hello"], "note.txt"), () => {}, "Records/Labs/note.txt");
+    await uploadDocument(new File(["hello"], "note.txt"), () => {});
+    expect(starts).toEqual([
+      { name: "note.txt", size: 5, relativePath: "Records/Visits/note.txt" },
+      { name: "note.txt", size: 5, relativePath: "Records/Labs/note.txt" },
+      { name: "note.txt", size: 5 },
+    ]);
+  });
+  it("rejects unsafe paths before making upload requests", async () => {
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    await expect(uploadDocument(new File(["hello"], "note.txt"), () => {}, "../note.txt")).rejects.toThrow("relative file path");
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("retries a failed piece without starting another upload", async () => {
     let starts = 0, parts = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -48,5 +71,40 @@ describe("document upload feedback", () => {
     }));
     await expect(uploadDocument(new File(["hello"], "a.txt"), () => {})).rejects.toThrow("connection was lost");
     expect(remove).toHaveBeenCalledOnce();
+  });
+});
+
+function entryFile(name: string): FileSystemEntry {
+  return { name, isFile: true, isDirectory: false, file: (resolve: (file: File) => void) => resolve(new File(["hello"], name)) } as unknown as FileSystemEntry;
+}
+function directory(name: string, batches: FileSystemEntry[][]): FileSystemEntry {
+  return { name, isFile: false, isDirectory: true, createReader: () => {
+    let index = 0;
+    return { readEntries: (resolve: (entries: FileSystemEntry[]) => void) => resolve(batches[index++] ?? []) };
+  } } as unknown as FileSystemEntry;
+}
+function transfer(entries: FileSystemEntry[]): DataTransfer {
+  return { items: entries.map((entry) => ({ kind: "file", webkitGetAsEntry: () => entry })), files: [] } as unknown as DataTransfer;
+}
+describe("folder drag and drop", () => {
+  it("reads every batch, nested folders, and mixed standalone files", async () => {
+    const folder = directory("Records", [[entryFile("summary.txt")], [directory("Visits", [[entryFile("note.txt")]])]]);
+    const files = await filesFromDrop(transfer([folder, entryFile("loose.txt")]));
+    expect(files.map(({ file, relativePath }) => [file.name, relativePath])).toEqual([
+      ["summary.txt", "Records/summary.txt"], ["note.txt", "Records/Visits/note.txt"], ["loose.txt", undefined],
+    ]);
+  });
+  it("falls back to ordinary files without the entry API and ignores non-file items", async () => {
+    const file = new File(["hello"], "note.txt");
+    const data = { items: [{ kind: "string" }, { kind: "file" }], files: [file] } as unknown as DataTransfer;
+    expect(await filesFromDrop(data)).toEqual([{ file, relativePath: undefined }]);
+  });
+  it("handles empty folders and rejects unreadable or overly deep folders", async () => {
+    expect(await filesFromDrop(transfer([directory("Empty", [])]))).toEqual([]);
+    const unreadable = { name: "Records", isDirectory: true, createReader: () => ({ readEntries: (_resolve: unknown, reject: (error: Error) => void) => reject(new Error("Cannot read folder")) }) } as unknown as FileSystemEntry;
+    await expect(filesFromDrop(transfer([unreadable]))).rejects.toThrow("Cannot read folder");
+    let deep = entryFile("note.txt");
+    for (let i = 0; i < 32; i++) deep = directory(`Folder${i}`, [[deep]]);
+    await expect(filesFromDrop(transfer([deep]))).rejects.toThrow("32 levels deep");
   });
 });

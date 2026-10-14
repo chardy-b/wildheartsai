@@ -8,6 +8,8 @@ export const FILE_ACCEPT = ".pdf,.txt,.png,.jpg,.jpeg,.gif,.webp";
 export type WildcardFile = {
   id: string;
   name: string;
+  // Includes the selected root folder. Older and standalone uploads omit it.
+  relativePath?: string;
   type: string;
   sizeBytes: number;
   uploadedAt: string;

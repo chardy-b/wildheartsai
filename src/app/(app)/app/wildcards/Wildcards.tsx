@@ -3,12 +3,14 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FILE_ACCEPT, fileSize, MAX_FILE_BYTES, type WildcardFile } from "@/lib/wildcards";
-import { uploadDocument } from "@/lib/wildcards-client";
+import { filesFromDrop, selectedFiles, uploadDocument, type SelectedFile } from "@/lib/wildcards-client";
+import { FileList } from "./FileList";
 
 type UploadResult = { name: string; status: string };
 export function Wildcards({ files, available }: { files: WildcardFile[]; available: boolean }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -16,31 +18,36 @@ export function Wildcards({ files, available }: { files: WildcardFile[]; availab
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  async function upload(selected: File[]) {
-    if (!available || busyRef.current || !selected.length) return;
+  async function upload(selection: SelectedFile[] | Promise<SelectedFile[]>) {
+    if (!available || busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setError("");
-    setResults(selected.map((file) => ({ name: file.name, status: "Waiting" })));
+    setResults([]);
     const update = (index: number, status: string) => setResults((rows) => rows.map((row, i) => i === index ? { ...row, status } : row));
     try {
-      for (const [index, file] of selected.entries()) {
+      const selected = await selection;
+      if (!selected.length) { setError("No files were found. Empty folders are not uploaded."); return; }
+      setResults(selected.map(({ file, relativePath }) => ({ name: relativePath ?? file.name, status: "Waiting" })));
+      for (const [index, { file, relativePath }] of selected.entries()) {
         update(index, "Preparing upload…");
         try {
-          await uploadDocument(file, (message) => update(index, message));
+          await uploadDocument(file, (message) => update(index, message), relativePath);
           update(index, "Uploaded");
         } catch (error) { update(index, `Not uploaded: ${error instanceof Error ? error.message : "Could not complete the upload. Please try again."}`); }
       }
-    } finally {
+    } catch (error) { setError(error instanceof Error ? error.message : "Could not read the selected folder. Use Choose folder or try a smaller folder."); }
+    finally {
       busyRef.current = false;
       setBusy(false);
       if (input.current) input.current.value = "";
+      if (folderInput.current) folderInput.current.value = "";
       router.refresh();
     }
   }
 
   async function remove(file: WildcardFile) {
-    if (!window.confirm(`Permanently delete “${file.name}”?`)) return;
+    if (!window.confirm(`Permanently delete “${file.relativePath ?? file.name}”?`)) return;
     setDeleting(file.id);
     setError("");
     try {
@@ -55,14 +62,18 @@ export function Wildcards({ files, available }: { files: WildcardFile[]; availab
     <div className={`wildcard-drop${dragging ? " is-dragging" : ""}`} aria-busy={busy}
       onDragOver={(event) => { event.preventDefault(); if (available && !busy) setDragging(true); }}
       onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
-      onDrop={(event) => { event.preventDefault(); setDragging(false); void upload(Array.from(event.dataTransfer.files)); }}>
-      <h2>{!available ? "Uploads are not available yet" : busy ? "Uploading your files…" : "Drop your files here"}</h2>
+      onDrop={(event) => { event.preventDefault(); setDragging(false); if (available && !busyRef.current) void upload(filesFromDrop(event.dataTransfer)); }}>
+      <h2>{!available ? "Uploads are not available yet" : busy ? "Uploading your files…" : "Drop files or folders here"}</h2>
       <p>PDF, text, PNG, JPEG, GIF, or WebP · Up to {fileSize(MAX_FILE_BYTES)} per file</p>
-      <label className="wildcard-picker">Choose files
+      <div className="wildcard-pickers"><label className="wildcard-picker">Choose files
         <input ref={input} type="file" multiple accept={FILE_ACCEPT} disabled={busy || !available}
-          onChange={(event) => void upload(Array.from(event.target.files ?? []))} />
+          onChange={(event) => { if (event.target.files?.length) void upload(selectedFiles(event.target.files)); }} />
       </label>
-      <p className="wildcard-hint">Select multiple files at once. Files are stored as originals; text extraction and tagging are not available yet.</p>
+      <label className="wildcard-picker">Choose folder
+        <input ref={folderInput} type="file" multiple {...{ webkitdirectory: "" }} disabled={busy || !available}
+          onChange={(event) => { if (event.target.files?.length) void upload(selectedFiles(event.target.files)); }} />
+      </label></div>
+      <p className="wildcard-hint">Folder uploads keep the selected folder and its subfolders. Unsupported files are not uploaded; empty folders are not kept. Files are stored as originals; parsing and indexing are not available yet.</p>
     </div>
     <div aria-live="polite" aria-atomic="true">
       {results.length > 0 && <ul className="wildcard-results" aria-label="Upload results">
@@ -72,18 +83,7 @@ export function Wildcards({ files, available }: { files: WildcardFile[]; availab
     {error && <p role="alert">{error}</p>}
     <div className="wildcard-list-heading"><h2>Your files <span>({files.length})</span></h2>
       <p>{fileSize(files.reduce((sum, file) => sum + file.sizeBytes, 0))} of 100 MB used · 200 files maximum</p></div>
-    {files.length === 0 ? <div className="wildcard-empty"><h3>No files yet</h3><p>Upload a document or image to get started.</p></div> :
-      <div className="wildcard-table-wrap"><table className="wildcard-table">
-        <caption className="sr-only">Your private files, newest uploads first</caption>
-        <thead><tr><th scope="col">File name</th><th scope="col">Type</th><th scope="col">Uploaded</th><th scope="col">Size</th><th scope="col">Actions</th></tr></thead>
-        <tbody>{files.map((file) => <tr key={file.id}>
-          <th scope="row">{file.status === "ready" ? <a href={`/app/wildcards/${file.id}`}>{file.name}</a> : <>{file.name}<p className="wildcard-hint">{file.status === "deleting" ? "Deletion incomplete. Try Delete again." : "Upload incomplete. Delete and upload again."}</p></>}</th>
-          <td>{file.type === "application/pdf" ? "PDF" : file.type.startsWith("text/") ? "Text" : file.type.split("/")[1].toUpperCase()}</td>
-          <td><time dateTime={file.uploadedAt}>{file.uploadedAt.slice(0, 16).replace("T", " ")} UTC</time></td>
-          <td>{fileSize(file.sizeBytes)}</td>
-          <td><div className="wildcard-actions">{file.status === "ready" && <a href={`/api/wildcards/${file.id}?download=1`} download>Download<span className="sr-only"> {file.name}</span></a>}
-            <button type="button" disabled={deleting !== null || busy} onClick={() => void remove(file)}>{deleting === file.id ? "Deleting…" : "Delete"}<span className="sr-only"> {file.name}</span></button></div></td>
-        </tr>)}</tbody>
-      </table></div>}
+    {files.length === 0 ? <div className="wildcard-empty"><h3>No files yet</h3><p>Upload files or a folder to get started.</p></div> :
+      <FileList files={files} busy={busy} deleting={deleting} onDelete={(file) => void remove(file)} />}
   </>;
 }

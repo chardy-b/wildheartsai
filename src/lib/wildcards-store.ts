@@ -7,6 +7,7 @@ import { wildcardFile } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { fileSize, fileSizeError, MAX_FILES, MAX_STORAGE_BYTES, UPLOAD_CHUNK_BYTES, type WildcardFile } from "./wildcards";
 import type { FileObjects } from "./wildcards-r2";
+import { relativePathError } from "./wildcards-paths";
 
 export class FileInputError extends Error {
   constructor(message: string, public readonly status = 400) { super(message); }
@@ -43,7 +44,7 @@ export function validateFile(name: string, bytes: Buffer): { name: string; type:
 
 function location(id: string, field: string) { return { table: "wildcard_file", rowId: id, field }; }
 function metadata(keys: UserKeys, row: { id: string; sealedMetadata: string }) {
-  return JSON.parse(unsealField(keys, row.sealedMetadata, location(row.id, "metadata"))) as { name: string; type: string };
+  return JSON.parse(unsealField(keys, row.sealedMetadata, location(row.id, "metadata"))) as { name: string; type: string; relativePath?: string };
 }
 
 async function reserveQuota(tx: Db, userId: string, size: number): Promise<void> {
@@ -54,8 +55,10 @@ async function reserveQuota(tx: Db, userId: string, size: number): Promise<void>
   if (usage.bytes + size > MAX_STORAGE_BYTES) throw new FileInputError(`This file needs ${fileSize(size)}, but Documents has only ${fileSize(Math.max(0, MAX_STORAGE_BYTES - usage.bytes))} available (${fileSize(usage.bytes)} of ${fileSize(MAX_STORAGE_BYTES)} used). Delete files to free space, then try again.`, 409);
 }
 
-export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number) {
+export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number, relativePath?: string) {
   validateFileName(name);
+  const pathError = relativePathError(name, relativePath);
+  if (pathError) throw new FileInputError(pathError);
   if (!Number.isSafeInteger(size) || size < 0) throw new FileInputError("The file size could not be read. Choose the file again.");
   const sizeError = fileSizeError(size);
   if (sizeError) throw new FileInputError(sizeError, size === 0 ? 400 : 413);
@@ -66,7 +69,7 @@ export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, s
     const keys = await userKeysFor(tx, kek, userId, new Date());
     await tx.insert(wildcardFile).values({ id, userId, objectKey: `wildcards/${randomUUID()}`, sizeBytes: size,
       uploadChunkCount: Math.ceil(size / UPLOAD_CHUNK_BYTES), uploadParts: {}, status: "pending",
-      sealedMetadata: sealField(keys, JSON.stringify({ name, type: "application/octet-stream" }), location(id, "metadata")),
+      sealedMetadata: sealField(keys, JSON.stringify({ name, type: "application/octet-stream", relativePath }), location(id, "metadata")),
     });
     return { id, chunkBytes: UPLOAD_CHUNK_BYTES };
   });
@@ -132,7 +135,8 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
       chunks.push(bytes);
     }
     const bytes = Buffer.concat(chunks, row.sizeBytes);
-    const meta = validateFile(metadata(keys, row).name, bytes);
+    const original = metadata(keys, row);
+    const meta = { ...validateFile(original.name, bytes), relativePath: original.relativePath };
     await objects.put(row.objectKey, sealBinaryField(keys, bytes, location(id, "content")));
     const updated = await asUser(db, userId, (tx) => tx.update(wildcardFile).set({
       sealedMetadata: sealField(keys, JSON.stringify(meta), location(id, "metadata")), status: "ready", uploadedAt: new Date(),
