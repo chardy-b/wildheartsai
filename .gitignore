@@ -45,3 +45,8 @@ next-env.d.ts
 
 # local development database (pglite-server)
 /.pglite
+/services/extraction/models/
+/services/extraction/.venv/
+/services/extraction/__pycache__/
+/services/extraction/.pytest_cache/
+/.extraction-private/

@@ -1,0 +1,37 @@
+services:
+  extraction-gateway:
+    container_name: wildhearts-extraction-gateway
+    build:
+      context: ../..
+      dockerfile: services/extraction/Dockerfile
+      target: gateway
+    env_file: .env.gateway
+    networks: [extraction-trusted]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 192m
+    pids_limit: 64
+    logging: {driver: none}
+    restart: unless-stopped
+  extraction-coordinator:
+    build:
+      context: ../..
+      dockerfile: services/extraction/Dockerfile
+      target: gateway
+    env_file: .env.coordinator
+    environment:
+      EXTRACTION_SERVICE_MODE: coordinator
+    networks: [extraction-trusted]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 32
+    logging: {driver: none}
+    restart: unless-stopped
+networks:
+  extraction-trusted:
+    name: wildhearts-extraction-trusted

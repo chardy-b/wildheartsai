@@ -7,3 +7,4 @@ export * from "./metriport-schema";
 export * from "./profile-schema";
 export * from "./records-schema";
 export * from "./wildcard-schema";
+export * from "./extraction-schema";

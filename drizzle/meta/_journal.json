@@ -96,8 +96,15 @@
     {
       "idx": 13,
       "version": "7",
-      "when": 1791959674787,
-      "tag": "0013_document_content_fingerprint",
+      "when": 1791960759172,
+      "tag": "0013_document_extraction",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791987155007,
+      "tag": "0014_document_content_fingerprint",
       "breakpoints": true
     }
   ]
