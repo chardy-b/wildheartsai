@@ -10,3 +10,9 @@
 src/test/fixtures
 .extraction-private
 **/__pycache__
+# Dedicated VPS staging paths are never Docker build inputs.
+/secrets
+/state
+/acceptance-state
+/iggy
+/*.tar.gz
