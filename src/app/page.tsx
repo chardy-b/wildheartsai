@@ -6,22 +6,26 @@ import { Nav } from "@/components/landing/Nav";
 import { Privacy } from "@/components/landing/Privacy";
 import { Specialist } from "@/components/landing/Specialist";
 import { Understanding } from "@/components/landing/Understanding";
+import { SessionRefresh } from "@/components/app/SessionRefresh";
+import { getSession } from "@/lib/session";
 import "@/components/landing/landing.css";
 
-export default function Home() {
+export default async function Home() {
+  const signedIn = Boolean(await getSession());
   return (
     <div className="landing">
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <Nav />
+      {signedIn ? <SessionRefresh /> : null}
+      <Nav signedIn={signedIn} />
       <main id="main-content">
-        <Hero />
+        <Hero signedIn={signedIn} />
         <HowItWorks />
         <Understanding />
         <Specialist />
         <Privacy />
-        <Closing />
+        <Closing signedIn={signedIn} />
       </main>
       <Footer />
     </div>

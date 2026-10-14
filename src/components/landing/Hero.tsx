@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { FigureEight } from "./FigureEight";
 
-export function Hero() {
+export function Hero({ signedIn = false }: { signedIn?: boolean }) {
   return (
     <section className="wrap hero" id="top" aria-labelledby="hero-title">
       <div>
@@ -19,8 +19,8 @@ export function Hero() {
           appointment.
         </p>
         <div className="actions">
-          <Link className="btn btn-lg" href="/sign-up">
-            Get started
+          <Link className="btn btn-lg" href={signedIn ? "/app" : "/sign-up"}>
+            {signedIn ? "Go to dashboard" : "Get started"}
           </Link>
           <a className="btn btn-lg btn-ghost" href="#how-it-works">
             How it works
