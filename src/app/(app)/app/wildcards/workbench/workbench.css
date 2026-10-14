@@ -1,0 +1,15 @@
+.extraction-workbench { display: grid; gap: 1.25rem; }
+.extraction-workbench fieldset { border: 1px solid var(--border, #ccc); border-radius: .75rem; padding: 1.25rem; display: grid; gap: .8rem; }
+.extraction-workbench label { display: grid; gap: .4rem; }
+.extraction-workbench select, .extraction-workbench textarea, .extraction-workbench input[type=date] { color: inherit; background: var(--surface, #fff); border: 1px solid #aaa; border-radius: .4rem; padding: .6rem; max-width: 100%; }
+.extraction-workbench select[multiple] { min-height: 8rem; }
+.workbench-methods { display: flex; flex-wrap: wrap; gap: 1rem; }
+.workbench-methods label { display: flex; align-items: center; }
+.workbench-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem; align-items: start; }
+.workbench-comparison article { min-width: 0; padding: 1rem; border: 1px solid #bbb; border-radius: .75rem; }
+.extraction-workbench pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40rem; overflow: auto; font-size: .85rem; }
+.extraction-workbench table { width: 100%; border-collapse: collapse; text-align: left; font-size: .85rem; }
+.extraction-workbench td, .extraction-workbench th { padding: .6rem; border-bottom: 1px solid #ccc; }
+.workbench-table { overflow-x: auto; }
+.workbench-overlay { position: relative; width: fit-content; max-width: 100%; }
+.workbench-overlay-mark { position: absolute; border: 1px solid #198754; background: #19875422; pointer-events: none; }

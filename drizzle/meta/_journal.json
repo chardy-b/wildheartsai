@@ -92,6 +92,13 @@
       "when": 1791935904883,
       "tag": "0012_document_upload_parts",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791960759172,
+      "tag": "0013_document_extraction",
+      "breakpoints": true
     }
   ]
 }
