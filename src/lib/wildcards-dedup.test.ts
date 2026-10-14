@@ -5,7 +5,7 @@ import { createTestDb, createTestUser } from "@/test/db";
 import type { Db } from "./db/types";
 import { wildcardFile } from "./db/schema";
 import { beginUpload, completeUpload, deleteFile, fileUsage, listFiles, storeFile, uploadPart } from "./wildcards-store";
-import { MAX_FILES, MAX_STORAGE_BYTES } from "./wildcards";
+import { MAX_FILE_BYTES, MAX_FILES, MAX_STORAGE_BYTES } from "./wildcards";
 
 let db: Db;
 const kek = randomBytes(32);
@@ -92,7 +92,10 @@ describe("legacy upload compatibility", () => {
     const user = await person();
     await storeFile(db, kek, user, "original.txt", Buffer.from("hello"), objects);
     const original = await listFiles(db, kek, user);
-    await db.insert(wildcardFile).values({ userId: user, sealedMetadata: "test", objectKey: randomUUID(), sizeBytes: MAX_STORAGE_BYTES - 5 });
+    const remaining = MAX_STORAGE_BYTES - 5;
+    await db.insert(wildcardFile).values(Array.from({ length: Math.ceil(remaining / MAX_FILE_BYTES) }, (_, index) => ({
+      userId: user, sealedMetadata: "test", objectKey: randomUUID(), sizeBytes: Math.min(MAX_FILE_BYTES, remaining - index * MAX_FILE_BYTES),
+    })));
     const before = { reads, writes, usage: await fileUsage(db, user) };
     await storeFile(db, kek, user, "renamed.TXT", Buffer.from("hello"), objects);
     expect({ reads, writes }).toEqual({ reads: before.reads, writes: before.writes });
