@@ -4,7 +4,7 @@ vi.mock("@/lib/session", () => ({ getSession: mocks.session }));
 vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/lib/records-keys", () => ({ recordsKey: () => Buffer.alloc(32) }));
 vi.mock("@/lib/wildcards-r2", () => ({ fileObjects: () => "test-objects", r2Configured: mocks.configured }));
-vi.mock("@/lib/wildcards-store", async (original) => ({ ...await original<typeof import("@/lib/wildcards-store")>(), beginUpload: mocks.begin, uploadPart: mocks.part, completeUpload: mocks.complete }));
+vi.mock("@/lib/wildcards-store", async (original) => ({ ...await original<typeof import("@/lib/wildcards-store")>(), cleanupExpiredUploads: vi.fn(), beginUpload: mocks.begin, uploadPart: mocks.part, completeUpload: mocks.complete }));
 import { POST as begin } from "./route";
 import { PUT as part } from "./[id]/[part]/route";
 import { POST as complete } from "./[id]/complete/route";

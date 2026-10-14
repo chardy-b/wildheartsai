@@ -1,8 +1,8 @@
 // Large files use bounded upload pieces and streaming downloads on Vercel.
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024;
-export const MAX_STORAGE_BYTES = 100 * 1024 * 1024;
-export const MAX_FILES = 200;
+export const MAX_STORAGE_BYTES = 50 * 1024 * 1024 * 1024;
+export const MAX_FILES = 50_000;
 export const FILE_ACCEPT = ".pdf,.txt,.png,.jpg,.jpeg,.gif,.webp";
 
 export type WildcardFile = {
@@ -17,7 +17,7 @@ export type WildcardFile = {
 };
 
 export function fileSize(bytes: number): string {
-  return bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return bytes >= 1024 * 1024 * 1024 ? `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function fileSizeError(bytes: number): string | null {
