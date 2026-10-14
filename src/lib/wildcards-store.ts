@@ -222,10 +222,23 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
 
 export async function storeFile(db: Db, kek: Buffer, userId: string, name: string, bytes: Buffer, objects: FileObjects): Promise<void> {
   const meta = validateFile(name, bytes);
+  const sha256 = digest(bytes);
+  const contentFingerprint = await asUser(db, userId, async (tx) =>
+    fingerprint(await userKeysFor(tx, kek, userId, new Date()), sha256));
+  const duplicate = (tx: Db) => tx.select({ id: wildcardFile.id }).from(wildcardFile)
+    .where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), eq(wildcardFile.contentFingerprint, contentFingerprint))).limit(1);
+  // Preserve the whole-body endpoint for older callers. Verified duplicates are
+  // successful no-ops, including retries after a lost response and full quotas.
+  if ((await asUser(db, userId, duplicate)).length) return;
+  const moreToIndex = await indexOlderFiles(db, kek, userId, bytes.length, sha256, objects);
   const id = randomUUID();
   const objectKey = `wildcards/${randomUUID()}`;
   const encrypted = await asUser(db, userId, async (tx) => {
-    // Serialize quota checks for simultaneous uploads from this user's tabs.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
+    if ((await duplicate(tx)).length) return null;
+    // Legacy callers do not implement the chunked API's 202 polling protocol.
+    // Fail retryably, without reserving quota or claiming a file was accepted.
+    if (moreToIndex) throw new FileInputError("Checking existing documents for duplicates. Please retry this upload.", 503);
     await reserveQuota(tx, userId, bytes.length);
     const now = new Date();
     const keys = await userKeysFor(tx, kek, userId, now);
@@ -235,13 +248,21 @@ export async function storeFile(db: Db, kek: Buffer, userId: string, name: strin
     });
     return sealBinaryField(keys, bytes, location(id, "content"));
   });
+  if (!encrypted) return;
   try {
     // Network operations always happen outside database transactions. Pending
     // rows reserve quota and remain deletable if this process is interrupted.
     await objects.put(objectKey, encrypted);
-    const updated = await asUser(db, userId, async (tx) => tx.update(wildcardFile).set({ status: "ready", uploadedAt: new Date(), contentFingerprint: fingerprint(await userKeysFor(tx, kek, userId, new Date()), digest(bytes)) })
-      .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "pending"))).returning({ id: wildcardFile.id }));
-    if (!updated.length) {
+    const result = await asUser(db, userId, async (tx) => {
+      // Match chunked publication's lock: either transport may finish first.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
+      if ((await duplicate(tx)).length) return { duplicate: true, updated: [] };
+      const updated = await tx.update(wildcardFile).set({ status: "ready", uploadedAt: new Date(), contentFingerprint })
+        .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "pending"))).returning({ id: wildcardFile.id });
+      return { duplicate: false, updated };
+    });
+    if (result.duplicate) { await deleteFile(db, userId, id, objects); return; }
+    if (!result.updated.length) {
       await objects.delete(objectKey);
       throw new Error("Upload was cancelled");
     }
