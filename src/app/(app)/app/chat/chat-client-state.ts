@@ -65,6 +65,8 @@ export function createDetailReadGuard() {
 }
 
 export type ActivityPayload = {
+  description?: string;
+  outcome?: string;
   text?: string;
   truncated?: boolean;
   tool?: string;
@@ -97,16 +99,18 @@ function appendBoundedUtf8(current: string, addition: string): { value: string; 
 }
 
 export function toolSteps(events: ActivityEvent[], active: boolean) {
-  const steps: { id: string; tool: string; status: string; durationMs?: number; failure?: RunFailure }[] = [];
+  const steps: { id: string; tool: string; status: string; description?: string; outcome?: string; durationMs?: number; failure?: RunFailure }[] = [];
   for (const event of events) {
     if (event.kind === "tool.started") {
-      steps.push({ id: event.payload.toolCallId ?? String(event.sequence), tool: event.payload.tool ?? "lookup", status: "running" });
+      steps.push({ id: event.payload.toolCallId ?? String(event.sequence), tool: event.payload.tool ?? "lookup", status: "running", ...(event.payload.description ? { description: event.payload.description } : {}) });
     } else if (event.kind === "tool.completed") {
       const step = event.payload.toolCallId
         ? steps.find(item => item.id === event.payload.toolCallId)
         : steps.find(item => item.status === "running" && !!event.payload.tool && item.tool === event.payload.tool);
       if (step) {
         step.status = event.payload.status ?? "completed";
+        if (event.payload.description) step.description = event.payload.description;
+        if (step.status === "completed" && event.payload.outcome) step.outcome = event.payload.outcome;
         if (typeof event.payload.durationMs === "number") step.durationMs = event.payload.durationMs;
         if (event.payload.code || event.payload.stage) step.failure = { code: event.payload.code, stage: event.payload.stage };
       }
@@ -246,7 +250,7 @@ export function toolTimeline(events: ActivityEvent[]): ToolActivity[] {
     if (event.kind !== "tool.started" && event.kind !== "tool.completed") continue;
     const callId = event.payload.toolCallId;
     const current = callId ? calls.get(callId) : undefined;
-    const label = event.payload.tool ? toolActivityLabel(event.payload.tool) : current?.label ?? "Checking information for your answer";
+    const label = event.payload.description ?? current?.label ?? (event.payload.tool ? toolActivityLabel(event.payload.tool) : "Checking information for your answer");
     if (event.kind === "tool.started") {
       const row: ToolActivity = { key: `tool-${event.sequence}`, label, status: "running", sequence: event.sequence };
       rows.push(row);

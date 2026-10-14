@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { TOOL_LABELS } from "@/lib/chat/tool-activity";
 import { describeRunFailure, formatToolDuration, toolSteps, type ActivityEvent } from "./chat-client-state";
 
 export function ChatIcon({ name }: { name: "plus" | "arrow" | "stop" | "chat" | "spark" | "copy" | "down" | "menu" }) {
@@ -17,14 +18,6 @@ export function ChatIcon({ name }: { name: "plus" | "arrow" | "stop" | "chat" | 
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  get_data_coverage: "Checking available records", find_records: "Searching your records",
-  read_records: "Reading records", read_stored_note: "Reading a saved note",
-  calculate_lab_trend: "Comparing lab results", find_saved_summaries: "Finding saved summaries",
-  save_summary: "Saving a health summary", search_research: "Searching health research",
-  read_research: "Reading research", lookup: "Looking up information",
-};
-
 export function ToolActivity({ events, active }: { events: ActivityEvent[]; active: boolean }) {
   const steps = toolSteps(events, active);
   if (!steps.length) return null;
@@ -32,13 +25,13 @@ export function ToolActivity({ events, active }: { events: ActivityEvent[]; acti
   const failed = steps.some(step => ["failed", "rejected", "interrupted"].includes(step.status));
   return <details className="chat-tools">
     <summary><span className={`chat-tool-indicator ${running.length ? "is-running" : ""}`} aria-hidden="true">{running.length ? "" : failed ? "!" : "✓"}</span>
-      <span>{running.length ? TOOL_LABELS[running[0].tool] ?? "Looking up information" : `${steps.length} ${steps.length === 1 ? "step" : "steps"}${failed ? " · Some lookups unavailable" : " completed"}`}</span>
+      <span>{running.length ? running[0].description ?? TOOL_LABELS[running[0].tool] ?? "Looking up information" : `${steps.length} ${steps.length === 1 ? "step" : "steps"}${failed ? " · Some lookups unavailable" : " completed"}`}</span>
       <span className="chat-disclosure" aria-hidden="true">⌄</span>
     </summary>
     <ol>{steps.map(step => <li key={step.id}>
       <span className={`chat-tool-indicator ${step.status === "running" ? "is-running" : ""}`} aria-hidden="true">{step.status === "running" ? "" : step.status === "completed" ? "✓" : "!"}</span>
-      <span>{TOOL_LABELS[step.tool] ?? "Looking up information"}{step.failure && <small className="chat-tool-failure">{describeRunFailure(step.failure)}</small>}</span>
-      <span className="chat-tool-status">{step.status === "running" ? "In progress" : step.status === "completed" ? "Done" : step.status === "interrupted" ? "Stopped" : "Unavailable"}{formatToolDuration(step.durationMs) && <small>{formatToolDuration(step.durationMs)}</small>}</span>
+      <span className="chat-tool-description">{step.description ?? TOOL_LABELS[step.tool] ?? "Looking up information"}{step.failure && <small className="chat-tool-failure">{describeRunFailure(step.failure)}</small>}</span>
+      <span className="chat-tool-status">{step.status === "running" ? "In progress" : step.status === "completed" ? step.outcome ?? "Done" : step.status === "interrupted" ? "Stopped" : "Unavailable"}{formatToolDuration(step.durationMs) && <small className="chat-tool-duration">{formatToolDuration(step.durationMs)}</small>}</span>
     </li>)}</ol>
   </details>;
 }

@@ -73,7 +73,9 @@
 .chat-tools li { display: flex; align-items: center; gap: 9px; padding-top: 9px; }
 .chat-tool-indicator { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex-shrink: 0; font-size: 11px; color: var(--rose); }
 .chat-tool-indicator.is-running { width: 13px; height: 13px; border: 1.5px solid var(--line); border-top-color: var(--rose); border-radius: 50%; animation: chat-spin 1s linear infinite; margin: 1.5px; }
-.chat-tool-status { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.chat-tool-description { min-width: 0; overflow-wrap: anywhere; }
+.chat-tool-status { margin-left: auto; flex-shrink: 0; max-width: 42%; text-align: right; font-size: 11px; color: var(--text-2); }
+.chat-tool-duration { color: var(--muted); font-size: 10px; margin-top: 3px; }
 .chat-run-status { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; margin-top: 18px; }
 .chat-status-dots { display: inline-flex; gap: 4px; }
 .chat-status-dots i { width: 4px; height: 4px; background: var(--rose); border-radius: 50%; animation: chat-pulse 1.4s ease-in-out infinite; }
