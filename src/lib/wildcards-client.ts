@@ -1,4 +1,5 @@
 import { fileSizeError } from "./wildcards";
+import { MAX_PATH_DEPTH, relativePathError } from "./wildcards-paths";
 
 export class UploadError extends Error {
   constructor(message: string, public readonly status = 0) { super(message); }
@@ -38,13 +39,17 @@ async function request(url: string, options: RequestInit, signal?: AbortSignal):
 
 // Keep this ID with the queued File so retries reconcile with the existing
 // reservation and received pieces. Never delete on an uncertain response.
-export async function uploadDocument(file: File, progress: (message: string) => void, options: { id?: string; signal?: AbortSignal } = {}): Promise<void> {
+export async function uploadDocument(file: File, progress: (message: string) => void, options: { id?: string; signal?: AbortSignal; relativePath?: string } | string = {}): Promise<void> {
+  const relativePath = typeof options === "string" ? options : options.relativePath ?? (file.webkitRelativePath || undefined);
+  const pathError = relativePathError(file.name, relativePath);
+  if (pathError) throw new UploadError(pathError, 400);
+  const settings = typeof options === "string" ? {} : options;
   const sizeError = fileSizeError(file.size);
   if (sizeError) throw new UploadError(sizeError, 400);
   if (!/\.(pdf|txt|png|jpe?g|gif|webp)$/i.test(file.name)) throw new UploadError("This file type is not supported. Choose a PDF, .txt, PNG, JPEG, GIF, or WebP file.", 415);
-  const id = options.id ?? crypto.randomUUID();
-  const { signal } = options;
-  const started = await request("/api/wildcards/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name: file.name, size: file.size }) }, signal);
+  const id = settings.id ?? crypto.randomUUID();
+  const { signal } = settings;
+  const started = await request("/api/wildcards/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name: file.name, size: file.size, relativePath }) }, signal);
   const upload = await started.json() as { id: string; chunkBytes: number; status?: string; parts?: string[] };
   if (upload.status === "ready") return;
   if (!Number.isSafeInteger(upload.chunkBytes) || upload.chunkBytes <= 0) throw new UploadError("The upload could not start. Refresh Documents and try again.");
@@ -62,4 +67,38 @@ export async function uploadDocument(file: File, progress: (message: string) => 
     await waitForRetry(2000, signal);
   } while (Date.now() < until);
   throw new UploadError("Your file is still being saved. Pause, then resume to check its status.");
+}
+
+export type SelectedFile = { file: File; relativePath?: string };
+
+export function selectedFiles(files: FileList | File[]): SelectedFile[] {
+  return Array.from(files).map((file) => ({ file, relativePath: file.webkitRelativePath || undefined }));
+}
+
+export async function filesFromDrop(transfer: DataTransfer): Promise<SelectedFile[]> {
+  // Capture entries synchronously: browsers clear the drag data after the event.
+  const items = Array.from(transfer.items ?? []).filter((item) => item.kind === "file");
+  const entries = items.map((item) => item.webkitGetAsEntry?.() ?? null);
+  const fallback = selectedFiles(transfer.files);
+  if (!entries.some(Boolean)) return fallback;
+  if (entries.some((entry) => !entry)) throw new Error("This browser could not read the dropped folder. Use Choose folder instead.");
+  const files: SelectedFile[] = [];
+  async function visit(entry: FileSystemEntry, parent = "", depth = 1): Promise<void> {
+    if (depth > MAX_PATH_DEPTH) throw new Error("This folder is more than 32 levels deep. Choose a folder closer to the files.");
+    const path = parent ? `${parent}/${entry.name}` : entry.name;
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) => (entry as FileSystemFileEntry).file(resolve, reject));
+      files.push({ file, relativePath: parent ? path : undefined });
+    } else if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      // Chromium returns directory entries in batches, not all at once.
+      for (;;) {
+        const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+        if (!batch.length) break;
+        for (const child of batch) await visit(child, path, depth + 1);
+      }
+    }
+  }
+  for (const entry of entries) await visit(entry!);
+  return files;
 }

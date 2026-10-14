@@ -26,12 +26,12 @@ async function parts(user: string, id: string, bytes: Buffer) {
 describe("large private uploads", () => {
   it("reuses a reservation and received pieces after lost start responses", async () => {
     const user = await person(), id = randomUUID();
-    await beginUpload(db, kek, user, "note.txt", 5, id);
+    await beginUpload(db, kek, user, "note.txt", 5, undefined, id);
     await parts(user, id, Buffer.from("hello"));
-    const retried = await beginUpload(db, kek, user, "note.txt", 5, id);
+    const retried = await beginUpload(db, kek, user, "note.txt", 5, undefined, id);
     expect(retried).toMatchObject({ id, status: "pending", parts: ["0"] });
     expect(await fileUsage(db, user)).toEqual({ count: 1, bytes: 5 });
-    await expect(beginUpload(db, kek, user, "different.txt", 5, id)).rejects.toThrow("different file");
+    await expect(beginUpload(db, kek, user, "different.txt", 5, undefined, id)).rejects.toThrow("different file");
   });
   it("reports finalization in progress without cancelling the original save", async () => {
     const user = await person();
@@ -45,6 +45,14 @@ describe("large private uploads", () => {
     await saving;
     await expect(completeUpload(db, kek, user, id, objects)).rejects.toMatchObject({ status: 202 });
     release(); await original;
+    expect((await readFile(db, kek, user, id, objects))?.bytes.toString()).toBe("hello");
+  });
+  it("recovers a crashed finalizer after its lease expires", async () => {
+    const user = await person();
+    const { id } = await beginUpload(db, kek, user, "note.txt", 5);
+    await parts(user, id, Buffer.from("hello"));
+    await db.update(wildcardFile).set({ status: "finalizing", uploadedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(wildcardFile.id, id));
+    await completeUpload(db, kek, user, id, objects);
     expect((await readFile(db, kek, user, id, objects))?.bytes.toString()).toBe("hello");
   });
   it("reclaims expired reservations and their ciphertext without touching active files", async () => {
@@ -65,6 +73,38 @@ describe("large private uploads", () => {
     expect(await listFiles(db, kek, user)).toHaveLength(50);
     expect(await listFiles(db, kek, user, 2)).toHaveLength(35);
     expect(await fileUsage(db, user)).toEqual({ count: 85, bytes: 85 * MAX_FILE_BYTES });
+  });
+
+  it("keeps encrypted relative paths through completion, listing, reading, and deletion without merging same-name files", async () => {
+    const user = await person(), other = await person();
+    const paths = ["Records/Visits/note.txt", "Records/Labs/note.txt", "Records/Visits/note.txt"];
+    const ids: string[] = [];
+    for (const relativePath of paths) {
+      const { id } = await beginUpload(db, kek, user, "note.txt", 5, relativePath);
+      ids.push(id);
+      const [pending] = await listFiles(db, kek, user);
+      expect(pending.relativePath).toBe(relativePath);
+      const [raw] = await db.select().from(wildcardFile).where(eq(wildcardFile.id, id));
+      expect(raw.sealedMetadata).not.toContain("Records");
+      expect(raw.objectKey).not.toContain("Records");
+      await parts(user, id, Buffer.from("hello"));
+      await completeUpload(db, kek, user, id, objects);
+      await completeUpload(db, kek, user, id, objects);
+      expect(await readFile(db, kek, user, id, objects)).toMatchObject({ name: "note.txt", relativePath, bytes: Buffer.from("hello") });
+      expect(await readFile(db, kek, other, id, objects)).toBeNull();
+    }
+    expect((await listFiles(db, kek, user)).map((file) => file.relativePath).sort()).toEqual([...paths].sort());
+    expect(await listFiles(db, kek, other)).toEqual([]);
+    await deleteFile(db, user, ids[0], objects);
+    expect((await listFiles(db, kek, user)).map((file) => file.id).sort()).toEqual(ids.slice(1).sort());
+  });
+
+  it("rejects invalid paths before reserving quota or storing metadata", async () => {
+    const user = await person();
+    for (const path of ["../note.txt", "/Records/note.txt", "Records//note.txt", "Records/other.txt", "C:/Records/note.txt", "Records\\note.txt", "Records/\u202enote.txt"]) {
+      expect(() => beginUpload(db, kek, user, "note.txt", 5, path)).toThrow();
+    }
+    expect(await listFiles(db, kek, user)).toEqual([]);
   });
 
   it("round trips a phone photo at the full file-size limit and cleans up encrypted temporary pieces", async () => {
@@ -95,7 +135,7 @@ describe("large private uploads", () => {
     expect(() => beginUpload(db, kek, user, "huge.jpg", MAX_FILE_BYTES + 1024 * 1024)).toThrow("26.0 MB; the limit is 25.0 MB");
     expect(() => beginUpload(db, kek, user, "unsafe.svg", 10)).toThrow("type is not supported");
     await db.insert(wildcardFile).values(Array.from({ length: Math.ceil(MAX_STORAGE_BYTES / MAX_FILE_BYTES) }, (_, index) => ({ userId: user, sealedMetadata: "test", objectKey: randomUUID(), sizeBytes: Math.min(MAX_FILE_BYTES, MAX_STORAGE_BYTES - index * MAX_FILE_BYTES) })));
-    await expect(beginUpload(db, kek, user, "extra.txt", 1)).rejects.toThrow("10.0 GB of 10.0 GB used");
+    await expect(beginUpload(db, kek, user, "extra.txt", 1)).rejects.toThrow("50.0 GB of 50.0 GB used");
   });
 
   it("rejects cross-account writes, finalization, reads, and deletion", async () => {

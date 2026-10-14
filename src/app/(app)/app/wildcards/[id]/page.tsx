@@ -16,6 +16,7 @@ export default async function FilePage({ params }: PageProps<"/app/wildcards/[id
   return <section className="app-page wildcards">
     <Link href="/app/wildcards">← Your files</Link>
     <h1 className="wildcard-filename">{file.name}</h1>
+    {file.relativePath && <p className="wildcard-file-path">{file.relativePath}</p>}
     <p>{file.type.split(";")[0]} · {fileSize(file.sizeBytes)}</p>
     <p><a href={`/api/wildcards/${file.id}?download=1`} download>Download original</a></p>
     <FileViewer file={file} />

@@ -7,6 +7,7 @@ import { wildcardFile } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { fileSize, fileSizeError, MAX_FILES, MAX_STORAGE_BYTES, UPLOAD_CHUNK_BYTES, type WildcardFile } from "./wildcards";
 import type { FileObjects } from "./wildcards-r2";
+import { relativePathError } from "./wildcards-paths";
 
 export class FileInputError extends Error {
   constructor(message: string, public readonly status = 400) { super(message); }
@@ -43,7 +44,7 @@ export function validateFile(name: string, bytes: Buffer): { name: string; type:
 
 function location(id: string, field: string) { return { table: "wildcard_file", rowId: id, field }; }
 function metadata(keys: UserKeys, row: { id: string; sealedMetadata: string }) {
-  return JSON.parse(unsealField(keys, row.sealedMetadata, location(row.id, "metadata"))) as { name: string; type: string };
+  return JSON.parse(unsealField(keys, row.sealedMetadata, location(row.id, "metadata"))) as { name: string; type: string; relativePath?: string };
 }
 
 async function reserveQuota(tx: Db, userId: string, size: number): Promise<void> {
@@ -54,8 +55,10 @@ async function reserveQuota(tx: Db, userId: string, size: number): Promise<void>
   if (usage.bytes + size > MAX_STORAGE_BYTES) throw new FileInputError(`This file needs ${fileSize(size)}, but Documents has only ${fileSize(Math.max(0, MAX_STORAGE_BYTES - usage.bytes))} available (${fileSize(usage.bytes)} of ${fileSize(MAX_STORAGE_BYTES)} used). Delete files to free space, then try again.`, 409);
 }
 
-export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number, requestId?: string) {
+export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number, relativePath?: string, requestId?: string) {
   validateFileName(name);
+  const pathError = relativePathError(name, relativePath);
+  if (pathError) throw new FileInputError(pathError);
   if (!Number.isSafeInteger(size) || size < 0) throw new FileInputError("The file size could not be read. Choose the file again.");
   const sizeError = fileSizeError(size);
   if (sizeError) throw new FileInputError(sizeError, size === 0 ? 400 : 413);
@@ -68,7 +71,7 @@ export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, s
       const [existing] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, requestId), eq(wildcardFile.userId, userId)));
       if (existing) {
         const keys = await userKeysFor(tx, kek, userId, new Date());
-        if (existing.sizeBytes !== size || metadata(keys, existing).name !== name) throw new FileInputError("This upload ID belongs to a different file.", 409);
+        if (existing.sizeBytes !== size || metadata(keys, existing).name !== name || metadata(keys, existing).relativePath !== relativePath) throw new FileInputError("This upload ID belongs to a different file.", 409);
         return { id: existing.id, chunkBytes: UPLOAD_CHUNK_BYTES, status: existing.status, parts: Object.keys(existing.uploadParts ?? {}) };
       }
     }
@@ -77,7 +80,7 @@ export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, s
     const keys = await userKeysFor(tx, kek, userId, new Date());
     await tx.insert(wildcardFile).values({ id, userId, objectKey: `wildcards/${randomUUID()}`, sizeBytes: size,
       uploadChunkCount: Math.ceil(size / UPLOAD_CHUNK_BYTES), uploadParts: {}, status: "pending",
-      sealedMetadata: sealField(keys, JSON.stringify({ name, type: "application/octet-stream" }), location(id, "metadata")),
+      sealedMetadata: sealField(keys, JSON.stringify({ name, type: "application/octet-stream", relativePath }), location(id, "metadata")),
     });
     return { id, chunkBytes: UPLOAD_CHUNK_BYTES, status: "pending", parts: [] as string[] };
   });
@@ -125,12 +128,14 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
     const [stored] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).for("update");
     // Completing a successful upload again is harmless after a lost response.
     if (stored?.status === "ready") return null;
-    if (stored?.status === "finalizing") throw new FileInputError("Your file is still being saved. Please wait.", 202);
-    const row = requirePending(stored);
+    if (stored?.status === "finalizing" && Date.now() - stored.uploadedAt.getTime() < 5 * 60_000) throw new FileInputError("Your file is still being saved. Please wait.", 202);
+    // A finalizer cannot outlive its 120-second route deadline. After a longer
+    // lease, another request can assemble the frozen pieces after a crash.
+    const row = requirePending(stored?.status === "finalizing" ? { ...stored, status: "pending", uploadedAt: new Date() } : stored);
     const partKeys = Array.from({ length: row.uploadChunkCount! }, (_, index) => row.uploadParts?.[String(index)]);
     if (partKeys.some((key) => !key)) throw new FileInputError("Some of this file has not arrived. Try uploading it again.", 409);
     const keys = await userKeysFor(tx, kek, userId, new Date());
-    await tx.update(wildcardFile).set({ status: "finalizing" }).where(eq(wildcardFile.id, id));
+    await tx.update(wildcardFile).set({ status: "finalizing", uploadedAt: new Date() }).where(eq(wildcardFile.id, id));
     return { row, keys, partKeys: partKeys as string[] };
   });
   if (!upload) return;
@@ -144,7 +149,8 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
       chunks.push(bytes);
     }
     const bytes = Buffer.concat(chunks, row.sizeBytes);
-    const meta = validateFile(metadata(keys, row).name, bytes);
+    const original = metadata(keys, row);
+    const meta = { ...validateFile(original.name, bytes), relativePath: original.relativePath };
     await objects.put(row.objectKey, sealBinaryField(keys, bytes, location(id, "content")));
     const updated = await asUser(db, userId, (tx) => tx.update(wildcardFile).set({
       sealedMetadata: sealField(keys, JSON.stringify(meta), location(id, "metadata")), status: "ready", uploadedAt: new Date(),

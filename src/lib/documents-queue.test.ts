@@ -27,6 +27,16 @@ describe("bulk document queue", () => {
     queue.add([first, file("second")]); expect(queue.items).toHaveLength(2); expect(queue.notice).toContain("skipped");
     release(); await vi.waitFor(() => expect(queue.done).toBe(2));
   });
+  it("keeps different files with identical metadata and the same file in different folders", async () => {
+    const transfer = vi.fn().mockResolvedValue(undefined);
+    const queue = new DocumentQueue(vi.fn(), "owner", transfer);
+    const first = new File(["one"], "note.txt", { lastModified: 1 });
+    const second = new File(["two"], "note.txt", { lastModified: 1 });
+    queue.add([{ file: first, relativePath: "A/note.txt" }, { file: first, relativePath: "B/note.txt" }, { file: second, relativePath: "A/note.txt" }]);
+    await vi.waitFor(() => expect(queue.done).toBe(3));
+    expect(transfer.mock.calls.map((call) => call[2].relativePath)).toEqual(["A/note.txt", "B/note.txt", "A/note.txt"]);
+    expect(new Set(transfer.mock.calls.map((call) => call[2].id)).size).toBe(3);
+  });
   it("pauses an active request without losing its ID and resumes it", async () => {
     const transfer = vi.fn().mockImplementationOnce((_file, _progress, options) => new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason)))).mockResolvedValue(undefined);
     const queue = new DocumentQueue(vi.fn(), "owner", transfer); queue.add([file("first"), file("second")]);

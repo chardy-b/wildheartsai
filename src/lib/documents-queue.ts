@@ -1,7 +1,8 @@
-import { UploadError, uploadDocument } from "./wildcards-client";
+import { UploadError, uploadDocument, type SelectedFile } from "./wildcards-client";
 import { fileSizeError } from "./wildcards";
+import { recoveryUploadId } from "./documents-recovery";
 
-type Item = { id: string; file: File; state: "waiting" | "active" | "done" | "failed"; message: string };
+type Item = SelectedFile & { id: string; file: File; state: "waiting" | "active" | "done" | "failed"; message: string };
 export class DocumentQueue {
   items: Item[] = [];
   running = false;
@@ -9,6 +10,7 @@ export class DocumentQueue {
   notice = "";
   done = 0;
   failed = 0;
+  active?: Item;
   private controller?: AbortController;
   private disposed = false;
   private listeners = new Set<() => void>();
@@ -17,15 +19,19 @@ export class DocumentQueue {
   snapshot = () => this.revision;
   private emit() { this.revision++; this.listeners.forEach((listener) => listener()); }
   constructor(private refresh: () => void, private owner: string, private transfer = uploadDocument) {}
-  add(files: File[]) {
-    const selected = new Set(this.items.map(({ file }) => file));
+  add(files: (File | SelectedFile)[]) {
+    const selected = new Map<File, Set<string | undefined>>();
+    for (const item of this.items) {
+      const paths = selected.get(item.file) ?? new Set(); paths.add(item.relativePath); selected.set(item.file, paths);
+    }
     let skipped = 0;
-    for (const file of files) {
+    for (const selection of files) {
+      const { file, relativePath } = selection instanceof File ? { file: selection, relativePath: selection.webkitRelativePath || undefined } : selection;
       // Separate files can have identical names, sizes, and modification dates.
       // Content fingerprints reconcile repeats without dropping different data.
-      if (selected.has(file)) { skipped++; continue; }
-      selected.add(file);
-      this.items.push({ id: crypto.randomUUID(), file, state: "waiting", message: "Waiting" });
+      if (selected.get(file)?.has(relativePath)) { skipped++; continue; }
+      const paths = selected.get(file) ?? new Set(); paths.add(relativePath); selected.set(file, paths);
+      this.items.push({ id: crypto.randomUUID(), file, relativePath, state: "waiting", message: "Waiting" });
     }
     this.notice = skipped ? `${skipped} file(s) already in this queue were skipped.` : "";
     this.emit();
@@ -47,6 +53,7 @@ export class DocumentQueue {
         if (this.paused || this.disposed) break;
         if (item.state !== "waiting") continue;
         item.state = "active"; item.message = "Preparing upload…";
+        this.active = item;
         this.controller = new AbortController(); this.emit();
         let recoveryKey: string | undefined;
         try {
@@ -55,11 +62,11 @@ export class DocumentQueue {
           if (!fileSizeError(item.file.size)) {
             const digest = await crypto.subtle.digest("SHA-256", await item.file.arrayBuffer());
             const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
-            const fingerprint = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${item.file.name}\0${hex(digest)}`));
+            const fingerprint = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${item.relativePath ?? item.file.name}\0${hex(digest)}`));
             recoveryKey = `document-upload:${this.owner}:${hex(fingerprint)}`;
-            try { item.id = sessionStorage.getItem(recoveryKey) ?? item.id; sessionStorage.setItem(recoveryKey, item.id); } catch { /* Storage may be disabled; in-memory retries still work. */ }
+            try { item.id = await recoveryUploadId(recoveryKey, item.id); } catch { this.notice = "Browser recovery storage is unavailable. Keep this page open to pause and resume safely."; }
           }
-          await this.transfer(item.file, (message) => { item.message = message; this.emit(); }, { id: item.id, signal: this.controller.signal });
+          await this.transfer(item.file, (message) => { item.message = message; this.emit(); }, { id: item.id, signal: this.controller.signal, relativePath: item.relativePath });
           item.state = "done"; item.message = "Uploaded"; this.done++;
           // Keep successful IDs too: reselecting an interrupted batch after
           // reload must not duplicate the files that already finished.
@@ -73,6 +80,6 @@ export class DocumentQueue {
         }
         this.emit();
       }
-    } finally { this.running = false; this.controller = undefined; this.emit(); this.refresh(); }
+    } finally { this.running = false; this.active = undefined; this.controller = undefined; this.emit(); this.refresh(); }
   }
 }

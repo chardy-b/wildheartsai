@@ -5,6 +5,9 @@
 .wildcard-picker { display: inline-block; position: relative; padding: 12px 24px; margin: 8px 0; background: var(--text); color: var(--night); border-radius: 999px; font-weight: 600; cursor: pointer; }
 .wildcard-picker input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
 .wildcard-picker:focus-within { outline: 3px solid var(--text); outline-offset: 4px; }
+.wildcard-pickers { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.wildcard-picker:has(input:disabled) { opacity: .6; cursor: default; }
+.wildcard-picker input:disabled { cursor: default; }
 .wildcard-drop[aria-busy="true"] .wildcard-picker { opacity: .6; }
 .wildcard-hint { font-size: 13px; max-width: 65ch; margin: 12px auto 0; }
 .wildcard-results { list-style: none; padding: 0; }
@@ -22,6 +25,13 @@
 .wildcard-actions { display: flex; gap: 16px; align-items: center; }
 .wildcard-actions button { border: 0; background: none; color: var(--text-2); text-decoration: underline; cursor: pointer; font: inherit; padding: 0; }
 .wildcard-actions button:disabled { cursor: wait; opacity: .6; }
+.wildcard-view-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.wildcard-view-options button { padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.wildcard-view-options button[aria-pressed="true"] { background: var(--text); color: var(--night); }
+.wildcard-folder-row { background: var(--surface); }
+.wildcard-folder-toggle { display: inline-flex; gap: 8px; align-items: baseline; border: 0; background: none; color: var(--text); cursor: pointer; font: inherit; text-align: start; max-width: 100%; overflow-wrap: anywhere; }
+.wildcard-folder-count { display: inline-block; margin-inline-start: 12px; font-weight: 400; color: var(--text-2); }
+.wildcard-file-path { font-weight: 400; font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; margin: 8px 0 0; }
 .wildcard-empty { padding: 32px; border: 1px solid var(--line); border-radius: 16px; }
 .wildcard-filename { overflow-wrap: anywhere; margin-top: 20px !important; }
 .wildcard-viewer { max-width: 100%; margin-top: 24px; }

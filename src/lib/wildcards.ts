@@ -1,13 +1,15 @@
 // Large files use bounded upload pieces and streaming downloads on Vercel.
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024;
-export const MAX_STORAGE_BYTES = 10 * 1024 * 1024 * 1024;
-export const MAX_FILES = 10_000;
+export const MAX_STORAGE_BYTES = 50 * 1024 * 1024 * 1024;
+export const MAX_FILES = 50_000;
 export const FILE_ACCEPT = ".pdf,.txt,.png,.jpg,.jpeg,.gif,.webp";
 
 export type WildcardFile = {
   id: string;
   name: string;
+  // Includes the selected root folder. Older and standalone uploads omit it.
+  relativePath?: string;
   type: string;
   sizeBytes: number;
   uploadedAt: string;
