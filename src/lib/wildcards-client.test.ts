@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileSizeError, MAX_FILE_BYTES, UPLOAD_CHUNK_BYTES } from "./wildcards";
 import { filesFromDrop, selectedFiles, uploadDocument } from "./wildcards-client";
+
+const sha256 = createHash("sha256").update("hello").digest("hex");
+function success(url: string) { return url.endsWith("/complete") ? Response.json({ ok: true, duplicate: false }) : new Response(null, { status: 204 }); }
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe("document upload feedback", () => {
@@ -12,7 +16,7 @@ describe("document upload feedback", () => {
         if (bodies.length === 1) throw new TypeError("lost response");
         return Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES });
       }
-      return new Response(null, { status: 204 });
+      return success(url);
     }));
     await uploadDocument(new File(["hello"], "a.txt"), () => {});
     expect(bodies).toHaveLength(2); expect(bodies[0]).toBe(bodies[1]);
@@ -28,7 +32,7 @@ describe("document upload feedback", () => {
         if (completes === 1) throw new TypeError("lost response");
         if (completes === 2) return Response.json({ error: "Saving" }, { status: 202 });
       }
-      return new Response(null, { status: 204 });
+      return success(url);
     }));
     await uploadDocument(new File(["hello"], "a.txt"), () => {});
     expect(completes).toBe(3); expect(methods).not.toContain("DELETE");
@@ -41,6 +45,7 @@ describe("document upload feedback", () => {
     }));
     vi.stubGlobal("fetch", fetcher);
     const pending = uploadDocument(new File(["hello"], "a.txt"), () => {}, { signal: controller.signal });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(fetcher).toHaveBeenCalledOnce();
@@ -54,7 +59,7 @@ describe("document upload feedback", () => {
     const calls: { url: string; body?: BodyInit | null }[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
       calls.push({ url, body: init.body });
-      return url.endsWith("/uploads") ? Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES }) : new Response(null, { status: 204 });
+      return url.endsWith("/uploads") ? Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES }) : success(url);
     }));
     const file = new File([new Uint8Array(UPLOAD_CHUNK_BYTES + 10)], "photo.jpg");
     const progress: string[] = [];
@@ -74,7 +79,7 @@ describe("document upload feedback", () => {
     const starts: unknown[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
       if (url.endsWith("/uploads")) { starts.push(JSON.parse(init.body as string)); return Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES }); }
-      return new Response(null, { status: 204 });
+      return success(url);
     }));
     const file = new File(["hello"], "note.txt");
     Object.defineProperty(file, "webkitRelativePath", { value: "Records/Visits/note.txt" });
@@ -83,9 +88,9 @@ describe("document upload feedback", () => {
     await uploadDocument(new File(["hello"], "note.txt"), () => {}, "Records/Labs/note.txt");
     await uploadDocument(new File(["hello"], "note.txt"), () => {});
     expect(starts).toEqual([
-      { id: expect.any(String), name: "note.txt", size: 5, relativePath: "Records/Visits/note.txt" },
-      { id: expect.any(String), name: "note.txt", size: 5, relativePath: "Records/Labs/note.txt" },
-      { id: expect.any(String), name: "note.txt", size: 5 },
+      { id: expect.any(String), name: "note.txt", size: 5, relativePath: "Records/Visits/note.txt", sha256 },
+      { id: expect.any(String), name: "note.txt", size: 5, relativePath: "Records/Labs/note.txt", sha256 },
+      { id: expect.any(String), name: "note.txt", size: 5, sha256 },
     ]);
   });
   it("rejects unsafe paths before making upload requests", async () => {
@@ -98,7 +103,7 @@ describe("document upload feedback", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (url.endsWith("/uploads")) { starts++; return Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES }); }
       if (url.endsWith("/0") && parts++ === 0) throw new TypeError("offline");
-      return new Response(null, { status: 204 });
+      return success(url);
     }));
     await uploadDocument(new File(["hello"], "a.txt"), () => {});
     expect(starts).toBe(1); expect(parts).toBe(2);
@@ -107,11 +112,34 @@ describe("document upload feedback", () => {
     const remove = vi.fn();
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
       if (url.endsWith("/uploads")) return Response.json({ id: "test", chunkBytes: UPLOAD_CHUNK_BYTES });
-      if (init.method === "DELETE") { remove(); return new Response(null, { status: 204 }); }
+      if (init.method === "DELETE") { remove(); return success(url); }
       throw new TypeError("offline");
     }));
     await expect(uploadDocument(new File(["hello"], "a.txt"), () => {})).rejects.toThrow("connection was lost");
     expect(remove).not.toHaveBeenCalled();
+  });
+  it("skips known duplicates without transferring bytes or deleting the original", async () => {
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(init.body as string).sha256).toBe(sha256);
+      return Response.json({ id: "original", duplicate: true });
+    });
+    vi.stubGlobal("fetch", fetch);
+    expect(await uploadDocument(new File(["hello"], "renamed.txt"), () => {})).toEqual({ duplicate: true });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("recovers a lost duplicate completion response using the same hash", async () => {
+    let completes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/uploads")) return Response.json({ id: "temporary", chunkBytes: UPLOAD_CHUNK_BYTES });
+      if (url.endsWith("/complete")) {
+        expect(JSON.parse(init.body as string)).toEqual({ sha256 });
+        if (completes++ === 0) throw new TypeError("lost response");
+        return Response.json({ ok: true, duplicate: true });
+      }
+      return success(url);
+    }));
+    expect(await uploadDocument(new File(["hello"], "note.txt"), () => {})).toEqual({ duplicate: true });
+    expect(completes).toBe(2);
   });
 });
 

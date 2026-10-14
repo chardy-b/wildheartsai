@@ -39,7 +39,7 @@ async function request(url: string, options: RequestInit, signal?: AbortSignal):
 
 // Keep this ID with the queued File so retries reconcile with the existing
 // reservation and received pieces. Never delete on an uncertain response.
-export async function uploadDocument(file: File, progress: (message: string) => void, options: { id?: string; signal?: AbortSignal; relativePath?: string } | string = {}): Promise<void> {
+export async function uploadDocument(file: File, progress: (message: string) => void, options: { id?: string; signal?: AbortSignal; relativePath?: string; sha256?: string } | string = {}): Promise<{ duplicate: boolean }> {
   const relativePath = typeof options === "string" ? options : options.relativePath ?? (file.webkitRelativePath || undefined);
   const pathError = relativePathError(file.name, relativePath);
   if (pathError) throw new UploadError(pathError, 400);
@@ -49,9 +49,15 @@ export async function uploadDocument(file: File, progress: (message: string) => 
   if (!/\.(pdf|txt|png|jpe?g|gif|webp)$/i.test(file.name)) throw new UploadError("This file type is not supported. Choose a PDF, .txt, PNG, JPEG, GIF, or WebP file.", 415);
   const id = settings.id ?? crypto.randomUUID();
   const { signal } = settings;
-  const started = await request("/api/wildcards/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name: file.name, size: file.size, relativePath }) }, signal);
-  const upload = await started.json() as { id: string; chunkBytes: number; status?: string; parts?: string[] };
-  if (upload.status === "ready") return;
+  progress("Checking for duplicates…");
+  signal?.throwIfAborted();
+  const digest = settings.sha256 ? undefined : await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  const sha256 = settings.sha256 ?? Array.from(new Uint8Array(digest!), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  signal?.throwIfAborted();
+  const started = await request("/api/wildcards/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name: file.name, size: file.size, relativePath, sha256 }) }, signal);
+  const upload = await started.json() as { id: string; chunkBytes: number; status?: string; parts?: string[]; duplicate?: boolean };
+  if (upload.duplicate) return { duplicate: true };
+  if (upload.status === "ready") return { duplicate: false };
   if (!Number.isSafeInteger(upload.chunkBytes) || upload.chunkBytes <= 0) throw new UploadError("The upload could not start. Refresh Documents and try again.");
   if (upload.status !== "finalizing") {
     for (let offset = 0, part = 0; offset < file.size; offset += upload.chunkBytes, part++) {
@@ -62,8 +68,8 @@ export async function uploadDocument(file: File, progress: (message: string) => 
   progress("Checking and saving your file…");
   const until = Date.now() + 150_000;
   do {
-    const response = await request(`/api/wildcards/uploads/${upload.id}/complete`, { method: "POST" }, signal);
-    if (response.status !== 202) return;
+    const response = await request(`/api/wildcards/uploads/${upload.id}/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sha256 }) }, signal);
+    if (response.status !== 202) return { duplicate: (await response.json()).duplicate === true };
     await waitForRetry(2000, signal);
   } while (Date.now() < until);
   throw new UploadError("Your file is still being saved. Pause, then resume to check its status.");

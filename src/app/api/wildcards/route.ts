@@ -18,8 +18,8 @@ export async function POST(request: Request) {
     try { name = decodeURIComponent(request.headers.get("x-file-name") ?? ""); }
     catch { throw new FileInputError("Invalid filename."); }
     const bytes = await readUpload(request);
-    await storeFile(db, recordsKey(), session.user.id, name, bytes, fileObjects());
-    return Response.json({ ok: true }, { status: 201, headers: PRIVATE_HEADERS });
+    const result = await storeFile(db, recordsKey(), session.user.id, name, bytes, fileObjects());
+    return Response.json({ ok: true, ...result }, { status: result.duplicate ? 200 : 201, headers: PRIVATE_HEADERS });
   } catch (error) {
     if (error instanceof FileInputError) return fileError(error.message, error.status);
     // Do not log filenames, file contents, or database errors containing them.

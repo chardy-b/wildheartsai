@@ -5,6 +5,16 @@ import { UploadError } from "./wildcards-client";
 const file = (name: string) => new File([name], `${name}.txt`, { lastModified: 1 });
 afterEach(() => vi.unstubAllGlobals());
 describe("bulk document queue", () => {
+  it("reports skipped content separately while keeping recovery IDs and continuing the batch", async () => {
+    const transfer = vi.fn().mockResolvedValueOnce({ duplicate: false }).mockResolvedValueOnce({ duplicate: true }).mockResolvedValueOnce({ duplicate: false });
+    const queue = new DocumentQueue(vi.fn(), "owner", transfer);
+    queue.add([file("first"), file("copy"), file("last")]);
+    await vi.waitFor(() => expect(queue.done).toBe(3));
+    expect(queue.skipped).toBe(1); expect(queue.failed).toBe(0); expect(queue.paused).toBe(false);
+    expect(queue.items[1].message).toBe("Already uploaded — skipped");
+    expect(transfer.mock.calls[1][2].sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(transfer.mock.calls[1][2].id).toBe(queue.items[1].id);
+  });
   it("stops a thousand-file batch on quota errors and retries only failures", async () => {
     const transfer = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new UploadError("Full", 409)).mockResolvedValue(undefined);
     const queue = new DocumentQueue(vi.fn(), "owner", transfer);

@@ -19,7 +19,7 @@ function request(method = "POST", body?: string | Uint8Array<ArrayBuffer>, conte
 }
 beforeEach(() => {
   vi.clearAllMocks(); mocks.session.mockResolvedValue({ user: { id: "owner" } }); mocks.configured.mockReturnValue(true);
-  mocks.begin.mockResolvedValue({ id, chunkBytes: UPLOAD_CHUNK_BYTES }); mocks.part.mockResolvedValue(undefined); mocks.complete.mockResolvedValue(undefined);
+  mocks.begin.mockResolvedValue({ id, chunkBytes: UPLOAD_CHUNK_BYTES, duplicate: false }); mocks.part.mockResolvedValue(undefined); mocks.complete.mockResolvedValue({ duplicate: false });
 });
 describe("bounded document upload endpoints", () => {
   it("authenticates and checks origin on every step", async () => {
@@ -36,11 +36,11 @@ describe("bounded document upload endpoints", () => {
   it("uses the session owner and sends private responses", async () => {
     const response = await begin(request("POST", JSON.stringify({ name: "photo.jpg", size: 10_000_000, userId: "other" })));
     expect(response.status).toBe(201); expect(response.headers.get("cache-control")).toContain("no-store");
-    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "photo.jpg", 10_000_000, undefined);
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "photo.jpg", 10_000_000, undefined, undefined, undefined, "test-objects");
     expect((await part(request("PUT", "hello", "application/octet-stream"), context)).status).toBe(204);
     expect(mocks.part).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", id, 0, Buffer.from("hello"), "test-objects");
     expect((await complete(request(), context)).status).toBe(200);
-    expect(mocks.complete).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", id, "test-objects");
+    expect(mocks.complete).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", id, "test-objects", undefined);
   });
   it("rejects malformed metadata and oversized transfers", async () => {
     expect((await begin(request("POST", "bad json"))).status).toBe(400);
@@ -52,7 +52,7 @@ describe("bounded document upload endpoints", () => {
   it("passes relative paths with the authenticated owner and rejects non-string paths", async () => {
     const response = await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, relativePath: "Records/Visits/note.txt", userId: "other" })));
     expect(response.status).toBe(201);
-    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, "Records/Visits/note.txt");
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, "Records/Visits/note.txt", undefined, undefined, "test-objects");
     mocks.begin.mockClear();
     for (const relativePath of [null, 1, [], {}]) {
       expect((await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, relativePath })))).status).toBe(400);
@@ -66,5 +66,25 @@ describe("bounded document upload endpoints", () => {
     mocks.complete.mockRejectedValue(new Error("sensitive internal detail"));
     const response = await complete(request(), context);
     expect(response.status).toBe(500); expect(await response.text()).not.toContain("sensitive");
+  });
+  it("returns successful duplicate feedback and passes hashes for lookups and completion retries", async () => {
+    const sha256 = "a".repeat(64);
+    mocks.begin.mockResolvedValue({ id, duplicate: true });
+    const response = await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, sha256 })));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ duplicate: true });
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, undefined, undefined, sha256, "test-objects");
+    mocks.complete.mockResolvedValue({ duplicate: true });
+    const completed = await complete(request("POST", JSON.stringify({ sha256 })), context);
+    expect(await completed.json()).toEqual({ ok: true, duplicate: true });
+    expect(mocks.complete).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", id, "test-objects", sha256);
+  });
+  it("rejects malformed hashes before storage calls", async () => {
+    for (const sha256 of [null, 5, [], "bad", "A".repeat(64), "f".repeat(63)]) {
+      expect((await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, sha256 })))).status).toBe(400);
+      expect((await complete(request("POST", JSON.stringify({ sha256 })), context)).status).toBe(400);
+    }
+    expect((await complete(request("POST", "broken json"), context)).status).toBe(400);
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.complete).not.toHaveBeenCalled();
   });
 });

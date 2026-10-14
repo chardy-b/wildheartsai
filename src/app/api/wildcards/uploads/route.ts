@@ -6,6 +6,7 @@ import { PRIVATE_HEADERS, readUpload, validFileId } from "@/lib/wildcards-http";
 import { uploadError, uploadUser } from "@/lib/wildcards-upload-http";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 export async function POST(request: Request) {
   const user = await uploadUser(request);
   if (user instanceof Response) return user;
@@ -21,7 +22,9 @@ export async function POST(request: Request) {
     const id = "id" in body ? body.id : undefined;
     if (id !== undefined && (typeof id !== "string" || !validFileId(id))) throw new FileInputError("Invalid upload ID.");
     await cleanupExpiredUploads(db, user, fileObjects());
-    const result = id === undefined ? await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath) : await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath, id);
-    return Response.json(result, { status: 201, headers: PRIVATE_HEADERS });
+    if ("sha256" in body && (typeof body.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(body.sha256))) throw new FileInputError("The file hash could not be read. Choose the file again.");
+    const sha256 = "sha256" in body ? body.sha256 as string : undefined;
+    const result = await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath, id, sha256, fileObjects());
+    return Response.json(result, { status: result.duplicate ? 200 : 201, headers: PRIVATE_HEADERS });
   } catch (error) { return uploadError(error); }
 }

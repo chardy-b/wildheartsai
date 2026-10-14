@@ -60,11 +60,11 @@ export function Wildcards({ files, available, usage, owner, page }: { files: Wil
         onChange={(event) => { if (event.target.files?.length) void upload(selectedFiles(event.target.files)); }} /></label>
       <label className="wildcard-picker">Choose folder<input ref={folderInput} type="file" multiple {...{ webkitdirectory: "" }} disabled={!available}
         onChange={(event) => { if (event.target.files?.length) void upload(selectedFiles(event.target.files)); }} /></label></div>
-      <p className="wildcard-hint">Folder uploads keep their paths. Add more files while uploading. Keep this page open; if interrupted, reselect the same files in this browser to continue incomplete uploads. Files are stored as originals.</p>
+      <p className="wildcard-hint">Folder uploads keep their paths. Identical files are skipped, keeping the first upload’s name and location. Add more files while uploading. Keep this page open; if interrupted, reselect the same files in this browser to continue incomplete uploads. Files are stored as originals.</p>
     </div>
     {reading > 0 && <p role="status">Reading selected files and folders…</p>}
     {queue.items.length > 0 && <section aria-label="Upload queue">
-      <p role="status">{queue.done} uploaded · {queue.failed} failed · {remaining} remaining{queue.paused ? " · Paused" : ""}</p>
+      <p role="status">{queue.done - queue.skipped} uploaded · {queue.skipped} skipped · {queue.failed} failed · {remaining} remaining{queue.paused ? " · Paused" : ""}</p>
       {queue.active && <p>Current file: <strong>{queue.active.relativePath ?? queue.active.file.name}</strong> · {queue.active.message}</p>}
       {queue.notice && <p role="alert">{queue.notice}</p>}
       <div className="wildcard-actions">

@@ -22,7 +22,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.configured.mockReturnValue(true);
   mocks.session.mockResolvedValue({ user: { id: "owner" } });
-  mocks.store.mockResolvedValue(undefined);
+  mocks.store.mockResolvedValue({ duplicate: false });
   mocks.read.mockResolvedValue({ name: "Résumé.pdf", type: "application/pdf", bytes: Buffer.from("%PDF-1.7") });
   mocks.remove.mockResolvedValue(true);
 });
@@ -55,6 +55,12 @@ describe("private file endpoints", () => {
     expect(response.status).toBe(201);
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(mocks.store).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "my file.txt", Buffer.from("hello"), "test-objects");
+  });
+  it("reports identical files through the legacy upload endpoint", async () => {
+    mocks.store.mockResolvedValue({ duplicate: true });
+    const response = await POST(upload());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, duplicate: true });
   });
   it("serves inert private responses and encodes the original download filename", async () => {
     for (const download of [false, true]) {
