@@ -15,6 +15,8 @@ export async function POST(request: Request) {
     let body: unknown;
     try { body = JSON.parse(bytes.toString("utf8")); } catch { throw new FileInputError("Invalid upload request."); }
     if (!body || typeof body !== "object" || !("name" in body) || typeof body.name !== "string" || !("size" in body) || typeof body.size !== "number") throw new FileInputError("The file name or size could not be read. Choose the file again.");
-    return Response.json(await beginUpload(db, recordsKey(), user, body.name, body.size), { status: 201, headers: PRIVATE_HEADERS });
+    if ("relativePath" in body && typeof body.relativePath !== "string") throw new FileInputError("The file path could not be read. Choose the folder again.");
+    const relativePath = "relativePath" in body ? body.relativePath as string : undefined;
+    return Response.json(await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath), { status: 201, headers: PRIVATE_HEADERS });
   } catch (error) { return uploadError(error); }
 }

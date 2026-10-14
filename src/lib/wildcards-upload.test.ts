@@ -24,6 +24,38 @@ async function parts(user: string, id: string, bytes: Buffer) {
 }
 
 describe("large private uploads", () => {
+  it("keeps encrypted relative paths through completion, listing, reading, and deletion without merging same-name files", async () => {
+    const user = await person(), other = await person();
+    const paths = ["Records/Visits/note.txt", "Records/Labs/note.txt", "Records/Visits/note.txt"];
+    const ids: string[] = [];
+    for (const relativePath of paths) {
+      const { id } = await beginUpload(db, kek, user, "note.txt", 5, relativePath);
+      ids.push(id);
+      const [pending] = await listFiles(db, kek, user);
+      expect(pending.relativePath).toBe(relativePath);
+      const [raw] = await db.select().from(wildcardFile).where(eq(wildcardFile.id, id));
+      expect(raw.sealedMetadata).not.toContain("Records");
+      expect(raw.objectKey).not.toContain("Records");
+      await parts(user, id, Buffer.from("hello"));
+      await completeUpload(db, kek, user, id, objects);
+      await completeUpload(db, kek, user, id, objects);
+      expect(await readFile(db, kek, user, id, objects)).toMatchObject({ name: "note.txt", relativePath, bytes: Buffer.from("hello") });
+      expect(await readFile(db, kek, other, id, objects)).toBeNull();
+    }
+    expect((await listFiles(db, kek, user)).map((file) => file.relativePath).sort()).toEqual([...paths].sort());
+    expect(await listFiles(db, kek, other)).toEqual([]);
+    await deleteFile(db, user, ids[0], objects);
+    expect((await listFiles(db, kek, user)).map((file) => file.id).sort()).toEqual(ids.slice(1).sort());
+  });
+
+  it("rejects invalid paths before reserving quota or storing metadata", async () => {
+    const user = await person();
+    for (const path of ["../note.txt", "/Records/note.txt", "Records//note.txt", "Records/other.txt", "C:/Records/note.txt", "Records\\note.txt", "Records/\u202enote.txt"]) {
+      expect(() => beginUpload(db, kek, user, "note.txt", 5, path)).toThrow();
+    }
+    expect(await listFiles(db, kek, user)).toEqual([]);
+  });
+
   it("round trips a phone photo at the full file-size limit and cleans up encrypted temporary pieces", async () => {
     const user = await person();
     const bytes = Buffer.alloc(MAX_FILE_BYTES, 0x61); bytes.set([255, 216, 255]);

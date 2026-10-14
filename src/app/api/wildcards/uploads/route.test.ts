@@ -36,7 +36,7 @@ describe("bounded document upload endpoints", () => {
   it("uses the session owner and sends private responses", async () => {
     const response = await begin(request("POST", JSON.stringify({ name: "photo.jpg", size: 10_000_000, userId: "other" })));
     expect(response.status).toBe(201); expect(response.headers.get("cache-control")).toContain("no-store");
-    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "photo.jpg", 10_000_000);
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "photo.jpg", 10_000_000, undefined);
     expect((await part(request("PUT", "hello", "application/octet-stream"), context)).status).toBe(204);
     expect(mocks.part).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", id, 0, Buffer.from("hello"), "test-objects");
     expect((await complete(request(), context)).status).toBe(200);
@@ -48,6 +48,16 @@ describe("bounded document upload endpoints", () => {
     expect((await part(request("PUT", new Uint8Array(UPLOAD_CHUNK_BYTES + 1), "application/octet-stream"), context)).status).toBe(400);
     expect((await part(request("PUT", "hello", "application/octet-stream"), { params: Promise.resolve({ id, part: "-1" }) })).status).toBe(404);
     expect(mocks.part).not.toHaveBeenCalled();
+  });
+  it("passes relative paths with the authenticated owner and rejects non-string paths", async () => {
+    const response = await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, relativePath: "Records/Visits/note.txt", userId: "other" })));
+    expect(response.status).toBe(201);
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, "Records/Visits/note.txt");
+    mocks.begin.mockClear();
+    for (const relativePath of [null, 1, [], {}]) {
+      expect((await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, relativePath })))).status).toBe(400);
+    }
+    expect(mocks.begin).not.toHaveBeenCalled();
   });
   it("preserves useful size and quota errors while hiding internal errors", async () => {
     mocks.begin.mockRejectedValue(new FileInputError("This file is 30.0 MB; the limit is 25.0 MB per file.", 413));
