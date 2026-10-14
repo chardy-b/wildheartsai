@@ -6,6 +6,7 @@ import { classifyWorkerFailure, PiHealthRunner, WorkerExecutionError, WorkerTime
 import { ChatWebApi } from "../src/web-api.js";
 import { GatewayToolClient } from "../src/private-gateway.js";
 import { createPrivateToolGateway } from "../src/private-gateway.js";
+import { holoSystemPrompt } from "../src/system-prompt.js";
 
 const executionGrant = `whchat1.execution.${"e".repeat(43)}`;
 const context = { messages: [{ role: "user", content: "What synthetic result is available?" }], modelId: "synthetic-model" };
@@ -131,6 +132,9 @@ describe("Pi health runner", () => {
     const runner = new PiHealthRunner({ gatewayUrl: fixtureValue.gatewayUrl, capability: executionGrant, modelId: "synthetic-model" }, (event) => fixtureValue.workerGateway.publish(event, new AbortController().signal).then(() => undefined));
     try {
       await expect(runner.run(new AbortController().signal)).resolves.toBe("Synthetic result [evidence-1]");
+      expect(fixtureValue.inferenceBodies[0]?.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "system", content: holoSystemPrompt }),
+      ]));
       expect(fixtureValue.eventRows.map((event) => event.type)).toContain("answer.delta");
       expect(fixtureValue.eventRows.at(-1)?.type).toBe("completed");
     } finally {
