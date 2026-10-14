@@ -5,18 +5,25 @@ import { sealBinaryField, sealField, unsealBinaryField, unsealField, userKeysFor
 import { asUser } from "@/lib/db/rls";
 import { wildcardFile } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
-import { MAX_FILE_BYTES, MAX_FILES, MAX_STORAGE_BYTES, type WildcardFile } from "./wildcards";
+import { fileSize, fileSizeError, MAX_FILES, MAX_STORAGE_BYTES, UPLOAD_CHUNK_BYTES, type WildcardFile } from "./wildcards";
 import type { FileObjects } from "./wildcards-r2";
 
-export class FileInputError extends Error {}
+export class FileInputError extends Error {
+  constructor(message: string, public readonly status = 400) { super(message); }
+}
 
 // Ignore browser-supplied MIME types. Only inert formats are served, with a
 // restrictive CSP. SVG/HTML and other executable document formats are excluded.
-export function validateFile(name: string, bytes: Buffer): { name: string; type: string } {
+export function validateFileName(name: string): void {
   if (!name || name.length > 255 || /[\x00-\x1f\x7f/\\\u202a-\u202e\u2066-\u2069]/u.test(name)) {
     throw new FileInputError("Use a filename of 1–255 characters without paths or control characters.");
   }
-  if (!bytes.length || bytes.length > MAX_FILE_BYTES) throw new FileInputError("Files must be nonempty and no larger than 3 MB.");
+}
+
+export function validateFile(name: string, bytes: Buffer): { name: string; type: string } {
+  validateFileName(name);
+  const sizeError = fileSizeError(bytes.length);
+  if (sizeError) throw new FileInputError(sizeError);
   const ext = name.split(".").pop()?.toLowerCase();
   let type: string | undefined;
   if (ext === "pdf" && bytes.subarray(0, 5).toString("ascii") === "%PDF-") type = "application/pdf";
@@ -30,7 +37,7 @@ export function validateFile(name: string, bytes: Buffer): { name: string; type:
       if (!/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(text)) type = "text/plain; charset=utf-8";
     } catch { /* Invalid UTF-8 is not plain text. */ }
   }
-  if (!type) throw new FileInputError("Choose a valid PDF, UTF-8 text, PNG, JPEG, GIF, or WebP file with a matching extension.");
+  if (!type) throw new FileInputError("This file’s contents do not match a supported format. Choose a PDF, UTF-8 .txt, PNG, JPEG, GIF, or WebP file with the correct extension.");
   return { name, type };
 }
 
@@ -39,18 +46,120 @@ function metadata(keys: UserKeys, row: { id: string; sealedMetadata: string }) {
   return JSON.parse(unsealField(keys, row.sealedMetadata, location(row.id, "metadata"))) as { name: string; type: string };
 }
 
+async function reserveQuota(tx: Db, userId: string, size: number): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
+  const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::int` })
+    .from(wildcardFile).where(eq(wildcardFile.userId, userId));
+  if (usage.count >= MAX_FILES) throw new FileInputError(`You have ${usage.count} documents; the limit is ${MAX_FILES} files. Delete a file before uploading another.`, 409);
+  if (usage.bytes + size > MAX_STORAGE_BYTES) throw new FileInputError(`This file needs ${fileSize(size)}, but Documents has only ${fileSize(Math.max(0, MAX_STORAGE_BYTES - usage.bytes))} available (${fileSize(usage.bytes)} of ${fileSize(MAX_STORAGE_BYTES)} used). Delete files to free space, then try again.`, 409);
+}
+
+export function beginUpload(db: Db, kek: Buffer, userId: string, name: string, size: number) {
+  validateFileName(name);
+  if (!Number.isSafeInteger(size) || size < 0) throw new FileInputError("The file size could not be read. Choose the file again.");
+  const sizeError = fileSizeError(size);
+  if (sizeError) throw new FileInputError(sizeError, size === 0 ? 400 : 413);
+  if (!/\.(pdf|txt|png|jpe?g|gif|webp)$/i.test(name)) throw new FileInputError("This file type is not supported. Choose a PDF, .txt, PNG, JPEG, GIF, or WebP file.", 415);
+  return asUser(db, userId, async (tx) => {
+    await reserveQuota(tx, userId, size);
+    const id = randomUUID();
+    const keys = await userKeysFor(tx, kek, userId, new Date());
+    await tx.insert(wildcardFile).values({ id, userId, objectKey: `wildcards/${randomUUID()}`, sizeBytes: size,
+      uploadChunkCount: Math.ceil(size / UPLOAD_CHUNK_BYTES), uploadParts: {}, status: "pending",
+      sealedMetadata: sealField(keys, JSON.stringify({ name, type: "application/octet-stream" }), location(id, "metadata")),
+    });
+    return { id, chunkBytes: UPLOAD_CHUNK_BYTES };
+  });
+}
+
+function requirePending(row: typeof wildcardFile.$inferSelect | undefined) {
+  if (!row || !row.uploadChunkCount) throw new FileInputError("Upload not found. Choose the file again.", 404);
+  if (row.status !== "pending") throw new FileInputError("This upload is no longer accepting data. Check your file list before trying again.", 409);
+  if (Date.now() - row.uploadedAt.getTime() > 60 * 60 * 1000) throw new FileInputError("This upload expired. Delete the incomplete file and upload it again.", 410);
+  return row;
+}
+
+export async function uploadPart(db: Db, kek: Buffer, userId: string, id: string, index: number, bytes: Buffer, objects: FileObjects) {
+  const encrypted = await asUser(db, userId, async (tx) => {
+    const [stored] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).limit(1);
+    const row = requirePending(stored);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= row.uploadChunkCount!) throw new FileInputError("Invalid upload piece.");
+    const expected = Math.min(UPLOAD_CHUNK_BYTES, row.sizeBytes - index * UPLOAD_CHUNK_BYTES);
+    if (bytes.length !== expected) throw new FileInputError("An upload piece was incomplete. Try uploading the file again.");
+    const keys = await userKeysFor(tx, kek, userId, new Date());
+    return sealBinaryField(keys, bytes, location(id, `upload_part_${index}`));
+  });
+  // Unique keys keep an in-flight retry from modifying pieces already being
+  // finalized. The transaction below freezes the received set before assembly.
+  const key = `wildcards-staging/${randomUUID()}`;
+  let oldKey: string | undefined;
+  try {
+    await objects.put(key, encrypted);
+    oldKey = await asUser(db, userId, async (tx) => {
+      const [stored] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).for("update");
+      const row = requirePending(stored);
+      const previous = row.uploadParts?.[String(index)];
+      await tx.update(wildcardFile).set({ uploadParts: { ...row.uploadParts, [index]: key } }).where(eq(wildcardFile.id, id));
+      return previous;
+    });
+  } catch (error) {
+    try { await objects.delete(key); } catch { /* Ciphertext only; request may be retried. */ }
+    throw error;
+  }
+  if (oldKey) { try { await objects.delete(oldKey); } catch { /* Superseded ciphertext is never exposed as a file. */ } }
+}
+
+export async function completeUpload(db: Db, kek: Buffer, userId: string, id: string, objects: FileObjects) {
+  const upload = await asUser(db, userId, async (tx) => {
+    const [stored] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).for("update");
+    // Completing a successful upload again is harmless after a lost response.
+    if (stored?.status === "ready") return null;
+    const row = requirePending(stored);
+    const partKeys = Array.from({ length: row.uploadChunkCount! }, (_, index) => row.uploadParts?.[String(index)]);
+    if (partKeys.some((key) => !key)) throw new FileInputError("Some of this file has not arrived. Try uploading it again.", 409);
+    const keys = await userKeysFor(tx, kek, userId, new Date());
+    await tx.update(wildcardFile).set({ status: "finalizing" }).where(eq(wildcardFile.id, id));
+    return { row, keys, partKeys: partKeys as string[] };
+  });
+  if (!upload) return;
+  const { row, keys, partKeys } = upload;
+  try {
+    const chunks: Buffer[] = [];
+    for (const [index, key] of partKeys.entries()) {
+      const bytes = unsealBinaryField(keys, await objects.get(key), location(id, `upload_part_${index}`));
+      const expected = Math.min(UPLOAD_CHUNK_BYTES, row.sizeBytes - index * UPLOAD_CHUNK_BYTES);
+      if (bytes.length !== expected) throw new Error("Stored upload piece has unexpected size");
+      chunks.push(bytes);
+    }
+    const bytes = Buffer.concat(chunks, row.sizeBytes);
+    const meta = validateFile(metadata(keys, row).name, bytes);
+    await objects.put(row.objectKey, sealBinaryField(keys, bytes, location(id, "content")));
+    const updated = await asUser(db, userId, (tx) => tx.update(wildcardFile).set({
+      sealedMetadata: sealField(keys, JSON.stringify(meta), location(id, "metadata")), status: "ready", uploadedAt: new Date(),
+    }).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "finalizing"))).returning({ id: wildcardFile.id }));
+    if (!updated.length) {
+      await objects.delete(row.objectKey);
+      throw new FileInputError("This upload was cancelled. Choose the file again.", 409);
+    }
+  } catch (error) {
+    try { await deleteFile(db, userId, id, objects); } catch { /* Retain failed cleanup for owner retry. */ }
+    throw error;
+  }
+  // A successful document stays available even if temporary-piece cleanup fails.
+  try {
+    for (const key of partKeys) await objects.delete(key);
+    await asUser(db, userId, (tx) => tx.update(wildcardFile).set({ uploadParts: null, uploadChunkCount: null })
+      .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"))));
+  } catch { /* The retained keys will be removed when the owner deletes the file. */ }
+}
+
 export async function storeFile(db: Db, kek: Buffer, userId: string, name: string, bytes: Buffer, objects: FileObjects): Promise<void> {
   const meta = validateFile(name, bytes);
   const id = randomUUID();
   const objectKey = `wildcards/${randomUUID()}`;
   const encrypted = await asUser(db, userId, async (tx) => {
     // Serialize quota checks for simultaneous uploads from this user's tabs.
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
-    const [usage] = await tx.select({ count: sql<number>`count(*)::int`, bytes: sql<number>`coalesce(sum(size_bytes), 0)::int` })
-      .from(wildcardFile).where(eq(wildcardFile.userId, userId));
-    if (usage.count >= MAX_FILES || usage.bytes + bytes.length > MAX_STORAGE_BYTES) {
-      throw new FileInputError("Your Documents storage is full (100 MB or 200 files). Delete a file before uploading more.");
-    }
+    await reserveQuota(tx, userId, bytes.length);
     const now = new Date();
     const keys = await userKeysFor(tx, kek, userId, now);
     await tx.insert(wildcardFile).values({
@@ -101,10 +210,11 @@ export async function readFile(db: Db, kek: Buffer, userId: string, id: string, 
 
 export async function deleteFile(db: Db, userId: string, id: string, objects: FileObjects) {
   const [row] = await asUser(db, userId, (tx) => tx.update(wildcardFile).set({ status: "deleting" })
-    .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).returning({ objectKey: wildcardFile.objectKey }));
+    .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))).returning({ objectKey: wildcardFile.objectKey, uploadParts: wildcardFile.uploadParts }));
   if (!row) return false;
   // Retain the row until deletion succeeds. Retrying a failed deletion is safe.
   await objects.delete(row.objectKey);
+  for (const key of Object.values(row.uploadParts ?? {})) await objects.delete(key);
   await asUser(db, userId, (tx) => tx.delete(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId))));
   return true;
 }

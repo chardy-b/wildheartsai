@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     await storeFile(db, recordsKey(), session.user.id, name, bytes, fileObjects());
     return Response.json({ ok: true }, { status: 201, headers: PRIVATE_HEADERS });
   } catch (error) {
-    if (error instanceof FileInputError) return fileError(error.message, 400);
+    if (error instanceof FileInputError) return fileError(error.message, error.status);
     // Do not log filenames, file contents, or database errors containing them.
     return fileError("Could not save this file. Please try again.", 500);
   }

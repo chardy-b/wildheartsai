@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FILE_ACCEPT, fileSize, MAX_FILE_BYTES, type WildcardFile } from "@/lib/wildcards";
+import { uploadDocument } from "@/lib/wildcards-client";
 
 type UploadResult = { name: string; status: string };
 export function Wildcards({ files, available }: { files: WildcardFile[]; available: boolean }) {
@@ -24,18 +25,11 @@ export function Wildcards({ files, available }: { files: WildcardFile[]; availab
     const update = (index: number, status: string) => setResults((rows) => rows.map((row, i) => i === index ? { ...row, status } : row));
     try {
       for (const [index, file] of selected.entries()) {
-        if (!file.size || file.size > MAX_FILE_BYTES) {
-          update(index, "Not uploaded: files must be nonempty and no larger than 3 MB.");
-          continue;
-        }
-        update(index, "Uploading…");
+        update(index, "Preparing upload…");
         try {
-          const response = await fetch("/api/wildcards", { method: "POST", headers: {
-            "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(file.name),
-          }, body: file });
-          const result = await response.json().catch(() => null);
-          update(index, response.ok ? "Uploaded" : `Not uploaded: ${result?.error ?? "Please try again."}`);
-        } catch { update(index, "Not uploaded: connection lost. Check your file list before retrying."); }
+          await uploadDocument(file, (message) => update(index, message));
+          update(index, "Uploaded");
+        } catch (error) { update(index, `Not uploaded: ${error instanceof Error ? error.message : "Could not complete the upload. Please try again."}`); }
       }
     } finally {
       busyRef.current = false;
@@ -63,7 +57,7 @@ export function Wildcards({ files, available }: { files: WildcardFile[]; availab
       onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
       onDrop={(event) => { event.preventDefault(); setDragging(false); void upload(Array.from(event.dataTransfer.files)); }}>
       <h2>{!available ? "Uploads are not available yet" : busy ? "Uploading your files…" : "Drop your files here"}</h2>
-      <p>PDF, text, PNG, JPEG, GIF, or WebP · Up to 3 MB per file</p>
+      <p>PDF, text, PNG, JPEG, GIF, or WebP · Up to {fileSize(MAX_FILE_BYTES)} per file</p>
       <label className="wildcard-picker">Choose files
         <input ref={input} type="file" multiple accept={FILE_ACCEPT} disabled={busy || !available}
           onChange={(event) => void upload(Array.from(event.target.files ?? []))} />
@@ -83,7 +77,7 @@ export function Wildcards({ files, available }: { files: WildcardFile[]; availab
         <caption className="sr-only">Your private files, newest uploads first</caption>
         <thead><tr><th scope="col">File name</th><th scope="col">Type</th><th scope="col">Uploaded</th><th scope="col">Size</th><th scope="col">Actions</th></tr></thead>
         <tbody>{files.map((file) => <tr key={file.id}>
-          <th scope="row">{file.status === "ready" ? <a href={`/app/wildcards/${file.id}`}>{file.name}</a> : <>{file.name}<p className="wildcard-hint">{file.status === "pending" ? "Upload incomplete. Delete and upload again." : "Deletion incomplete. Try Delete again."}</p></>}</th>
+          <th scope="row">{file.status === "ready" ? <a href={`/app/wildcards/${file.id}`}>{file.name}</a> : <>{file.name}<p className="wildcard-hint">{file.status === "deleting" ? "Deletion incomplete. Try Delete again." : "Upload incomplete. Delete and upload again."}</p></>}</th>
           <td>{file.type === "application/pdf" ? "PDF" : file.type.startsWith("text/") ? "Text" : file.type.split("/")[1].toUpperCase()}</td>
           <td><time dateTime={file.uploadedAt}>{file.uploadedAt.slice(0, 16).replace("T", " ")} UTC</time></td>
           <td>{fileSize(file.sizeBytes)}</td>

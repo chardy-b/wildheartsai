@@ -9,7 +9,7 @@ vi.mock("@/lib/wildcards-store", async (original) => ({ ...await original<typeof
   storeFile: mocks.store, readFile: mocks.read, deleteFile: mocks.remove }));
 import { POST } from "./route";
 import { GET, DELETE } from "./[id]/route";
-import { MAX_FILE_BYTES } from "@/lib/wildcards";
+import { UPLOAD_CHUNK_BYTES } from "@/lib/wildcards";
 import { readUpload } from "@/lib/wildcards-http";
 
 const url = "https://app.example/api/wildcards";
@@ -74,6 +74,14 @@ describe("private file endpoints", () => {
     expect((await GET(new Request(url), { params: Promise.resolve({ id: "invalid" }) })).status).toBe(404);
     expect((await DELETE(new Request(`${url}/${id}`, { method: "DELETE", headers: { origin: "https://app.example" } }), context)).status).toBe(404);
   });
+  it("streams downloads larger than the buffered hosting limit", async () => {
+    const bytes = Buffer.alloc(6 * 1024 * 1024, 0x61);
+    mocks.read.mockResolvedValue({ name: "large.txt", type: "text/plain; charset=utf-8", bytes });
+    const response = await GET(new Request(`${url}/${id}?download=1`), context);
+    expect(response.headers.get("content-length")).toBeNull();
+    expect(response.body).toBeInstanceOf(ReadableStream);
+    expect(Buffer.from(await response.arrayBuffer()).equals(bytes)).toBe(true);
+  });
   it("never exposes internal storage errors", async () => {
     mocks.store.mockRejectedValue(new Error("sensitive database detail"));
     const response = await POST(upload());
@@ -81,7 +89,7 @@ describe("private file endpoints", () => {
     expect(await response.text()).not.toContain("sensitive");
   });
   it("bounds uploads without trusting content-length", async () => {
-    const request = new Request(url, { method: "POST", body: new Uint8Array(MAX_FILE_BYTES + 1) });
-    await expect(readUpload(request)).rejects.toThrow("3 MB");
+    const request = new Request(url, { method: "POST", body: new Uint8Array(UPLOAD_CHUNK_BYTES + 1) });
+    await expect(readUpload(request)).rejects.toThrow("transfer limit");
   });
 });

@@ -1,5 +1,5 @@
 import "server-only";
-import { MAX_FILE_BYTES } from "./wildcards";
+import { UPLOAD_CHUNK_BYTES } from "./wildcards";
 import { FileInputError } from "./wildcards-store";
 
 export const PRIVATE_HEADERS = { "Cache-Control": "private, no-store", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" };
@@ -17,7 +17,7 @@ export function validFileId(id: string): boolean {
 // Read a bounded raw body rather than buffering arbitrary multipart requests.
 // Each item in a multi-file selection is sent in its own request.
 export async function readUpload(request: Request): Promise<Buffer> {
-  if (Number(request.headers.get("content-length")) > MAX_FILE_BYTES) throw new FileInputError("Files must be no larger than 3 MB.");
+  if (Number(request.headers.get("content-length")) > UPLOAD_CHUNK_BYTES) throw new FileInputError("An upload piece exceeded the transfer limit. Refresh Documents and try again.");
   const reader = request.body?.getReader();
   if (!reader) throw new FileInputError("Choose a nonempty file.");
   const chunks: Uint8Array[] = [];
@@ -27,9 +27,9 @@ export async function readUpload(request: Request): Promise<Buffer> {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_FILE_BYTES) {
+      if (size > UPLOAD_CHUNK_BYTES) {
         await reader.cancel();
-        throw new FileInputError("Files must be no larger than 3 MB.");
+        throw new FileInputError("An upload piece exceeded the transfer limit. Refresh Documents and try again.");
       }
       chunks.push(value);
     }
