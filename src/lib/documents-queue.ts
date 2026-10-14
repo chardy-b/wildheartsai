@@ -10,6 +10,7 @@ export class DocumentQueue {
   notice = "";
   done = 0;
   failed = 0;
+  skipped = 0;
   active?: Item;
   private controller?: AbortController;
   private disposed = false;
@@ -56,18 +57,21 @@ export class DocumentQueue {
         this.active = item;
         this.controller = new AbortController(); this.emit();
         let recoveryKey: string | undefined;
+        let sha256: string | undefined;
         try {
           // Only opaque content hashes and upload IDs are retained in this tab.
           // Reselecting the same interrupted file after reload reuses its ID.
           if (!fileSizeError(item.file.size)) {
             const digest = await crypto.subtle.digest("SHA-256", await item.file.arrayBuffer());
             const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+            sha256 = hex(digest);
             const fingerprint = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${item.relativePath ?? item.file.name}\0${hex(digest)}`));
             recoveryKey = `document-upload:${this.owner}:${hex(fingerprint)}`;
             try { item.id = await recoveryUploadId(recoveryKey, item.id); } catch { this.notice = "Browser recovery storage is unavailable. Keep this page open to pause and resume safely."; }
           }
-          await this.transfer(item.file, (message) => { item.message = message; this.emit(); }, { id: item.id, signal: this.controller.signal, relativePath: item.relativePath });
-          item.state = "done"; item.message = "Uploaded"; this.done++;
+          const result = await this.transfer(item.file, (message) => { item.message = message; this.emit(); }, { id: item.id, signal: this.controller.signal, relativePath: item.relativePath, sha256 });
+          item.state = "done"; item.message = result?.skipped ? "Already uploaded — skipped." : "Uploaded"; this.done++;
+          if (result?.skipped) this.skipped++;
           // Keep successful IDs too: reselecting an interrupted batch after
           // reload must not duplicate the files that already finished.
           if (this.done % 10 === 0) this.refresh();

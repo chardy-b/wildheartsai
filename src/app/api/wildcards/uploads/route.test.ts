@@ -59,6 +59,18 @@ describe("bounded document upload endpoints", () => {
     }
     expect(mocks.begin).not.toHaveBeenCalled();
   });
+  it("passes a valid digest with the authenticated account and rejects malformed digests", async () => {
+    const sha256 = "a".repeat(64);
+    mocks.begin.mockResolvedValue({ id, status: "ready", skipped: true });
+    const response = await begin(request("POST", JSON.stringify({ id, name: "note.txt", size: 5, sha256 })));
+    expect(await response.json()).toMatchObject({ skipped: true });
+    expect(mocks.begin).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "note.txt", 5, undefined, id, sha256, "test-objects");
+    mocks.begin.mockClear();
+    for (const sha256 of [null, 1, "short", "g".repeat(64), "A".repeat(64)]) {
+      expect((await begin(request("POST", JSON.stringify({ name: "note.txt", size: 5, sha256 })))).status).toBe(400);
+    }
+    expect(mocks.begin).not.toHaveBeenCalled();
+  });
   it("preserves useful size and quota errors while hiding internal errors", async () => {
     mocks.begin.mockRejectedValue(new FileInputError("This file is 30.0 MB; the limit is 25.0 MB per file.", 413));
     const size = await begin(request("POST", JSON.stringify({ name: "photo.jpg", size: 30_000_000 })));

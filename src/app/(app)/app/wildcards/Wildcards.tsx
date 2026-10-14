@@ -64,7 +64,7 @@ export function Wildcards({ files, available, usage, owner, page }: { files: Wil
     </div>
     {reading > 0 && <p role="status">Reading selected files and folders…</p>}
     {queue.items.length > 0 && <section aria-label="Upload queue">
-      <p role="status">{queue.done} uploaded · {queue.failed} failed · {remaining} remaining{queue.paused ? " · Paused" : ""}</p>
+      <p role="status">{queue.done - queue.skipped} uploaded · {queue.skipped} skipped · {queue.failed} failed · {remaining} remaining{queue.paused ? " · Paused" : ""}</p>
       {queue.active && <p>Current file: <strong>{queue.active.relativePath ?? queue.active.file.name}</strong> · {queue.active.message}</p>}
       {queue.notice && <p role="alert">{queue.notice}</p>}
       <div className="wildcard-actions">
