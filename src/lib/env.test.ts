@@ -14,6 +14,12 @@ const valid = {
 };
 
 describe("parseEnv", () => {
+  it("allows R2 to be disabled and requires complete server-only configuration when enabled", () => {
+    expect(parseEnv(valid).R2_BUCKET_NAME).toBeUndefined();
+    expect(() => parseEnv({ ...valid, R2_BUCKET_NAME: "private-files" })).toThrow(/R2_ACCOUNT_ID/);
+    expect(parseEnv({ ...valid, R2_ACCOUNT_ID: "a".repeat(32), R2_BUCKET_NAME: "private-files",
+      R2_ACCESS_KEY_ID: "test-access", R2_SECRET_ACCESS_KEY: "test-secret" }).R2_BUCKET_NAME).toBe("private-files");
+  });
   it("accepts an optional research verifier without a raw gateway credential", () => {
     expect(parseEnv({ ...valid, CHAT_RESEARCH_GATEWAY_TOKEN_HASH: "" }).CHAT_RESEARCH_GATEWAY_TOKEN_HASH).toBeUndefined();
     expect(parseEnv({ ...valid, CHAT_RESEARCH_GATEWAY_TOKEN_HASH: "a".repeat(64) }).CHAT_RESEARCH_GATEWAY_TOKEN_HASH).toBe("a".repeat(64));

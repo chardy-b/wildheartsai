@@ -10,6 +10,7 @@ import type { Db } from "./types";
 // or system context, a later migration makes an unset context see nothing.
 
 export const RLS_TABLES = [
+  "wildcard_file",
   "user_data_key",
   "health_source",
   "epic_connection",

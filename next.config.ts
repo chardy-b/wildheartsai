@@ -14,6 +14,9 @@ const securityHeaders = [
 
 // The Content-Security-Policy is set per request in src/proxy.ts, since it carries a nonce.
 const nextConfig: NextConfig = {
+  outputFileTracingIncludes: {
+    "/api/wildcards/pdfjs/[...asset]": ["./node_modules/pdfjs-dist/build/pdf.worker.min.mjs", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*"],
+  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

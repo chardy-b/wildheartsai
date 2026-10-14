@@ -6,3 +6,4 @@ export * from "./epic-schema";
 export * from "./metriport-schema";
 export * from "./profile-schema";
 export * from "./records-schema";
+export * from "./wildcard-schema";

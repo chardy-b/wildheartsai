@@ -41,7 +41,7 @@ export default async function OpengraphImage() {
           padding: "0 96px",
           background: "#1b1619",
           color: "#f4edef",
-          fontFamily: font ? "Rounded" : undefined,
+          fontFamily: font ? "Rounded" : "sans-serif",
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", maxWidth: 640 }}>
