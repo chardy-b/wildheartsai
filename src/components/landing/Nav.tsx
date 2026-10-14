@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { HeartMark } from "./marks";
 
-export function Nav() {
+export function Nav({ signedIn = false }: { signedIn?: boolean }) {
   return (
     <header className="wrap nav">
       <a className="brand" href="#top" aria-label="Wild Hearts Health home">
@@ -16,11 +16,15 @@ export function Nav() {
         <Link className="nav-link" href="/privacy">
           Privacy
         </Link>
-        <Link className="nav-link" href="/sign-in">
-          Sign in
-        </Link>
-        <Link className="btn" href="/sign-up">
-          Get started
+        {signedIn ? (
+          <span className="nav-link">Signed in</span>
+        ) : (
+          <Link className="nav-link" href="/sign-in">
+            Sign in
+          </Link>
+        )}
+        <Link className="btn" href={signedIn ? "/app" : "/sign-up"}>
+          {signedIn ? "Dashboard" : "Get started"}
         </Link>
       </nav>
     </header>
