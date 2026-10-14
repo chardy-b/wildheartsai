@@ -7,6 +7,7 @@ import { fileObjects } from "@/lib/wildcards-r2";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ id: string }> };
+export const maxDuration = 120;
 
 export async function GET(request: Request, context: Context) {
   const session = await getSession();
@@ -18,10 +19,18 @@ export async function GET(request: Request, context: Context) {
     if (!file) return fileError("File not found.", 404);
     const disposition = new URL(request.url).searchParams.get("download") === "1" ? "attachment" : "inline";
     const filename = encodeURIComponent(file.name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-    return new Response(new Uint8Array(file.bytes), { headers: {
+    // A real streaming response avoids Vercel's buffered response size limit.
+    // Keep GCM authentication complete before releasing any plaintext.
+    let offset = 0;
+    const stream = new ReadableStream<Uint8Array>({ pull(controller) {
+      if (offset >= file.bytes.length) { controller.close(); return; }
+      const end = Math.min(offset + 64 * 1024, file.bytes.length);
+      controller.enqueue(new Uint8Array(file.bytes.subarray(offset, end)));
+      offset = end;
+    } });
+    return new Response(stream, { headers: {
       ...PRIVATE_HEADERS,
       "Content-Type": file.type,
-      "Content-Length": String(file.bytes.length),
       "Content-Disposition": `${disposition}; filename="download"; filename*=UTF-8''${filename}`,
       // Uploaded documents never inherit the app's script privileges.
       "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox; frame-ancestors 'none'",

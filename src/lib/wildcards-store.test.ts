@@ -92,10 +92,10 @@ describe("private file storage", () => {
     await db.insert(wildcardFile).values(Array.from({ length: MAX_FILES }, () => ({
       userId: owner, sealedMetadata: "test", objectKey: crypto.randomUUID(), sizeBytes: 1,
     })));
-    await expect(storeFile(db, kek, owner, "extra.txt", Buffer.from("extra"), objects)).rejects.toThrow("storage is full");
+    await expect(storeFile(db, kek, owner, "extra.txt", Buffer.from("extra"), objects)).rejects.toThrow("limit is 200 files");
     await db.delete(wildcardFile).where(eq(wildcardFile.userId, owner));
     await db.insert(wildcardFile).values({ userId: owner, sealedMetadata: "test", objectKey: crypto.randomUUID(), sizeBytes: 100 * 1024 * 1024 });
-    await expect(storeFile(db, kek, owner, "extra.txt", Buffer.from("extra"), objects)).rejects.toThrow("storage is full");
+    await expect(storeFile(db, kek, owner, "extra.txt", Buffer.from("extra"), objects)).rejects.toThrow("only 0.0 KB available");
   });
 
   it("uses fail-closed RLS, including when an application query omits its owner filter", async () => {
