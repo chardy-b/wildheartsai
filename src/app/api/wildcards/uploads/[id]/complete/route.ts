@@ -13,7 +13,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const { id } = await context.params;
     if (!validFileId(id)) throw new FileInputError("Upload not found. Choose the file again.", 404);
-    await completeUpload(db, recordsKey(), user, id, fileObjects());
-    return Response.json({ ok: true }, { headers: PRIVATE_HEADERS });
+    const result = await completeUpload(db, recordsKey(), user, id, fileObjects());
+    return Response.json({ ok: true, ...result }, { headers: PRIVATE_HEADERS });
   } catch (error) { return uploadError(error); }
 }

@@ -4,6 +4,26 @@ import { filesFromDrop, selectedFiles, uploadDocument } from "./wildcards-client
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe("document upload feedback", () => {
+  it("skips a server-confirmed duplicate without sending any file chunks", async () => {
+    const fetcher = vi.fn<(url: string, options: RequestInit) => Promise<Response>>().mockResolvedValue(Response.json({ id: "existing", status: "ready", skipped: true }));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await uploadDocument(new File(["hello"], "renamed.txt"), () => {})).toEqual({ skipped: true });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetcher.mock.calls[0][1].body as string).sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+  it("continues a bounded older-document check before sending file chunks", async () => {
+    let starts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/uploads")) {
+        starts++;
+        return starts === 1 ? Response.json({ error: "Checking" }, { status: 202 }) : Response.json({ status: "ready", id: "existing" });
+      }
+      throw new Error("File contents must not be sent");
+    }));
+    const progress: string[] = [];
+    expect(await uploadDocument(new File(["hello"], "note.txt"), (message) => progress.push(message))).toEqual({ skipped: true });
+    expect(starts).toBe(2); expect(progress).toContain("Checking existing documents for duplicates…");
+  });
   it("retries a lost start response with the same idempotency ID", async () => {
     const bodies: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
@@ -41,6 +61,7 @@ describe("document upload feedback", () => {
     }));
     vi.stubGlobal("fetch", fetcher);
     const pending = uploadDocument(new File(["hello"], "a.txt"), () => {}, { signal: controller.signal });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(fetcher).toHaveBeenCalledOnce();
@@ -83,9 +104,9 @@ describe("document upload feedback", () => {
     await uploadDocument(new File(["hello"], "note.txt"), () => {}, "Records/Labs/note.txt");
     await uploadDocument(new File(["hello"], "note.txt"), () => {});
     expect(starts).toEqual([
-      { id: expect.any(String), name: "note.txt", size: 5, relativePath: "Records/Visits/note.txt" },
-      { id: expect.any(String), name: "note.txt", size: 5, relativePath: "Records/Labs/note.txt" },
-      { id: expect.any(String), name: "note.txt", size: 5 },
+      { sha256: expect.any(String), id: expect.any(String), name: "note.txt", size: 5, relativePath: "Records/Visits/note.txt" },
+      { sha256: expect.any(String), id: expect.any(String), name: "note.txt", size: 5, relativePath: "Records/Labs/note.txt" },
+      { sha256: expect.any(String), id: expect.any(String), name: "note.txt", size: 5 },
     ]);
   });
   it("rejects unsafe paths before making upload requests", async () => {

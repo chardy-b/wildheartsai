@@ -20,8 +20,10 @@ export async function POST(request: Request) {
     const relativePath = "relativePath" in body ? body.relativePath as string : undefined;
     const id = "id" in body ? body.id : undefined;
     if (id !== undefined && (typeof id !== "string" || !validFileId(id))) throw new FileInputError("Invalid upload ID.");
+    const sha256 = "sha256" in body ? body.sha256 : undefined;
+    if (sha256 !== undefined && (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256))) throw new FileInputError("Invalid file fingerprint.");
     await cleanupExpiredUploads(db, user, fileObjects());
-    const result = id === undefined ? await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath) : await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath, id);
+    const result = sha256 !== undefined ? await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath, id as string | undefined, sha256, fileObjects()) : id === undefined ? await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath) : await beginUpload(db, recordsKey(), user, body.name, body.size, relativePath, id);
     return Response.json(result, { status: 201, headers: PRIVATE_HEADERS });
   } catch (error) { return uploadError(error); }
 }

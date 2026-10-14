@@ -79,7 +79,7 @@ describe("large private uploads", () => {
     const user = await person(), other = await person();
     const paths = ["Records/Visits/note.txt", "Records/Labs/note.txt", "Records/Visits/note.txt"];
     const ids: string[] = [];
-    for (const relativePath of paths) {
+    for (const [index, relativePath] of paths.entries()) {
       const { id } = await beginUpload(db, kek, user, "note.txt", 5, relativePath);
       ids.push(id);
       const [pending] = await listFiles(db, kek, user);
@@ -87,10 +87,10 @@ describe("large private uploads", () => {
       const [raw] = await db.select().from(wildcardFile).where(eq(wildcardFile.id, id));
       expect(raw.sealedMetadata).not.toContain("Records");
       expect(raw.objectKey).not.toContain("Records");
-      await parts(user, id, Buffer.from("hello"));
+      await parts(user, id, Buffer.from(["hello", "world", "three"][index]));
       await completeUpload(db, kek, user, id, objects);
       await completeUpload(db, kek, user, id, objects);
-      expect(await readFile(db, kek, user, id, objects)).toMatchObject({ name: "note.txt", relativePath, bytes: Buffer.from("hello") });
+      expect(await readFile(db, kek, user, id, objects)).toMatchObject({ name: "note.txt", relativePath, bytes: Buffer.from(["hello", "world", "three"][index]) });
       expect(await readFile(db, kek, other, id, objects)).toBeNull();
     }
     expect((await listFiles(db, kek, user)).map((file) => file.relativePath).sort()).toEqual([...paths].sort());
