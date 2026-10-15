@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 import { wildcardFile } from "./wildcard-schema";
 
@@ -16,6 +16,8 @@ export const extractionJob = pgTable("extraction_job", {
   sessionId: text("session_id").notNull(), status: text("status").notNull().default("queued"),
   claimId: uuid("claim_id").unique(), grantHash: text("grant_hash").unique(),
   deadlineAt: timestamp("deadline_at", { withTimezone: true }), errorCode: text("error_code"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [index("extraction_job_queue_idx").on(t.status, t.createdAt)]);
 

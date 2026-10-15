@@ -20,7 +20,6 @@ export async function enqueue(db: Db, kek: Buffer, userId: string, sessionId: st
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`extraction:${userId}`}))`);
     const [initiator] = await tx.select({ id: session.id }).from(session).where(and(eq(session.id, sessionId), eq(session.userId, userId), gt(session.expiresAt, new Date()))).for("share");
     if (!initiator) throw new Error("inactive_session");
-    await tx.update(extractionJob).set({ status: "expired", grantHash: null }).where(and(eq(extractionJob.userId, userId), eq(extractionJob.status, "running"), sql`${extractionJob.deadlineAt} <= now()`));
     const active = await tx.select({ id: extractionJob.id }).from(extractionJob).where(and(eq(extractionJob.userId, userId), inArray(extractionJob.status, ["queued", "running"])));
     const files = [...new Set(input.fileIds)], methods = [...new Set(input.methods)];
     if (active.length + files.length * methods.length > 80) throw new Error("queue_full");
@@ -44,7 +43,8 @@ export async function listRuns(db: Db, kek: Buffer, userId: string, fileId?: str
       .where(and(eq(extractionRun.userId, userId), fileId ? eq(extractionRun.fileId, fileId) : undefined)).orderBy(desc(extractionRun.createdAt)).limit(100);
     if (!rows.length) return [];
     const keys = await userKeysFor(tx, kek, userId, new Date());
-    return rows.map(({ run, job }) => ({ id: run.id, fileId: run.fileId, method: run.method, status: job.status === "running" && job.deadlineAt && job.deadlineAt < new Date() ? "expired" : job.status,
+    return rows.map(({ run, job }) => ({ id: run.id, fileId: run.fileId, method: run.method, status: job.status === "running" && job.deadlineAt && job.deadlineAt < new Date() ? "recovering" : job.status,
+      attempts: job.attempts, nextAttemptAt: job.nextAttemptAt.toISOString(),
       errorCode: job.errorCode, createdAt: run.createdAt.toISOString(), result: run.sealedResult && run.id === resultId ? resultSchema.parse(JSON.parse(unsealField(keys, run.sealedResult, location(run.id, "result")))) : null }));
   });
 }
@@ -84,15 +84,19 @@ export async function claim(db: Db, requestId: string, key: string) {
   return queue(db, async tx => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('extraction-claim'))`);
     await tx.update(extractionJob).set({ status: "cancelled", grantHash: null }).where(and(inArray(extractionJob.status, ["queued", "running"]), sql`not exists (select 1 from public.session s where s.id = ${extractionJob.sessionId} and s.user_id = ${extractionJob.userId} and s.expires_at > now())`));
+    // The queue survives the VPS. Revoke expired attempt grants before issuing new ones.
+    await tx.update(extractionJob).set({ status: "queued", grantHash: null, claimId: null, deadlineAt: null,
+      errorCode: "worker_interrupted", nextAttemptAt: new Date(Date.now() + 30_000) })
+      .where(and(eq(extractionJob.status, "running"), sql`${extractionJob.deadlineAt} <= now()`));
     const [previous] = await tx.select().from(extractionJob).where(eq(extractionJob.claimId, requestId));
     if (previous) return previous.status === "running" && previous.deadlineAt! > new Date() ? { id: previous.id, capability: grant(previous.id, requestId, key) } : null;
     // Recover monitoring after a coordinator restart without launching another job.
     const [active] = await tx.select().from(extractionJob).where(and(eq(extractionJob.status, "running"), gt(extractionJob.deadlineAt, new Date()))).orderBy(asc(extractionJob.createdAt)).limit(1);
     if (active?.claimId) return { id: active.id, capability: grant(active.id, active.claimId, key), resumed: true };
-    const [next] = await tx.select().from(extractionJob).where(eq(extractionJob.status, "queued")).orderBy(asc(extractionJob.createdAt)).limit(1).for("update", { skipLocked: true });
+    const [next] = await tx.select().from(extractionJob).where(and(eq(extractionJob.status, "queued"), sql`${extractionJob.nextAttemptAt} <= now()`)).orderBy(asc(extractionJob.nextAttemptAt), asc(extractionJob.createdAt)).limit(1).for("update", { skipLocked: true });
     if (!next) return null;
     const capability = grant(next.id, requestId, key);
-    await tx.update(extractionJob).set({ status: "running", claimId: requestId, grantHash: hash(capability), deadlineAt: new Date(Date.now() + 30 * 60_000) }).where(eq(extractionJob.id, next.id));
+    await tx.update(extractionJob).set({ status: "running", claimId: requestId, grantHash: hash(capability), attempts: sql`${extractionJob.attempts} + 1`, deadlineAt: new Date(Date.now() + 30 * 60_000) }).where(eq(extractionJob.id, next.id));
     return { id: next.id, capability };
   });
 }
@@ -124,16 +128,19 @@ export async function finish(db: Db, kek: Buffer, capability: string, raw: unkno
     const [activeFile] = await tx.select({ id: wildcardFile.id }).from(wildcardFile).where(and(eq(wildcardFile.id, run.fileId), eq(wildcardFile.userId, job.userId), eq(wildcardFile.status, "ready"))).for("share");
     if (!activeSession || !activeFile) throw new Error("inactive");
     const [current] = await tx.select().from(extractionJob).where(eq(extractionJob.id, job.id)).for("update");
-    if (!current || !current.deadlineAt || current.deadlineAt <= new Date() || !["running", "completed"].includes(current.status)) throw new Error("inactive");
+    if (!current || current.grantHash !== hash(capability) || !current.deadlineAt || current.deadlineAt <= new Date() || !["running", "completed"].includes(current.status)) throw new Error("inactive");
     const keys = await userKeysFor(tx, kek, job.userId, new Date());
     const encoded = JSON.stringify(result), digest = hmacFor(keys, encoded);
     const [stored] = await tx.select().from(extractionRun).where(eq(extractionRun.id, job.id));
     if (stored.resultDigest) { if (stored.resultDigest !== digest) throw new Error("conflicting_result"); return; }
     await tx.update(extractionRun).set({ sealedResult: sealField(keys, encoded, location(job.id, "result")), resultDigest: digest }).where(eq(extractionRun.id, job.id));
-    await tx.update(extractionJob).set({ status: "completed" }).where(eq(extractionJob.id, job.id));
+    await tx.update(extractionJob).set({ status: "completed", errorCode: null }).where(eq(extractionJob.id, job.id));
   });
 }
-export async function fail(db: Db, capability: string) {
+export async function fail(db: Db, capability: string, retryable = false) {
   const { job } = await authorized(db, capability);
-  await asUser(db, job.userId, tx => tx.update(extractionJob).set({ status: "failed", errorCode: "processing_failed", grantHash: null }).where(and(eq(extractionJob.id, job.id), eq(extractionJob.status, "running"))));
+  const delay = Math.min(30 * 2 ** Math.min(Math.max(job.attempts - 1, 0), 6), 1800);
+  await asUser(db, job.userId, tx => tx.update(extractionJob).set({ status: retryable ? "queued" : "failed",
+    errorCode: retryable ? "service_unavailable_retrying" : "processing_failed", grantHash: null, claimId: null, deadlineAt: null,
+    nextAttemptAt: new Date(Date.now() + delay * 1000) }).where(and(eq(extractionJob.id, job.id), eq(extractionJob.status, "running"), eq(extractionJob.grantHash, hash(capability)))));
 }
