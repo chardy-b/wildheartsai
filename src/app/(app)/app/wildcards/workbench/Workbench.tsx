@@ -5,15 +5,17 @@ import type { WildcardFile } from "@/lib/wildcards";
 import { METHODS, referenceSchema, type ExtractionResult, type Reference } from "@/lib/extraction/contracts";
 import { benchmark } from "@/lib/extraction/metrics";
 import { FileViewer } from "../[id]/FileViewer";
+import { DocumentMarkdown } from "../DocumentMarkdown";
 
 type Run = { id: string; fileId: string; method: string; status: string; createdAt: string; attempts: number; nextAttemptAt: string; errorCode: string | null; result: ExtractionResult | null };
 type Labels = { id: string; createdAt: string; labels: Reference | null };
 const percent = (n: number | null | undefined) => n == null ? "Unscored" : `${(n * 100).toFixed(1)}%`;
 
-export function Workbench({ files }: { files: WildcardFile[] }) {
-  const [fileId, setFileId] = useState(files[0]?.id ?? "");
-  const activeFile = useRef(files[0]?.id ?? "");
-  const [selected, setSelected] = useState<string[]>(files[0] ? [files[0].id] : []);
+export function Workbench({ files, initialFileId }: { files: WildcardFile[]; initialFileId?: string }) {
+  const startingFile = files.find(f => f.id === initialFileId) ?? files[0];
+  const [fileId, setFileId] = useState(startingFile?.id ?? "");
+  const activeFile = useRef(startingFile?.id ?? "");
+  const [selected, setSelected] = useState<string[]>(startingFile ? [startingFile.id] : []);
   const [methods, setMethods] = useState<string[]>(["native", "tesseract"]);
   const [date, setDate] = useState("");
   const [runs, setRuns] = useState<Run[]>([]), [labels, setLabels] = useState<Labels[]>([]);
@@ -112,9 +114,9 @@ export function Workbench({ files }: { files: WildcardFile[] }) {
           {ps && <><p>Token precision {percent(ps.text.token.precision)} · recall {percent(ps.text.token.recall)} · word error {percent(ps.text.wordErrorRate)}</p>
             <table><thead><tr><th>PII detector</th><th>Precision</th><th>Recall</th></tr></thead><tbody>{Object.entries(ps.redaction).map(([name, s]) => <tr key={name}><td>{name}</td><td>{percent(s.precision)}</td><td>{percent(s.recall)}</td></tr>)}</tbody></table></>}
           {score && <><p>Reviewed pages: {score.labeledPages} of {score.totalPages}. Token recall across reviewed pages: {percent(score.textToken.recall)}.</p><p>Measurement precision {percent(score.measurements?.precision)} · recall {percent(score.measurements?.recall)}</p><p>Known identifier matches in summary: {score.summaryLeakedGoldSpans ?? "Unscored"} · Age: {score.ageCorrect === null ? "Unscored" : score.ageCorrect ? "Correct" : "Incorrect"}</p></>}
-          <h3>Redacted summary</h3><p>{result.summaryStatus === "accepted" ? result.summary : "Withheld by privacy checks."}</p>
+          <h3>Redacted summary</h3>{result.summaryStatus === "accepted" ? <DocumentMarkdown text={result.summary} /> : <p>Summary withheld; check the review flags.</p>}
           <p>Age at encounter: {result.ageAtEncounter ?? "Omitted — insufficient date evidence"}. Machine extraction; verify against the original.</p>
-          <h3>Page {page} redacted text</h3><pre>{p?.redaction.text ?? "No page"}</pre>
+          <h3>Page {page} redacted text</h3><DocumentMarkdown text={p?.redaction.text ?? "No page"} />
           {showRaw && <><h3>Private extracted text</h3><pre>{p?.text}</pre><details><summary>Run manifest and raw result</summary><pre>{JSON.stringify(result, null, 2)}</pre></details></>}
           <details><summary>Structured measurements ({result.measurements.length})</summary><pre>{JSON.stringify(result.measurements, null, 2)}</pre></details>
           {result.warnings.length > 0 && <p>Review flags: {result.warnings.join(", ")}</p>}

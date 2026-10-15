@@ -6,9 +6,11 @@ import { FILE_ACCEPT, fileSize, MAX_FILE_BYTES, MAX_FILES, MAX_STORAGE_BYTES, ty
 import { DocumentQueue } from "@/lib/documents-queue";
 import { filesFromDrop, selectedFiles, type SelectedFile } from "@/lib/wildcards-client";
 import { FileList } from "./FileList";
+import { ExtractionProgress, useExtractionProgress } from "./ExtractionProgress";
 
 export function Wildcards({ files, available, usage, owner, page }: { files: WildcardFile[]; available: boolean; usage: { count: number; bytes: number }; owner: string; page: number }) {
   const router = useRouter();
+  const progress = useExtractionProgress();
   const input = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [queue] = useState(() => new DocumentQueue(() => router.refresh(), owner));
@@ -81,11 +83,12 @@ export function Wildcards({ files, available, usage, owner, page }: { files: Wil
       </div>}
     </section>}
     {error && <p role="alert">{error}</p>}
+    <ExtractionProgress data={progress.data} error={progress.error} />
     <div className="wildcard-list-heading"><h2>Your files <span>({usage.count})</span></h2>
       <p>{fileSize(usage.bytes)} of {fileSize(MAX_STORAGE_BYTES)} used · {MAX_FILES.toLocaleString()} files maximum</p></div>
     {usage.count > 50 && <p className="wildcard-hint">Showing files {((page - 1) * 50) + 1}–{Math.min(page * 50, usage.count)} of {usage.count}. Folder groups and counts apply to this page.</p>}
     {files.length === 0 ? <div className="wildcard-empty"><h3>No files yet</h3><p>Upload a document or image to get started.</p></div> :
-      <FileList files={files} deleting={deleting} onDelete={(file) => void remove(file)} />}
+      <FileList files={files} progress={progress.data?.files} deleting={deleting} onDelete={(file) => void remove(file)} />}
     {usage.count > 50 && <nav className="wildcard-actions" aria-label="Document pages">
       {page > 1 && <a href={`/app/wildcards?page=${page - 1}`}>Previous files</a>}
       <form action="/app/wildcards" method="get"><label>Page <input name="page" type="number" min="1" max={Math.ceil(usage.count / 50)} defaultValue={page} key={page} aria-label="Document page" required /></label><span> of {Math.ceil(usage.count / 50)} </span><button type="submit">Go</button></form>

@@ -3,14 +3,17 @@
 import { Fragment, useState } from "react";
 import { fileSize, type WildcardFile } from "@/lib/wildcards";
 import { buildFileTree, type FileFolder } from "@/lib/wildcards-paths";
+import { statusLabel, type ProgressItem } from "@/lib/extraction/presentation";
 
-export function FileList({ files, deleting, onDelete }: {
+export function FileList({ files, deleting, onDelete, progress }: {
   files: WildcardFile[];
   deleting: string | null;
   onDelete: (file: WildcardFile) => void;
+  progress?: ProgressItem[];
 }) {
   const [view, setView] = useState<"folders" | "list">("folders");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const latest = new Map(progress?.map(r => [r.fileId, r]));
   function toggle(path: string) {
     setCollapsed((previous) => {
       const next = new Set(previous);
@@ -28,6 +31,7 @@ export function FileList({ files, deleting, onDelete }: {
       <td>{file.status !== "ready" ? "Incomplete" : file.type === "application/pdf" ? "PDF" : file.type.startsWith("text/") ? "Text" : file.type.split("/")[1].toUpperCase()}</td>
       <td><time dateTime={file.uploadedAt}>{file.uploadedAt.slice(0, 16).replace("T", " ")} UTC</time></td>
       <td>{fileSize(file.sizeBytes)}</td>
+      <td>{file.status !== "ready" ? "Awaiting upload" : progress ? <a href={`/app/wildcards/${file.id}`}>{statusLabel(latest.get(file.id)?.status ?? "not_started")}</a> : "Loading…"}</td>
       <td><div className="wildcard-actions">{file.status === "ready" && <a href={`/api/wildcards/${file.id}?download=1`} download>Download<span className="sr-only"> {path}</span></a>}
         <button type="button" disabled={deleting !== null} onClick={() => onDelete(file)}>{deleting === file.id ? "Deleting…" : "Delete"}<span className="sr-only"> {path}</span></button></div></td>
     </tr>;
@@ -41,7 +45,7 @@ export function FileList({ files, deleting, onDelete }: {
             onClick={() => toggle(child.path)}>
             <span aria-hidden="true">{collapsed.has(child.path) ? "▸" : "▾"}</span><span>{child.name}/</span>
           </button><span className="wildcard-folder-count">{child.fileCount} {child.fileCount === 1 ? "file" : "files"}</span></th>
-          <td>{fileSize(child.sizeBytes)}</td><td />
+          <td>{fileSize(child.sizeBytes)}</td><td /><td />
         </tr>
         {!collapsed.has(child.path) && folderRows(child, depth + 1)}
       </Fragment>)}
@@ -55,7 +59,7 @@ export function FileList({ files, deleting, onDelete }: {
     </div>
     <div className="wildcard-table-wrap"><table className="wildcard-table">
       <caption className="sr-only">{view === "folders" ? "Your private files, grouped by folder" : "Your private files, newest uploads first"}</caption>
-      <thead><tr><th scope="col">File name</th><th scope="col">Type</th><th scope="col">Uploaded</th><th scope="col">Size</th><th scope="col">Actions</th></tr></thead>
+      <thead><tr><th scope="col">File name</th><th scope="col">Type</th><th scope="col">Uploaded</th><th scope="col">Size</th><th scope="col">Extraction</th><th scope="col">Actions</th></tr></thead>
       <tbody>{view === "folders" ? folderRows(buildFileTree(files)) : files.map((file) => fileRow(file))}</tbody>
     </table></div>
   </>;

@@ -326,6 +326,16 @@ export function fileUsage(db: Db, userId: string) {
   });
 }
 
+export function fileMetadata(db: Db, kek: Buffer, userId: string, id: string): Promise<WildcardFile | null> {
+  return asUser(db, userId, async tx => {
+    const [row] = await tx.select({ id: wildcardFile.id, sealedMetadata: wildcardFile.sealedMetadata, sizeBytes: wildcardFile.sizeBytes, uploadedAt: wildcardFile.uploadedAt, status: wildcardFile.status })
+      .from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId)));
+    if (!row) return null;
+    const keys = await userKeysFor(tx, kek, userId, new Date());
+    return { id: row.id, ...metadata(keys, row), sizeBytes: row.sizeBytes, uploadedAt: row.uploadedAt.toISOString(), status: row.status };
+  });
+}
+
 // Reclaim abandoned reservations lazily, in bounded batches. Network work is
 // outside transactions; the age predicate is checked again when claiming rows.
 export async function cleanupExpiredUploads(db: Db, userId: string, objects: FileObjects) {

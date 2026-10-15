@@ -5,8 +5,8 @@ import { createTestDb, createTestUser } from "@/test/db";
 import { extractionJob, extractionRun, session } from "@/lib/db/schema";
 import { asUser } from "@/lib/db/rls";
 import type { Db } from "@/lib/db/types";
-import { deleteFile, listFiles, storeFile } from "@/lib/wildcards-store";
-import { authorized, cancel, claim, enqueue, fail, finish, listRuns, references, saveReference } from "./store";
+import { deleteFile, fileMetadata, listFiles, storeFile } from "@/lib/wildcards-store";
+import { authorized, cancel, claim, enqueue, fail, finish, listRuns, processingProgress, references, saveReference } from "./store";
 import type { ExtractionResult } from "./contracts";
 
 const result: ExtractionResult = { version: 1, sourceSha256: "a".repeat(64), method: "native", manifest: { worker: "synthetic" }, elapsedMs: 10,
@@ -27,6 +27,7 @@ beforeAll(async () => {
 });
 describe("web-owned extraction custody", () => {
   it("queues only owned ready documents and hides content from the other account", async () => {
+    expect(await processingProgress(db, owner)).toMatchObject({ documents: 1, counts: { not_started: 1 }, files: [] });
     await expect(enqueue(db, kek, other, sessionId, { fileIds: [fileId], methods: ["native"] })).rejects.toThrow();
     const ids = await enqueue(db, kek, owner, sessionId, { fileIds: [fileId], methods: ["native"] });
     expect(ids).toHaveLength(1);
@@ -36,6 +37,10 @@ describe("web-owned extraction custody", () => {
     expect(await references(db, kek, other, fileId)).toEqual([]);
     expect((await references(db, kek, owner, fileId))[0].labels).toBeNull();
     expect((await references(db, kek, owner, fileId, referenceId))[0].labels).toEqual(labels);
+    expect(await fileMetadata(db, kek, other, fileId)).toBeNull();
+    expect((await fileMetadata(db, kek, owner, fileId))?.id).toBe(fileId);
+    expect(await processingProgress(db, other)).toMatchObject({ documents: 0, files: [] });
+    expect(await processingProgress(db, owner)).toMatchObject({ documents: 1, counts: { not_started: 0, queued: 1 }, files: [{ fileId, status: "queued" }] });
   });
   it("replays claims and completions without duplicate jobs, encrypts results, and rejects conflicting writes", async () => {
     const requestId = randomUUID();
@@ -99,5 +104,6 @@ describe("web-owned extraction custody", () => {
     await expect(finish(db, kek, b.capability, { ...result, method: "tesseract" })).rejects.toThrow();
     await deleteFile(db, owner, fileId, objects);
     expect(await listRuns(db, kek, owner, fileId)).toEqual([]);
+    expect(await processingProgress(db, owner)).toMatchObject({ documents: 0, files: [] });
   });
 });

@@ -6,7 +6,7 @@ import { getSession } from "@/lib/session";
 import { fileError, PRIVATE_HEADERS, readUpload, sameOrigin, validFileId } from "@/lib/wildcards-http";
 import { fileObjects } from "@/lib/wildcards-r2";
 import { streamFile } from "@/lib/wildcards-store";
-import { authorized, cancel, claim, configured, enabledMethods, enqueue, fail, finish, hash, listRuns, references, saveReference, workerConfig } from "./store";
+import { authorized, cancel, claim, configured, enabledMethods, enqueue, fail, finish, hash, listRuns, processingProgress, references, saveReference, workerConfig } from "./store";
 
 const json = (value: unknown) => Response.json(value, { headers: PRIVATE_HEADERS });
 async function body(request: Request) { return JSON.parse((await readUpload(request)).toString("utf8")) as unknown; }
@@ -17,6 +17,7 @@ export async function browserRequest(request: Request) {
   try {
     if (request.method === "GET") {
       const query = new URL(request.url).searchParams, fileId = query.get("fileId") ?? undefined, resultId = query.get("resultId") ?? undefined, referenceId = query.get("referenceId") ?? undefined;
+      if (query.get("overview") === "1") return json(await processingProgress(db, session.user.id));
       if ([fileId, resultId, referenceId].some(id => id && !validFileId(id))) return fileError("Not found.", 404);
       return json({ available: configured(), methods: enabledMethods(), runs: await listRuns(db, recordsKey(), session.user.id, fileId, resultId), references: fileId ? await references(db, recordsKey(), session.user.id, fileId, resultId ? undefined : referenceId) : [] });
     }
