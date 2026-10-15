@@ -49,6 +49,22 @@ export async function listRuns(db: Db, kek: Buffer, userId: string, fileId?: str
   });
 }
 
+// Account-wide progress reads dispatch metadata only, never document/result ciphertext.
+export async function processingProgress(db: Db, userId: string) {
+  return asUser(db, userId, async tx => {
+    const [total] = await tx.select({ count: sql<number>`count(*)::int` }).from(wildcardFile).where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready")));
+    const rows = await tx.selectDistinctOn([extractionRun.fileId], { fileId: extractionRun.fileId, id: extractionRun.id, method: extractionRun.method,
+      status: extractionJob.status, attempts: extractionJob.attempts, nextAttemptAt: extractionJob.nextAttemptAt, deadlineAt: extractionJob.deadlineAt, errorCode: extractionJob.errorCode })
+      .from(extractionRun).innerJoin(extractionJob, eq(extractionJob.id, extractionRun.id)).innerJoin(wildcardFile, eq(wildcardFile.id, extractionRun.fileId))
+      .where(and(eq(extractionRun.userId, userId), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready")))
+      .orderBy(extractionRun.fileId, sql`case when ${extractionJob.status} in ('queued', 'running') then 0 else 1 end`, desc(extractionRun.createdAt), desc(extractionRun.id));
+    const files = rows.map(({ deadlineAt, ...r }) => ({ ...r, nextAttemptAt: r.nextAttemptAt.toISOString(), status: r.status === "running" && deadlineAt && deadlineAt < new Date() ? "recovering" : r.status }));
+    const counts: Record<string, number> = { not_started: total.count - files.length, queued: 0, running: 0, recovering: 0, completed: 0, failed: 0, cancelled: 0, expired: 0 };
+    for (const file of files) counts[file.status] = (counts[file.status] ?? 0) + 1;
+    return { documents: total.count, counts, files };
+  });
+}
+
 export async function saveReference(db: Db, kek: Buffer, userId: string, fileId: string, raw: unknown) {
   const labels = referenceSchema.parse(raw), id = randomUUID();
   return asUser(db, userId, async tx => {

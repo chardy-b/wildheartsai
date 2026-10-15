@@ -5,10 +5,11 @@ vi.mock("@/lib/records-keys", () => ({ recordsKey: () => Buffer.alloc(32) }));
 vi.mock("./store", () => ({
   configured: vi.fn(() => true), enabledMethods: () => ["native", "tesseract"], hash: () => "b".repeat(64),
   listRuns: vi.fn(async () => []), references: vi.fn(async () => []), enqueue: vi.fn(async () => ["run"]),
+  processingProgress: vi.fn(async () => ({ documents: 708, counts: { not_started: 699, completed: 9 }, files: [] })),
   authorized: vi.fn(async () => { throw new Error("private provider error"); }), cancel: vi.fn(), claim: vi.fn(), fail: vi.fn(), finish: vi.fn(), saveReference: vi.fn(), workerConfig: vi.fn(),
 }));
 import { getSession } from "@/lib/session";
-import { claim, configured, enqueue, listRuns } from "./store";
+import { claim, configured, enqueue, listRuns, processingProgress } from "./store";
 import { browserRequest, workerRequest } from "./http";
 
 beforeEach(() => {
@@ -16,6 +17,12 @@ beforeEach(() => {
   vi.mocked(getSession).mockResolvedValue({ user: { id: "owner" }, session: { id: "session" } } as Awaited<ReturnType<typeof getSession>>);
 });
 describe("extraction HTTP boundary", () => {
+  it("returns owner-scoped overview metadata without loading results or record keys", async () => {
+    const response = await browserRequest(new Request("https://app.test/api/extraction?overview=1"));
+    expect(await response.json()).toMatchObject({ documents: 708, counts: { not_started: 699 } });
+    expect(processingProgress).toHaveBeenCalledWith({}, "owner"); expect(listRuns).not.toHaveBeenCalled();
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
   it("denies anonymous reads and cross-origin writes before loading documents", async () => {
     vi.mocked(getSession).mockResolvedValue(null);
     expect((await browserRequest(new Request("https://app.test/api/extraction"))).status).toBe(401);

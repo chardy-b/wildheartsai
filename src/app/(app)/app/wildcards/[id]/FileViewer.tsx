@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import type { WildcardFile } from "@/lib/wildcards";
+import { DocumentMarkdown } from "../DocumentMarkdown";
 
 export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFile; onPageChange?: (page: number) => void; overlays?: { box: [number, number, number, number]; label: string }[] }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -90,12 +91,12 @@ export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFil
         <div className="workbench-overlay"><canvas ref={canvas} aria-label={`Page ${page} of ${file.name}`} />
           {overlays?.map(({ box: [x, y, r, b], label }, i) => <span key={i} className="workbench-overlay-mark" title={label} style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${(r - x) * 100}%`, height: `${(b - y) * 100}%` }} />)}
         </div>
-        {pageText && <details><summary>Read page text</summary><p>{pageText}</p></details>}
+        {pageText && <details><summary>Read embedded PDF text</summary><p>Read in your browser by PDF.js from the PDF text layer; OCR was not run here.</p><DocumentMarkdown text={pageText} /></details>}
       </>}
     </> : file.type.startsWith("image/") ?
       // Authenticated route serves the original; image optimization would cache it.
       // eslint-disable-next-line @next/next/no-img-element
       <img src={url} alt={file.name} onError={() => setError("This image could not be previewed. Try downloading the original.")} /> :
-      text === null ? !error && <p role="status">Loading text…</p> : <pre>{text}</pre>}
+      text === null ? !error && <p role="status">Loading text…</p> : <><DocumentMarkdown text={text} /><details><summary>View original plain text</summary><pre>{text}</pre></details></>}
   </div>;
 }

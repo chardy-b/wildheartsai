@@ -42,3 +42,28 @@
 .wildcard-pagination button:disabled { opacity: .5; cursor: default; }
 .wildcards { min-width: 0; max-width: 100%; }
 .app-main:has(.wildcards) { min-width: 0; }
+.extraction-progress, .document-report { margin: 28px 0; padding: clamp(18px, 3vw, 32px); border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.extraction-progress h2, .document-report h2 { margin-top: 0; }
+.extraction-counts, .document-report-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; }
+.extraction-counts > div, .document-report-facts > div { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.extraction-counts dt, .document-report dt { color: var(--text-2); font-size: .85rem; }
+.extraction-counts dd { margin: 8px 0 0; font-size: 1.75rem; font-weight: 600; }
+.document-report dd { margin: 8px 0 16px; overflow-wrap: anywhere; }
+.document-report small { display: block; margin-top: 8px; color: var(--text-2); }
+.document-report section { margin: 26px 0; }
+.document-report .wildcard-table td { white-space: normal; min-width: 90px; }
+.document-report .wildcard-table th { min-width: 120px; }
+.document-review-notes { padding: 18px; border-inline-start: 3px solid var(--text-2); }
+.document-review-notes h3 { margin-top: 0; }
+.document-source-page { border-top: 1px solid var(--line); padding-top: 16px; scroll-margin-top: 28px; }
+.document-source-page meter { width: min(100%, 360px); display: block; margin: 8px 0 16px; }
+.document-original { padding: 22px; border: 1px solid var(--line); border-radius: 16px; margin-top: 24px; }
+.document-report summary, .document-original summary, .document-source-page summary { cursor: pointer; }
+.document-markdown { line-height: 1.7; overflow-wrap: anywhere; max-width: 100%; }
+.document-markdown p { white-space: pre-line; }
+.document-markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.document-markdown table { display: block; overflow-x: auto; border-collapse: collapse; max-width: 100%; }
+.document-markdown th, .document-markdown td { padding: 10px 14px; border: 1px solid var(--line); text-align: left; }
+.document-markdown blockquote { margin-inline: 0; padding-inline-start: 16px; border-inline-start: 3px solid var(--line); }
+.document-report-note { color: var(--text-2); font-size: .85rem; }
+.wildcard-view-options input, .wildcard-view-options select, .document-report select { color: inherit; background: var(--surface); padding: 8px; border: 1px solid var(--line); border-radius: 8px; max-width: 100%; }
