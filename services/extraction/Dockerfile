@@ -16,3 +16,10 @@ COPY services/extraction/models/pii /models/pii
 COPY services/extraction/*.py ./
 USER 1000:1000
 CMD ["python", "-B", "worker.py"]
+
+# Optional offline neural OCR layer, reusing the pinned base worker dependencies.
+FROM worker AS worker-neural
+USER root
+COPY services/extraction/requirements-ocr.txt /app/requirements-ocr.txt
+RUN pip install --no-cache-dir -r /app/requirements-ocr.txt
+USER 1000:1000

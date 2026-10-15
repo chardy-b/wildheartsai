@@ -6,6 +6,7 @@ import { METHODS, referenceSchema, type ExtractionResult, type Reference } from 
 import { benchmark } from "@/lib/extraction/metrics";
 import { FileViewer } from "../[id]/FileViewer";
 import { DocumentMarkdown } from "../DocumentMarkdown";
+import { combinedEvidence, debugOverlays } from "@/lib/extraction/debug";
 
 type Run = { id: string; fileId: string; method: string; status: string; createdAt: string; attempts: number; nextAttemptAt: string; errorCode: string | null; result: ExtractionResult | null };
 type Labels = { id: string; createdAt: string; labels: Reference | null };
@@ -20,6 +21,7 @@ export function Workbench({ files, initialFileId }: { files: WildcardFile[]; ini
   const [date, setDate] = useState("");
   const [runs, setRuns] = useState<Run[]>([]), [labels, setLabels] = useState<Labels[]>([]);
   const [compared, setCompared] = useState<Run[]>([]);
+  const [overlaySource,setOverlaySource]=useState("combined"), [overlayLayer,setOverlayLayer]=useState("words");
   const [available, setAvailable] = useState(false), [busy, setBusy] = useState(false), [message, setMessage] = useState("");
   const [enabledMethods, setEnabledMethods] = useState<string[]>(["native", "tesseract"]);
   const [page, setPage] = useState(1), [referenceId, setReferenceId] = useState("");
@@ -31,6 +33,9 @@ export function Workbench({ files, initialFileId }: { files: WildcardFile[]; ini
   const file = files.find(f => f.id === fileId);
   const reference = labels.find(r => r.id === referenceId);
   const referenceLabels = reference?.labels;
+  const activeOverlaySource=compared.some(r=>r.id===overlaySource) ? overlaySource : "combined";
+  const overlay=debugOverlays(compared,page,activeOverlaySource,overlayLayer);
+  const conflicts=overlayLayer==="disagreements" ? combinedEvidence(compared,page).filter(w=>w.alternatives.length) : [];
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!fileId) return;
     const response = await fetch(`/api/extraction?fileId=${fileId}${referenceId ? `&referenceId=${referenceId}` : ""}`, { cache: "no-store", signal });
@@ -57,7 +62,7 @@ export function Workbench({ files, initialFileId }: { files: WildcardFile[]; ini
   }
   async function compare(run: Run) {
     if (compared.some(r => r.id === run.id)) { setCompared(rows => rows.filter(r => r.id !== run.id)); return; }
-    if (compared.length >= 3) { setMessage("Compare up to three runs at once."); return; }
+    if (compared.length >= 4) { setMessage("Compare up to four runs at once."); return; }
     try {
       const response = await fetch(`/api/extraction?fileId=${fileId}&resultId=${run.id}`, { cache: "no-store" });
       if (!response.ok) throw new Error();
@@ -101,16 +106,25 @@ export function Workbench({ files, initialFileId }: { files: WildcardFile[]; ini
     </fieldset>
     {message && <p role="status">{message}</p>}
     <label>Inspect document<select disabled={busy} value={fileId} onChange={e => { activeFile.current = e.target.value; setFileId(e.target.value); setCompared([]); setRuns([]); setLabels([]); setReferenceId(""); setPage(1); setDraft(""); setShowRaw(false); }}>{files.map(f => <option key={f.id} value={f.id}>{f.relativePath ?? f.name}</option>)}</select></label>
-    <div className="workbench-table"><table><thead><tr><th>Method</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead><tbody>{runs.map(r => <tr key={r.id}><td>{r.method}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>{r.status}{r.errorCode ? ` (${r.errorCode})` : ""}{r.attempts > 0 && <small> · {r.attempts} attempts</small>}{r.status === "queued" && r.errorCode && <small> · Retry after {new Date(r.nextAttemptAt).toLocaleString()}</small>}</td><td>{r.status === "completed" ? <button onClick={() => void compare(r)}>{compared.some(c => c.id === r.id) ? "Remove" : "Compare"}</button> : ["queued", "running", "recovering"].includes(r.status) ? <button disabled={busy} onClick={() => void mutate("DELETE", { id: r.id })}>Cancel</button> : null}</td></tr>)}</tbody></table></div>
+    <div className="workbench-table"><table><thead><tr><th>Method</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead><tbody>{runs.map(r => <tr key={r.id}><td>{r.method}</td><td>{new Date(r.createdAt).toLocaleString()}</td><td>{r.status}{r.errorCode ? ` (${r.errorCode})` : ""}{r.attempts > 0 && <small> · {r.attempts} attempts</small>}{r.status === "queued" && r.errorCode && <small> · Retry after {new Date(r.nextAttemptAt).toLocaleString()}</small>}</td><td>{r.status === "completed" ? <button onClick={() => void compare(r)}>{compared.some(c => c.id === r.id) ? "Remove" : "Compare"}</button> : ["queued", "running", "recovering"].includes(r.status) ? <button disabled={busy} onClick={() => void mutate("DELETE", { id: r.id })}>Cancel</button> : null}<button disabled={busy || !available} onClick={()=>void mutate("POST",{rerunOf:r.id})}>Rerun with current tools</button></td></tr>)}</tbody></table></div>
     <label>Reference version<select value={referenceId} onChange={e => setReferenceId(e.target.value)}><option value="">No reference — coverage estimates only</option>{labels.map(r => <option key={r.id} value={r.id}>{new Date(r.createdAt).toLocaleString()} · {r.labels?.split ?? "reference"} · {r.id.slice(0, 8)}</option>)}</select></label>
     <button disabled={!referenceLabels || !compared.length} onClick={exportScores}>Export benchmark scores</button>
     <label><input type="checkbox" checked={showRaw} onChange={e => setShowRaw(e.target.checked)} />Show private raw text (may contain identifiers)</label>
+    <fieldset><legend>Visual extraction debugger</legend><label>Evidence source<select value={activeOverlaySource} onChange={e=>setOverlaySource(e.target.value)}><option value="combined">Combined evidence from all compared runs</option>{compared.map(r=><option key={r.id} value={r.id}>{r.method} · {r.id.slice(0,8)}</option>)}</select></label>
+      <label>Highlight layer<select value={overlayLayer} onChange={e=>setOverlayLayer(e.target.value)}><option value="none">No highlights</option><option value="words">Extracted text geometry</option><option value="low-confidence">Low OCR confidence (below 70%)</option><option value="uncovered">Suspected uncovered foreground</option><option value="disagreements">Disagreement between methods</option><option value="layout">Detected tables and image regions</option></select></label>
+      <p>Combined evidence is a union of observed regions, not a corrected transcript. Red areas need review: charts, photographs, rules, and backgrounds can also appear uncovered. OCR confidence is not calibrated accuracy. Disagreement checks use comparable word boxes and preserve numeric/unit conflicts.</p>
+      <p>{overlay.total} regions · showing {overlay.displayed}{overlay.total>overlay.displayed ? " (display capped at 4,000 regions)" : ""}. New diagnostic runs are needed for confidence and uncovered-region layers; old results remain available.</p>
+      {overlayLayer==="disagreements" && <p>{conflicts.length} conflicting word locations. No method is automatically treated as ground truth.</p>}
+      {showRaw && conflicts.length>0 && <details><summary>Private conflict alternatives (first 100)</summary><ul>{conflicts.slice(0,100).map((w,i)=><li key={i}>{w.text} ↔ {w.alternatives.map(a=>a.text).join(" / ")}</li>)}</ul></details>}
+    </fieldset>
     <div className="workbench-comparison">
-      <article><h2>Original</h2>{file && <FileViewer key={file.id} file={file} onPageChange={setPage} overlays={compared[0]?.result?.pages.find(p => p.page === page)?.words.map(w => ({ box: w.box, label: "Extracted word" }))} />}</article>
+      <article><h2>Original</h2>{file && <FileViewer key={file.id} file={file} onPageChange={setPage} overlays={overlay.overlays} />}</article>
       {compared.map(r => {
         const result = r.result!, p = result.pages.find(p => p.page === page), score = referenceLabels ? benchmark(result, referenceLabels) : null, ps = score?.pages.find(p => p.page === page);
         return <article key={r.id}><h2>{r.method}</h2><p>{(result.elapsedMs / 1000).toFixed(1)} seconds · {result.totalPages} pages</p>
           <p>Foreground covered by extracted word boxes: {percent(p?.foregroundCoverage)}. This estimates visual coverage, not accuracy.</p>
+          <p>{p?.diagnostics ? `${p.diagnostics.lowConfidenceWords} low-confidence words of ${p.diagnostics.confidenceWords} scored · ${p.diagnostics.uncoveredRegions.length} uncovered foreground tiles` : "Detailed page diagnostics were not recorded for this older run."}</p>
+          <details><summary>Run identity and reproducibility</summary><p>Run {r.id} · source SHA-256 {result.sourceSha256}</p><dl>{Object.entries(result.manifest).map(([k,v])=><div key={k}><dt>{k.replaceAll("_"," ")}</dt><dd>{v}</dd></div>)}</dl><p>Reruns use currently installed tools. A model alias alone does not identify exact weights; unknown revisions remain explicitly unknown.</p></details>
           {ps && <><p>Token precision {percent(ps.text.token.precision)} · recall {percent(ps.text.token.recall)} · word error {percent(ps.text.wordErrorRate)}</p>
             <table><thead><tr><th>PII detector</th><th>Precision</th><th>Recall</th></tr></thead><tbody>{Object.entries(ps.redaction).map(([name, s]) => <tr key={name}><td>{name}</td><td>{percent(s.precision)}</td><td>{percent(s.recall)}</td></tr>)}</tbody></table></>}
           {score && <><p>Reviewed pages: {score.labeledPages} of {score.totalPages}. Token recall across reviewed pages: {percent(score.textToken.recall)}.</p><p>Measurement precision {percent(score.measurements?.precision)} · recall {percent(score.measurements?.recall)}</p><p>Known identifier matches in summary: {score.summaryLeakedGoldSpans ?? "Unscored"} · Age: {score.ageCorrect === null ? "Unscored" : score.ageCorrect ? "Correct" : "Incorrect"}</p></>}

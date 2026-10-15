@@ -14,6 +14,31 @@ import gateway
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_attempt_ids_are_stable_for_restart_but_change_on_retry(self):
+        def respond(request):
+            return httpx.Response(404 if request.method == 'GET' else 201)
+        run={'id':'11111111-1111-4111-8111-111111111111','capability':'whdoc1.synthetic-attempt-1'}
+        with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+            first=gateway.ensure_execution(client,'http://iggy',run)
+            again=gateway.ensure_execution(client,'http://iggy',run)
+            second=gateway.ensure_execution(client,'http://iggy',{**run,'capability':'whdoc1.synthetic-attempt-2'})
+        self.assertEqual(first,again); self.assertNotEqual(first,second)
+        self.assertNotIn('synthetic',first)
+
+    def test_lost_start_reply_reconnects_without_duplicate_execution(self):
+        started=[]
+        def respond(request):
+            if request.method == 'GET': return httpx.Response(200,json={'status':'running'}) if started else httpx.Response(404)
+            started.append(json.loads(request.content)['id']); raise httpx.ReadTimeout('synthetic',request=request)
+        with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+            execution=gateway.ensure_execution(client,'http://iggy',{'id':'11111111-1111-4111-8111-111111111111','capability':'synthetic'})
+        self.assertEqual(started,[execution])
+
+    def test_upgrade_resumes_legacy_active_worker(self):
+        run={'id':'11111111-1111-4111-8111-111111111111','capability':'synthetic','resumed':True}
+        with httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'status':'running'}))) as client:
+            self.assertEqual(gateway.ensure_execution(client,'http://iggy',run),run['id'])
+
     def test_gateway_distinguishes_outage_from_invalid_inference(self):
         for status, expected in [(503, 503), (429, 503), (401, 403)]:
             handler = gateway.Handler.__new__(gateway.Handler)

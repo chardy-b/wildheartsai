@@ -91,7 +91,17 @@ def main():
             import pytesseract
             manifest.update({"python": platform.python_version(), "tesseract": str(pytesseract.get_tesseract_version())})
             if config["method"] == "docling": manifest["docling"] = importlib.metadata.version("docling")
-            manifest.update({"worker": "document-extraction/v1", "worker_image": config.get("workerImage", "unrecorded"), "privacy_policy": "no-names-dob-to-age/v1", "pii_model": Path("/models/pii/REVISION").read_text().strip(), "summary_model": config["summaryModel"], "vision_model": config.get("visionModel", "disabled")})
+            if config["method"] == "rapidocr":
+                from rapid_adapter import HASHES
+                manifest.update({"rapidocr":importlib.metadata.version("rapidocr"),"onnxruntime":importlib.metadata.version("onnxruntime"),"rapidocr_assets":json.dumps(HASHES,sort_keys=True)})
+            manifest.update({"worker": "document-extraction/v2", "worker_image": config.get("workerImage", "unrecorded"), "privacy_policy": "no-names-dob-to-age/v1", "pii_model": Path("/models/pii/REVISION").read_text().strip(), "summary_model": config["summaryModel"], "vision_model": config.get("visionModel", "disabled"),
+                             "summary_model_revision": config.get("summaryModelRevision", "unknown-alias-only"), "vision_model_revision": config.get("visionModelRevision", "unknown-alias-only"), "source_mime": mime,
+                             "parser_configuration": json.dumps({"render_scale_max":2.5,"max_pixels":20_000_000,"tesseract_psm":3,"foreground_threshold":220,"diagnostic_grid":20},sort_keys=True,separators=(',',':'))})
+            manifest["environment_fingerprint"] = hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+            if config.get("parentRunId"):
+                manifest["parent_run_id"]=config["parentRunId"]
+                manifest["requested_environment_fingerprint"]=config.get("expectedEnvironment","unknown")
+                if config.get("expectedEnvironment") != manifest["environment_fingerprint"] or manifest["summary_model_revision"].startswith("unknown") or config["method"] == "vision" and manifest["vision_model_revision"].startswith("unknown"): warnings.append("rerun_environment_changed_or_unknown")
             result = {"version": 1, "sourceSha256": sha.hexdigest(), "method": config["method"], "manifest": manifest,
                       "elapsedMs": (time.monotonic() - started) * 1000, "pages": pages, "totalPages": len(pages),
                       "summary": summary, "summaryStatus": summary_status, "ageAtEncounter": age, "measurements": measurements, "warnings": list(dict.fromkeys(warnings))}

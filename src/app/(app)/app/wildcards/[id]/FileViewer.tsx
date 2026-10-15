@@ -5,7 +5,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs
 import type { WildcardFile } from "@/lib/wildcards";
 import { DocumentMarkdown } from "../DocumentMarkdown";
 
-export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFile; onPageChange?: (page: number) => void; overlays?: { box: [number, number, number, number]; label: string }[] }) {
+export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFile; onPageChange?: (page: number) => void; overlays?: { box: [number, number, number, number]; label: string; color?: string }[] }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
   const [error, setError] = useState("");
@@ -89,14 +89,16 @@ export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFil
           <button type="button" disabled={page === pdf.numPages || rendering} onClick={() => setPage((value) => value + 1)}>Next page</button>
         </div>
         <div className="workbench-overlay"><canvas ref={canvas} aria-label={`Page ${page} of ${file.name}`} />
-          {overlays?.map(({ box: [x, y, r, b], label }, i) => <span key={i} className="workbench-overlay-mark" title={label} style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${(r - x) * 100}%`, height: `${(b - y) * 100}%` }} />)}
+          {overlays?.map(({ box: [x, y, r, b], label, color }, i) => <span key={i} className="workbench-overlay-mark" title={label} style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${(r - x) * 100}%`, height: `${(b - y) * 100}%`, borderColor:color, background:color ? `${color}18` : undefined }} />)}
         </div>
         {pageText && <details><summary>Read embedded PDF text</summary><p>Read in your browser by PDF.js from the PDF text layer; OCR was not run here.</p><DocumentMarkdown text={pageText} /></details>}
       </>}
     </> : file.type.startsWith("image/") ?
       // Authenticated route serves the original; image optimization would cache it.
       // eslint-disable-next-line @next/next/no-img-element
-      <img src={url} alt={file.name} onError={() => setError("This image could not be previewed. Try downloading the original.")} /> :
+      <div className="workbench-overlay"><img src={url} alt={file.name} onError={() => setError("This image could not be previewed. Try downloading the original.")} />
+        {overlays?.map(({box:[x,y,r,b],label,color},i)=><span key={i} className="workbench-overlay-mark" title={label} style={{left:`${x*100}%`,top:`${y*100}%`,width:`${(r-x)*100}%`,height:`${(b-y)*100}%`,borderColor:color,background:color ? `${color}18` : undefined}} />)}
+      </div> :
       text === null ? !error && <p role="status">Loading text…</p> : <><DocumentMarkdown text={text} /><details><summary>View original plain text</summary><pre>{text}</pre></details></>}
   </div>;
 }

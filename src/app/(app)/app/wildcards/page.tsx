@@ -15,7 +15,7 @@ export default async function WildcardsPage({ searchParams }: { searchParams: Pr
   const files = await listFiles(db, recordsKey(), session.user.id, page);
   return <section className="app-page wildcards">
     <h1>Documents</h1>
-    <p><Link href="/app/wildcards/progress">View processing progress →</Link> · <Link href="/app/wildcards/workbench">Extraction workbench →</Link></p>
+    <p><Link href="/app/wildcards/progress">View processing progress →</Link> · <Link href="/app/wildcards/workbench">Extraction workbench →</Link> · <Link href="/app/wildcards/benchmark">Quality report →</Link></p>
     <p className="lede">A private place for the files you want to keep with your health record. Only you can access them through your account.</p>
     <Wildcards files={files} usage={usage} page={page} owner={session.user.id} available={r2Configured()} />
   </section>;

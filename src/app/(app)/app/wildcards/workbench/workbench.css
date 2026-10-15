@@ -10,6 +10,8 @@
 .extraction-workbench pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40rem; overflow: auto; font-size: .85rem; }
 .extraction-workbench table { width: 100%; border-collapse: collapse; text-align: left; font-size: .85rem; }
 .extraction-workbench td, .extraction-workbench th { padding: .6rem; border-bottom: 1px solid #ccc; }
+.extraction-workbench dd { margin: .25rem 0 1rem; overflow-wrap:anywhere; }
+.extraction-workbench td button { margin: .25rem; }
 .workbench-table { overflow-x: auto; }
 .workbench-overlay { position: relative; width: fit-content; max-width: 100%; }
 .workbench-overlay-mark { position: absolute; border: 1px solid #198754; background: #19875422; pointer-events: none; }

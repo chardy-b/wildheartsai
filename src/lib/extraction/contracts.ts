@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const METHODS = ["native", "tesseract", "docling", "vision"] as const;
+export const METHODS = ["native", "tesseract", "rapidocr", "docling", "vision"] as const;
 export const methodSchema = z.enum(METHODS);
 const short = z.string().max(200);
 export const boxSchema = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
@@ -9,7 +9,13 @@ export const piiSchema = z.object({ start: z.number().int().nonnegative(), end: 
 export const measurementSchema = z.object({ name: short, value: short, unit: short, date: short, range: short, page: z.number().int().positive(), evidence: z.string().max(2000) }).strict();
 export const pageSchema = z.object({
   page: z.number().int().positive(), text: z.string().max(100_000),
-  words: z.array(z.object({ text: z.string().max(2000), box: boxSchema }).strict()).max(20_000),
+  words: z.array(z.object({ text: z.string().max(2000), box: boxSchema, confidence: z.number().min(0).max(1).optional() }).strict()).max(20_000),
+  layoutRegions: z.array(z.object({ kind: z.enum(["table", "text", "chart", "image"]), box: boxSchema, origin: short }).strict()).max(500).optional(),
+  diagnostics: z.object({ version: z.literal(1), textSource: short, foregroundPixels: z.number().int().nonnegative(), coveredForegroundPixels: z.number().int().nonnegative(),
+    sampleWidth: z.number().int().min(1).max(1000), sampleHeight: z.number().int().min(1).max(1000),
+    uncoveredRegions: z.array(z.object({ box: boxSchema, uncoveredFraction: z.number().min(0).max(1) }).strict()).max(400),
+    lowConfidenceWords: z.number().int().nonnegative(), confidenceWords: z.number().int().nonnegative(), imageRegions: z.number().int().nonnegative(), nativeCharacters: z.number().int().nonnegative().optional(), scanLike: z.boolean().optional(),
+  }).strict().refine(d => d.coveredForegroundPixels <= d.foregroundPixels && d.foregroundPixels <= d.sampleWidth*d.sampleHeight && d.lowConfidenceWords <= d.confidenceWords).optional(),
   figures: z.array(z.object({ box: boxSchema, caption: z.string().max(2000), origin: z.enum(["text", "vision", "unknown"]) }).strict()).max(200),
   tables: z.array(z.array(z.array(z.string().max(4000)).max(100)).max(1000)).max(100),
   foregroundCoverage: z.number().min(0).max(1).nullable(),
@@ -48,7 +54,7 @@ export const referenceSchema = z.object({
   if (r.measurements.some(m => !r.pages.some(p => p.page === m.page))) ctx.addIssue({ code: "custom", message: "Measurements require a labeled page" });
   for (const p of r.pages) if (p.pii.some(s => s.end > Array.from(p.text).length)) ctx.addIssue({ code: "custom", message: "Invalid reference offsets" });
 });
-export const createSchema = z.object({ fileIds: z.array(z.uuid()).min(1).max(20), methods: z.array(methodSchema).min(1).max(4), encounterDate: z.iso.date().optional() }).strict();
+export const createSchema = z.object({ fileIds: z.array(z.uuid()).min(1).max(20), methods: z.array(methodSchema).min(1).max(METHODS.length), encounterDate: z.iso.date().optional() }).strict();
 export type ExtractionResult = z.infer<typeof resultSchema>;
 export type Reference = z.infer<typeof referenceSchema>;
 export type PiiSpan = z.infer<typeof piiSchema>;

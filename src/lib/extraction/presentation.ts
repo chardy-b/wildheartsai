@@ -5,7 +5,7 @@ export type ProgressData = { documents: number; counts: Record<string, number>; 
 export const statusLabel = (status: string) => ({ queued: "Queued / waiting to retry", running: "Processing", recovering: "Recovering interrupted work", completed: "Completed — review result", failed: "Failed", cancelled: "Cancelled", expired: "Expired", not_started: "Not started" })[status] ?? status;
 export function extractionMethod(method: string, mime: string) {
   if (mime.startsWith("text/")) return "Direct UTF-8 text reading; OCR was not needed";
-  return ({ native: "Native PDF text and tables · pdfplumber", tesseract: "Rendered-page OCR · Tesseract", docling: "Document layout extraction · Docling", vision: "Local vision-model transcription" })[method] ?? method;
+  return ({ native: "Native PDF text and tables · pdfplumber", tesseract: "Rendered-page OCR · Tesseract", rapidocr: "Offline neural OCR · RapidOCR / PP-OCRv6", docling: "Document layout extraction · Docling", vision: "Local vision-model transcription" })[method] ?? method;
 }
 export function coverageSummary(result: ExtractionResult) {
   return { pagesWithText: result.pages.filter(p => p.text.trim()).length, measuredPages: result.pages.filter(p => p.foregroundCoverage !== null).length, totalPages: result.totalPages };

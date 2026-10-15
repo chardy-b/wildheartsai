@@ -6,7 +6,7 @@ import { extractionJob, extractionRun, session } from "@/lib/db/schema";
 import { asUser } from "@/lib/db/rls";
 import type { Db } from "@/lib/db/types";
 import { deleteFile, fileMetadata, listFiles, storeFile } from "@/lib/wildcards-store";
-import { authorized, cancel, claim, enqueue, fail, finish, listRuns, processingProgress, references, saveReference } from "./store";
+import { authorized, cancel, claim, enqueue, extractionAudit, fail, finish, listRuns, processingProgress, references, rerun, saveReference, workerConfig } from "./store";
 import type { ExtractionResult } from "./contracts";
 
 const result: ExtractionResult = { version: 1, sourceSha256: "a".repeat(64), method: "native", manifest: { worker: "synthetic" }, elapsedMs: 10,
@@ -54,6 +54,13 @@ describe("web-owned extraction custody", () => {
     expect(raw.sealedResult).not.toContain("Jane");
     expect((await listRuns(db, kek, owner, fileId, run.id))[0].result).toEqual(result);
     await expect(authorized(db, run.capability)).rejects.toThrow();
+    expect((await extractionAudit(db,kek,other)).rows).toEqual([]);
+    expect((await extractionAudit(db,kek,owner)).rows[0]).toMatchObject({runId:run.id,method:'native',reviewedPages:1});
+    await expect(rerun(db,kek,other,sessionId,run.id)).rejects.toThrow();
+    const [rerunId]=await rerun(db,kek,owner,sessionId,run.id);
+    const child=(await claim(db,randomUUID(),'synthetic-grant-key'))!;
+    expect(child.id).toBe(rerunId);expect(await workerConfig(db,kek,child.capability)).toMatchObject({parentRunId:run.id,expectedEnvironment:'unknown'});
+    await cancel(db,owner,child.id);
   });
   it("persists outage backoff, revokes old attempts, and lets other work proceed", async () => {
     await enqueue(db, kek, owner, sessionId, { fileIds: [fileId], methods: ["native", "tesseract"] });

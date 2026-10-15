@@ -6,7 +6,7 @@ import { getSession } from "@/lib/session";
 import { fileError, PRIVATE_HEADERS, readUpload, sameOrigin, validFileId } from "@/lib/wildcards-http";
 import { fileObjects } from "@/lib/wildcards-r2";
 import { streamFile } from "@/lib/wildcards-store";
-import { authorized, cancel, claim, configured, enabledMethods, enqueue, fail, finish, hash, listRuns, processingProgress, references, saveReference, workerConfig } from "./store";
+import { authorized, cancel, claim, configured, enabledMethods, enqueue, extractionAudit, fail, finish, hash, listRuns, processingProgress, references, rerun, saveReference, workerConfig } from "./store";
 
 const json = (value: unknown) => Response.json(value, { headers: PRIVATE_HEADERS });
 async function body(request: Request) { return JSON.parse((await readUpload(request)).toString("utf8")) as unknown; }
@@ -18,6 +18,7 @@ export async function browserRequest(request: Request) {
     if (request.method === "GET") {
       const query = new URL(request.url).searchParams, fileId = query.get("fileId") ?? undefined, resultId = query.get("resultId") ?? undefined, referenceId = query.get("referenceId") ?? undefined;
       if (query.get("overview") === "1") return json(await processingProgress(db, session.user.id));
+      if (query.get("benchmark") === "1") return json(await extractionAudit(db,recordsKey(),session.user.id));
       if ([fileId, resultId, referenceId].some(id => id && !validFileId(id))) return fileError("Not found.", 404);
       return json({ available: configured(), methods: enabledMethods(), runs: await listRuns(db, recordsKey(), session.user.id, fileId, resultId), references: fileId ? await references(db, recordsKey(), session.user.id, fileId, resultId ? undefined : referenceId) : [] });
     }
@@ -31,6 +32,10 @@ export async function browserRequest(request: Request) {
       return json({ id: await saveReference(db, recordsKey(), session.user.id, fileId, labels) });
     }
     if (!configured()) return fileError("Document workers are not configured yet.", 503);
+    if (input && typeof input === "object" && "rerunOf" in input) {
+      const { rerunOf } = z.object({rerunOf:z.uuid()}).strict().parse(input);
+      return json({ids:await rerun(db,recordsKey(),session.user.id,session.session.id,rerunOf)});
+    }
     return json({ ids: await enqueue(db, recordsKey(), session.user.id, session.session.id, input) });
   } catch { return fileError("Could not complete the workbench request. Check your selections and try again.", 400); }
 }
