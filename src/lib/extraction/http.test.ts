@@ -6,10 +6,11 @@ vi.mock("./store", () => ({
   configured: vi.fn(() => true), enabledMethods: () => ["native", "tesseract"], hash: () => "b".repeat(64),
   listRuns: vi.fn(async () => []), references: vi.fn(async () => []), enqueue: vi.fn(async () => ["run"]),
   processingProgress: vi.fn(async () => ({ documents: 708, counts: { not_started: 699, completed: 9 }, files: [] })),
+  extractionAudit: vi.fn(async () => ({ rows: [], groups: [] })), rerun: vi.fn(async () => ["child"]),
   authorized: vi.fn(async () => { throw new Error("private provider error"); }), cancel: vi.fn(), claim: vi.fn(), fail: vi.fn(), finish: vi.fn(), saveReference: vi.fn(), workerConfig: vi.fn(),
 }));
 import { getSession } from "@/lib/session";
-import { claim, configured, enqueue, listRuns, processingProgress } from "./store";
+import { claim, configured, enqueue, extractionAudit, listRuns, processingProgress, rerun } from "./store";
 import { browserRequest, workerRequest } from "./http";
 
 beforeEach(() => {
@@ -17,6 +18,16 @@ beforeEach(() => {
   vi.mocked(getSession).mockResolvedValue({ user: { id: "owner" }, session: { id: "session" } } as Awaited<ReturnType<typeof getSession>>);
 });
 describe("extraction HTTP boundary", () => {
+  it("scopes private benchmark and reruns to the authenticated owner", async () => {
+    const audit = await browserRequest(new Request("https://app.test/api/extraction?benchmark=1"));
+    expect(audit.headers.get("cache-control")).toBe("private, no-store");
+    expect(extractionAudit).toHaveBeenCalledWith({}, expect.any(Buffer), "owner");
+    const id = "11111111-1111-4111-8111-111111111111";
+    const response = await browserRequest(new Request("https://app.test/api/extraction", {method:"POST",headers:{origin:"https://app.test"},body:JSON.stringify({rerunOf:id})}));
+    expect(await response.json()).toEqual({ids:["child"]});
+    expect(rerun).toHaveBeenCalledWith({},expect.any(Buffer),"owner","session",id);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
   it("returns owner-scoped overview metadata without loading results or record keys", async () => {
     const response = await browserRequest(new Request("https://app.test/api/extraction?overview=1"));
     expect(await response.json()).toMatchObject({ documents: 708, counts: { not_started: 699 } });

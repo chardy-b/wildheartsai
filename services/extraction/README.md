@@ -7,7 +7,7 @@ Authenticated users open `/app/wildcards/workbench`, select existing ready uploa
 Migration `0013_document_extraction` adds three owner-scoped tables. File deletion cascades runs, queue metadata, and reference labels; all text, results, labels, and encounter-date configuration are encrypted using the existing per-user keys. The explicit web dispatch context applies only to the queue metadata table. No document contents or labels enter that context.
 
 - `EXTRACTION_ENABLED=1` enables queue creation and worker APIs; unset/0 disables them.
-- `EXTRACTION_METHODS` optionally lists enabled adapters; defaults to `native,tesseract`. Enable `vision`/`docling` only after their private runtimes and assets pass acceptance. Unavailable methods are disabled in the UI and rejected server-side.
+- `EXTRACTION_METHODS` optionally lists enabled adapters; defaults to `native,tesseract`. Enable `rapidocr`/`vision`/`docling` only after their private runtimes and assets pass acceptance. Unavailable methods are disabled in the UI and rejected server-side.
 - `EXTRACTION_COORDINATOR_TOKEN_HASH` is the SHA-256 verifier of a dedicated coordinator credential. Raw credential remains on the VPS.
 - `EXTRACTION_GRANT_KEY` is a random, independent, web-only secret of at least 32 characters. Rotating it prevents claim replay with old grants; explicitly cancel existing work during rotation.
 
@@ -35,6 +35,7 @@ Dedicated deployment root: `/opt/wildhearts-extraction`. Existing production cha
 
 - `native`: pdfplumber text/word coordinates/tables, with PDFium page rendering. Images without text are inventoried, not silently OCRed.
 - `tesseract`: rendered-page OCR, with word geometry and preserved line order. This also handles image uploads.
+- `rapidocr`: optional `worker-neural` image target with pinned RapidOCR/ONNX Runtime and explicitly verified bundled PP-OCRv6 model hashes. CPU execution inside Iggy; no runtime downloads. The desktop DirectML experiment is a separate synthetic benchmark, not the production execution provider.
 - `vision`: page transcription through a separately configured `EXTRACTION_VISION_MODEL` on the same private inference endpoint. No remote image URLs or provider fallback. The current staged endpoint has no verified vision profile; leave this method disabled until tested.
 - `docling`: an optional adapter requiring a separate image with Docling and predownloaded local artifacts at `DOCLING_ARTIFACTS_PATH`. It is not installed in the initial constrained CPU image. It fails instead of downloading models at runtime. Its block geometry is not reported as tight-word pixel coverage.
 
@@ -48,7 +49,13 @@ Reference versions are immutable and encrypted. Review text against the original
 
 Scores report normalized token multiset precision/recall, word error rate (with a bounded edit-distance budget), PII label+surface multiset precision/recall, exact measurement tuple precision/recall (unit case preserved), age accuracy, and known-identifier substring matches in summaries. PII comparison across corrected reference text and parser text is an end-to-end measure: OCR omissions affect recall too. Leakage substring matches need review and are not proof of anonymity. Missing gold labels and empty denominators remain unscored. Partial-page references never imply whole-document accuracy.
 
-Visual coverage is the fraction of rendered non-white foreground pixels covered by extracted word boxes. It includes figures/rules in the denominator, is sensitive to scan background and geometry, and is **not** text accuracy. Without word geometry it remains unscored. Overlays show recovered word boxes from the first compared run, not an independent ground-truth mask.
+Visual coverage is the fraction of rendered non-white foreground pixels covered by extracted word boxes. It includes figures/rules in the denominator, is sensitive to scan background and geometry, and is **not** text accuracy. Without word geometry it remains unscored. The visual debugger can switch between each compared run and their combined evidence, and between word geometry, low-confidence words, suspected uncovered foreground, disagreements and table/image regions. The combined view preserves conflicting words; it is not a corrected transcript. Older runs require a rerun for new diagnostics. Overlay display is explicitly capped at 4,000 regions.
+
+`/app/wildcards/benchmark` aggregates up to 200 latest owner-scoped runs, grouped by method, input-class proxy and environment fingerprint. Its API decrypts results only server-side and returns numerical metrics and opaque run/file IDs, never source text. The cohort is selected uploads, not a representative sample. Reviewed-reference accuracy is distinct from visual coverage and table detection counts. Reference labels remain encrypted.
+
+Run manifests include dependency versions, parser configuration, worker image, model revision when available, privacy policy and an environment fingerprint. Reruns create new immutable child runs with the same document/method/date and record the requested parent fingerprint. They use currently installed tools, explicitly flagging changed/unknown environments rather than claiming exact reproduction from model aliases alone.
+
+`synthetic_corpus.py` authors 13 one-page known-answer stress fixtures; `synthetic_runner.py` scores prose, reading order, numbers, table cells and chart labels. The synthetic-only numeric snapshot in `src/lib/extraction/synthetic-results.json` records 52 runs across native, Tesseract, RapidOCR and Qwen3-VL-4B. OCR methods share canonical rasters. Runtime hardware differs, RapidOCR synthetic coverage uses line boxes, and the small repeated templates do not establish clinical or uploaded-document performance. Chart point evaluation covers only one simple plot and does not validate units. PII integration acceptance is a separate synthetic experiment described below.
 
 ## Synthetic acceptance, 2026-10-14
 

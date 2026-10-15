@@ -87,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
             if (path in {"config", "source", "status"}) != (self.command == "GET"): raise ValueError("method")
             output, mime = web(self.command, path, token, content)
             if path == "config":
-                config = json.loads(output); config.update({"summaryModel": SUMMARY_MODEL, "visionModel": VISION_MODEL, "workerImage": os.environ.get("EXTRACTION_WORKER_IMAGE", "unrecorded")})
+                config = json.loads(output); config.update({"summaryModel": SUMMARY_MODEL, "visionModel": VISION_MODEL, "workerImage": os.environ.get("EXTRACTION_WORKER_IMAGE", "unrecorded"), "summaryModelRevision":os.environ.get("EXTRACTION_SUMMARY_MODEL_REVISION","unknown-alias-only"), "visionModelRevision":os.environ.get("EXTRACTION_VISION_MODEL_REVISION","unknown-alias-only")})
                 output = json.dumps(config).encode()
             self.respond(200, output, mime)
         except (httpx.TransportError, httpx.HTTPStatusError) as error:

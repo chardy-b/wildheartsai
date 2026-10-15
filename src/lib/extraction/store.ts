@@ -6,6 +6,7 @@ import { asUser } from "@/lib/db/rls";
 import type { Db } from "@/lib/db/types";
 import { hmacFor, sealField, unsealField, userKeysFor } from "@/lib/crypto/user-keys";
 import { createSchema, METHODS, referenceSchema, resultSchema } from "./contracts";
+import { auditGroups, auditResult, type AuditRow } from "./audit";
 
 const location = (id: string, field: string) => ({ table: "extraction_run", rowId: id, field });
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -13,7 +14,7 @@ function grant(id: string, claimId: string, key: string) { return `whdoc1.${crea
 export function enabledMethods() { return METHODS.filter(method => (process.env.EXTRACTION_METHODS ?? "native,tesseract").split(",").includes(method)); }
 export function configured() { return process.env.EXTRACTION_ENABLED === "1" && enabledMethods().length > 0 && /^[a-f0-9]{64}$/.test(process.env.EXTRACTION_COORDINATOR_TOKEN_HASH ?? "") && (process.env.EXTRACTION_GRANT_KEY?.length ?? 0) >= 32; }
 
-export async function enqueue(db: Db, kek: Buffer, userId: string, sessionId: string, raw: unknown) {
+export async function enqueue(db: Db, kek: Buffer, userId: string, sessionId: string, raw: unknown, lineage?: { parentRunId: string; expectedEnvironment: string }) {
   const input = createSchema.parse(raw);
   if (input.methods.some(method => !enabledMethods().includes(method))) throw new Error("method_unavailable");
   return asUser(db, userId, async tx => {
@@ -29,12 +30,25 @@ export async function enqueue(db: Db, kek: Buffer, userId: string, sessionId: st
     const ids = [];
     for (const fileId of files) for (const method of methods) {
       const id = randomUUID();
-      await tx.insert(extractionRun).values({ id, userId, fileId, method, sealedConfig: sealField(keys, JSON.stringify({ encounterDate: input.encounterDate ?? null }), location(id, "config")) });
+      await tx.insert(extractionRun).values({ id, userId, fileId, method, sealedConfig: sealField(keys, JSON.stringify({ encounterDate: input.encounterDate ?? null, ...lineage }), location(id, "config")) });
       await tx.insert(extractionJob).values({ id, userId, sessionId });
       ids.push(id);
     }
     return ids;
   });
+}
+
+export async function rerun(db: Db, kek: Buffer, userId: string, sessionId: string, id: string) {
+  const input = await asUser(db,userId,async tx => {
+    const [run] = await tx.select().from(extractionRun).where(and(eq(extractionRun.id,id),eq(extractionRun.userId,userId)));
+    if(!run) throw new Error("run_unavailable");
+    const keys=await userKeysFor(tx,kek,userId,new Date());
+    const config=JSON.parse(unsealField(keys,run.sealedConfig,location(id,"config")));
+    const result=run.sealedResult ? resultSchema.parse(JSON.parse(unsealField(keys,run.sealedResult,location(id,"result")))) : null;
+    return { fileIds:[run.fileId],methods:[run.method],...(config.encounterDate ? {encounterDate:config.encounterDate} : {}), expectedEnvironment:result?.manifest.environment_fingerprint ?? "unknown" };
+  });
+  const {expectedEnvironment,...selection}=input;
+  return enqueue(db,kek,userId,sessionId,selection,{parentRunId:id,expectedEnvironment});
 }
 
 export async function listRuns(db: Db, kek: Buffer, userId: string, fileId?: string, resultId?: string) {
@@ -62,6 +76,31 @@ export async function processingProgress(db: Db, userId: string) {
     const counts: Record<string, number> = { not_started: total.count - files.length, queued: 0, running: 0, recovering: 0, completed: 0, failed: 0, cancelled: 0, expired: 0 };
     for (const file of files) counts[file.status] = (counts[file.status] ?? 0) + 1;
     return { documents: total.count, counts, files };
+  });
+}
+
+export async function extractionAudit(db:Db,kek:Buffer,userId:string) {
+  return asUser(db,userId,async tx=>{
+    const limit=200;
+    const metadata=await tx.select({id:extractionRun.id,fileId:extractionRun.fileId,method:extractionRun.method,createdAt:extractionRun.createdAt,status:extractionJob.status})
+      .from(extractionRun).innerJoin(extractionJob,eq(extractionRun.id,extractionJob.id)).where(eq(extractionRun.userId,userId)).orderBy(desc(extractionRun.createdAt)).limit(limit+1);
+    const selected=metadata.slice(0,limit),rows:AuditRow[]=[],types=new Map<string,string>(),labels=new Map<string,ReturnType<typeof referenceSchema.parse>|null>();
+    const keys=selected.some(r=>r.status==="completed") ? await userKeysFor(tx,kek,userId,new Date()):null;
+    for(const item of selected) {
+      if(item.status!=="completed" || !keys)continue;
+      const [stored]=await tx.select({result:extractionRun.sealedResult}).from(extractionRun).where(eq(extractionRun.id,item.id));
+      if(!stored?.result)continue;
+      if(!types.has(item.fileId)) {
+        const [file]=await tx.select({metadata:wildcardFile.sealedMetadata}).from(wildcardFile).where(eq(wildcardFile.id,item.fileId));
+        if(!file)continue;
+        types.set(item.fileId,JSON.parse(unsealField(keys,file.metadata,{table:"wildcard_file",rowId:item.fileId,field:"metadata"})).type);
+        const [reference]=await tx.select().from(extractionReference).where(eq(extractionReference.fileId,item.fileId)).orderBy(desc(extractionReference.createdAt)).limit(1);
+        labels.set(item.fileId,reference ? referenceSchema.parse(JSON.parse(unsealField(keys,reference.sealedLabels,{table:"extraction_reference",rowId:reference.id,field:"labels"}))):null);
+      }
+      const result=resultSchema.parse(JSON.parse(unsealField(keys,stored.result,location(item.id,"result"))));
+      rows.push({...auditResult(result,types.get(item.fileId)!,labels.get(item.fileId)),runId:item.id,fileId:item.fileId,createdAt:item.createdAt.toISOString()});
+    }
+    return {generatedAt:new Date().toISOString(),limit,truncated:metadata.length>limit,cohort:"Latest runs for the signed-in account; selected uploads, not a representative population sample",runStatuses:Object.fromEntries([...new Set(selected.map(r=>r.status))].map(s=>[s,selected.filter(r=>r.status===s).length])),rows,groups:auditGroups(rows)};
   });
 }
 

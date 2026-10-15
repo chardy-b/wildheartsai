@@ -32,6 +32,6 @@ export function ExtractionProgress({ data, error }: { data: ProgressData | null;
     {error ? <p role="alert">Progress could not be refreshed. Displayed counts may be out of date.</p> : !data ? <p role="status">Loading processing progress…</p> : null}
     {data && <><p>{data.documents} uploaded documents · active run, otherwise latest run per document · refreshes every 10 seconds</p><dl className="extraction-counts">{Object.entries(data.counts).map(([status, count]) => <div key={status}><dt>{statusLabel(status)}</dt><dd>{count}</dd></div>)}</dl></>}
     <p>Completed means the run finished. Open its report to check withheld summaries, warnings, measurements, and coverage.</p>
-    <div className="wildcard-actions"><Link href="/app/wildcards/progress">View all document statuses</Link><Link href="/app/wildcards/workbench">Queue or compare extraction methods</Link></div>
+    <div className="wildcard-actions"><Link href="/app/wildcards/progress">View all document statuses</Link><Link href="/app/wildcards/workbench">Queue or compare extraction methods</Link><Link href="/app/wildcards/benchmark">Quality report and metrics</Link></div>
   </section>;
 }
