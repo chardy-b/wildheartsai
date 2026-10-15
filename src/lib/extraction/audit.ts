@@ -1,5 +1,5 @@
 import type { ExtractionResult, Reference } from "./contracts";
-import { benchmark } from "./metrics";
+import { benchmark, prf } from "./metrics";
 
 export function auditResult(result: ExtractionResult, mime: string, reference?: Reference | null) {
   const pages=result.pages;
@@ -17,6 +17,7 @@ export function auditResult(result: ExtractionResult, mime: string, reference?: 
     imageRegions:pages.reduce((n,p)=>n+p.figures.length,0),measurements:result.measurements.length,summaryAccepted:result.summaryStatus==="accepted",warnings:result.warnings,
     modelRevisionKnown:!!result.manifest.summary_model_revision && !result.manifest.summary_model_revision.startsWith("unknown"),
     reviewedPages:gold?.labeledPages??0,textScore:gold?.textToken??null,redactionScore:gold?.redaction??null,measurementScore:gold?.measurements??null,
+    summaryLeakedGoldSpans:gold?.summaryLeakedGoldSpans??null,ageCorrect:gold?.ageCorrect??null,
     chartDataAccuracy:null,tableStructureAccuracy:null,medicalTagAccuracy:null,
   };
 }
@@ -34,11 +35,17 @@ export function auditGroups(rows:AuditRow[]) {
     const coverage=group.flatMap(r=>r.coverages),runtime=group.map(r=>r.elapsedMs),gold=group.flatMap(r=>r.textScore ? [r.textScore] : []);
     const tp=gold.reduce((n,s)=>n+s.tp,0),predicted=gold.reduce((n,s)=>n+s.predicted,0),expected=gold.reduce((n,s)=>n+s.expected,0);
     const pages=group.reduce((n,r)=>n+r.pages,0),textPages=group.reduce((n,r)=>n+r.textPages,0);
+    const redaction=Object.fromEntries(['rules','openmed','combined'].map(method=>{
+      const scores=group.flatMap(r=>r.redactionScore?.[method] ? [r.redactionScore[method]]:[]);
+      return [method,prf(scores.reduce((n,s)=>n+s.tp,0),scores.reduce((n,s)=>n+s.predicted,0),scores.reduce((n,s)=>n+s.expected,0))];
+    }));
     return {method:group[0].method,sourceType:group[0].sourceType,environment:group[0].environment,runs:group.length,documents:new Set(group.map(r=>r.fileId)).size,pages,textPages,
       textAvailability:pages ? textPages/pages:null,coveragePages:coverage.length,coverageP10:quantile(coverage,.1),coverageMedian:quantile(coverage,.5),coverageP90:quantile(coverage,.9),
       runtimeMedianMs:quantile(runtime,.5),runtimeP90Ms:quantile(runtime,.9),tableCount:group.reduce((n,r)=>n+r.tables,0),tableCells:group.reduce((n,r)=>n+r.tableCells,0),
       imageRegions:group.reduce((n,r)=>n+r.imageRegions,0),measurements:group.reduce((n,r)=>n+r.measurements,0),summaryAcceptance:group.filter(r=>r.summaryAccepted).length/group.length,
       reviewedPages:group.reduce((n,r)=>n+r.reviewedPages,0),tokenPrecision:predicted ? tp/predicted:null,tokenRecall:expected ? tp/expected:null,
+      redaction,summaryLeakMatches:group.some(r=>r.summaryLeakedGoldSpans!==null) ? group.reduce((n,r)=>n+(r.summaryLeakedGoldSpans??0),0):null,
+      ageScoredRuns:group.filter(r=>r.ageCorrect!==null).length,ageCorrectRuns:group.filter(r=>r.ageCorrect===true).length,
       scoredWords:group.reduce((n,r)=>n+r.scoredWords,0),lowConfidenceWords:group.reduce((n,r)=>n+r.lowConfidenceWords,0),
       warnings:Object.fromEntries([...new Set(group.flatMap(r=>r.warnings))].map(w=>[w,group.filter(r=>r.warnings.includes(w)).length])),
     };
