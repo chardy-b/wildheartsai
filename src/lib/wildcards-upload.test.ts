@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createTestDb, createTestUser } from "@/test/db";
@@ -62,6 +62,8 @@ describe("large private uploads", () => {
       offset += value.length;
     }
     expect(offset).toBe(bytes.length);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    expect(await beginUpload(db, kek, user, "renamed.jpg", bytes.length, undefined, undefined, sha256, objects)).toMatchObject({ id, skipped: true });
     blobs.get(keys[0])![30] ^= 1;
     await expect(streamFile(db, kek, user, id, objects)).rejects.toThrow();
     await deleteFile(db, user, id, objects);
