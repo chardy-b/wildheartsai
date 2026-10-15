@@ -13,15 +13,24 @@ from privacy import LocalPrivacy, age_context
 
 os.environ.update({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1", "TOKENIZERS_PARALLELISM": "false", "OMP_NUM_THREADS": "1"})
 
+class ServiceUnavailable(Exception): pass
+
+def checked_request(client, method, path, **kwargs):
+    try:
+        response = client.request(method, path, **kwargs)
+        if response.status_code in {408, 429} or response.status_code >= 500: raise ServiceUnavailable()
+        response.raise_for_status()
+        return response
+    except httpx.TransportError:
+        raise ServiceUnavailable() from None
+
 def main():
     token = os.environ["IGGY_BROKER_CAPABILITY"]
     gateway = os.environ["IGGY_GATEWAY_URL"].rstrip("/")
     if not gateway.startswith("http://wildhearts-extraction-gateway:"): raise ValueError("invalid_gateway")
-    client = httpx.Client(base_url=gateway, headers={"Authorization": "Bearer " + token}, follow_redirects=False, trust_env=False, timeout=120)
+    client = httpx.Client(base_url=gateway, headers={"Authorization": "Bearer " + token}, follow_redirects=False, trust_env=False, timeout=180)
     def request(method, path, **kwargs):
-        response = client.request(method, path, **kwargs)
-        response.raise_for_status()
-        return response
+        return checked_request(client, method, path, **kwargs)
     def check_active(): request("GET", "/config")
     def infer(mode, content):
         return request("POST", "/infer", json={"mode": mode, "content": content}).json()["text"]
@@ -72,6 +81,9 @@ def main():
                         if set(m) == {"name", "value", "unit", "date", "range", "page", "evidence"} and all(isinstance(m[k], str) and len(m[k]) <= (2000 if k == "evidence" else 200) for k in ("name", "value", "unit", "date", "range", "evidence")) and p and m["evidence"] and m["evidence"] in p["text"] and m["value"] and all(m[k] in m["evidence"] for k in ("value", "unit", "date", "range")) and m["name"].casefold() in m["evidence"].casefold():
                             measurements.append(m)
                         else: warnings.append("measurement_candidate_rejected")
+                except ServiceUnavailable:
+                    # An outage must not be recorded as a successful extraction.
+                    raise
                 except Exception:
                     warnings.append("local_summary_unavailable_or_invalid")
             else: warnings.append("summary_input_limit_exceeded")
@@ -93,8 +105,9 @@ def main():
                 except httpx.TransportError:
                     if attempt == 2: raise
                     time.sleep(1)
-    except Exception:
-        try: request("POST", "/fail", json={})
+    except Exception as error:
+        transient = isinstance(error, (ServiceUnavailable, httpx.TransportError)) or isinstance(error, httpx.HTTPStatusError) and (error.response.status_code in {408, 429} or error.response.status_code >= 500)
+        try: request("POST", "/fail", json={"retryable": transient})
         except Exception: pass
         raise SystemExit(1) from None
     finally: client.close()

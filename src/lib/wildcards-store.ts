@@ -5,7 +5,7 @@ import { hmacFor, sealBinaryField, sealField, unsealBinaryField, unsealField, us
 import { asUser } from "@/lib/db/rls";
 import { wildcardFile } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
-import { fileSize, fileSizeError, MAX_FILES, MAX_STORAGE_BYTES, UPLOAD_CHUNK_BYTES, type WildcardFile } from "./wildcards";
+import { fileSize, fileSizeError, MAX_FILES, MAX_STORAGE_BYTES, SINGLE_OBJECT_BYTES, UPLOAD_CHUNK_BYTES, type WildcardFile } from "./wildcards";
 import type { FileObjects } from "./wildcards-r2";
 import { relativePathError } from "./wildcards-paths";
 
@@ -64,9 +64,18 @@ async function indexOlderFiles(db: Db, kek: Buffer, userId: string, size: number
   const candidates = await asUser(db, userId, (tx) => tx.select({ id: wildcardFile.id }).from(wildcardFile)
     .where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), eq(wildcardFile.sizeBytes, size), isNull(wildcardFile.contentFingerprint))).limit(4));
   for (const candidate of candidates.slice(0, 3)) {
-    const file = await readFile(db, kek, userId, candidate.id, objects);
+    const file = await streamFile(db, kek, userId, candidate.id, objects);
     if (!file) continue;
-    const sha = digest(file.bytes);
+    const hash = createHash("sha256");
+    const reader = file.stream.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        hash.update(value);
+      }
+    } finally { reader.releaseLock(); }
+    const sha = hash.digest("hex");
     await asUser(db, userId, async (tx) => {
       const keys = await userKeysFor(tx, kek, userId, new Date());
       await tx.update(wildcardFile).set({ contentFingerprint: fingerprint(keys, sha) })
@@ -178,6 +187,49 @@ export async function completeUpload(db: Db, kek: Buffer, userId: string, id: st
   if (!upload) return { skipped: false };
   const { row, keys, partKeys } = upload;
   try {
+    if (row.sizeBytes > SINGLE_OBJECT_BYTES) {
+      // Authenticate and validate one piece at a time; never assemble GB-sized
+      // plaintext/ciphertext buffers in a serverless function.
+      const original = metadata(keys, row);
+      const decoder = original.name.toLowerCase().endsWith(".txt") ? new TextDecoder("utf-8", { fatal: true }) : undefined;
+      const hash = createHash("sha256");
+      let type = "";
+      for (let start = 0; start < partKeys.length; start += 8) {
+        // Bounded parallel reads avoid hundreds of sequential storage trips.
+        const batch = await Promise.all(partKeys.slice(start, start + 8).map(async (key, offset) =>
+          unsealBinaryField(keys, await objects.get(key), location(id, `upload_part_${start + offset}`))));
+        for (const [offset, bytes] of batch.entries()) {
+          const index = start + offset;
+          if (bytes.length !== Math.min(UPLOAD_CHUNK_BYTES, row.sizeBytes - index * UPLOAD_CHUNK_BYTES)) throw new Error("Stored upload piece has unexpected size");
+          hash.update(bytes);
+          if (decoder) {
+            let text: string;
+            try { text = decoder.decode(bytes, { stream: index < partKeys.length - 1 }); }
+            catch { throw new FileInputError("This file’s contents do not match UTF-8 text."); }
+            if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(text)) throw new FileInputError("This file’s contents do not match UTF-8 text.");
+            type = "text/plain; charset=utf-8";
+          } else if (index === 0) type = validateFile(original.name, bytes).type;
+        }
+      }
+      // The ordered manifest is sealed with the metadata so pieces cannot be
+      // reordered, truncated, or substituted through a database edit.
+      const sha256 = hash.digest("hex");
+      if (original.contentSha256 && original.contentSha256 !== sha256) throw new FileInputError("The file changed during upload. Choose the file again.");
+      const contentFingerprint = fingerprint(keys, sha256);
+      const result = await asUser(db, userId, async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
+        const [duplicate] = await tx.select({ id: wildcardFile.id }).from(wildcardFile).where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), eq(wildcardFile.contentFingerprint, contentFingerprint), ne(wildcardFile.id, id))).limit(1);
+        if (duplicate) return { duplicate: true, updated: [] };
+        const updated = await tx.update(wildcardFile).set({
+          contentFingerprint, sealedMetadata: sealField(keys, JSON.stringify({ name: original.name, relativePath: original.relativePath, type, pieces: partKeys, sizeBytes: row.sizeBytes }), location(id, "metadata")),
+          status: "ready", uploadedAt: new Date(),
+        }).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "finalizing"))).returning({ id: wildcardFile.id });
+        return { duplicate: false, updated };
+      });
+      if (result.duplicate) { await deleteFile(db, userId, id, objects); return { skipped: true }; }
+      if (!result.updated.length) throw new FileInputError("This upload was cancelled. Choose the file again.", 409);
+      return { skipped: false };
+    }
     const chunks: Buffer[] = [];
     for (const [index, key] of partKeys.entries()) {
       const bytes = unsealBinaryField(keys, await objects.get(key), location(id, `upload_part_${index}`));
@@ -280,7 +332,10 @@ export function listFiles(db: Db, kek: Buffer, userId: string, page = 1): Promis
       .from(wildcardFile).where(eq(wildcardFile.userId, userId)).orderBy(desc(wildcardFile.uploadedAt), desc(wildcardFile.id)).limit(50).offset((page - 1) * 50);
     if (!rows.length) return [];
     const keys = await userKeysFor(tx, kek, userId, new Date());
-    return rows.map((row) => ({ id: row.id, ...metadata(keys, row), sizeBytes: row.sizeBytes, uploadedAt: row.uploadedAt.toISOString(), status: row.status }));
+    return rows.map((row) => {
+      const { name, type, relativePath } = metadata(keys, row);
+      return { id: row.id, name, type, relativePath, sizeBytes: row.sizeBytes, uploadedAt: row.uploadedAt.toISOString(), status: row.status };
+    });
   });
 }
 
@@ -301,7 +356,7 @@ export async function cleanupExpiredUploads(db: Db, userId: string, objects: Fil
   for (const row of expired) await deleteFile(db, userId, row.id, objects, before);
 }
 
-export async function readFile(db: Db, kek: Buffer, userId: string, id: string, objects: FileObjects) {
+export async function streamFile(db: Db, kek: Buffer, userId: string, id: string, objects: FileObjects) {
   const stored = await asUser(db, userId, async (tx) => {
     const [row] = await tx.select().from(wildcardFile).where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"))).limit(1);
     if (!row) return null;
@@ -309,8 +364,39 @@ export async function readFile(db: Db, kek: Buffer, userId: string, id: string, 
     return { meta: metadata(keys, row), keys, objectKey: row.objectKey };
   });
   if (!stored) return null;
-  const encrypted = await objects.get(stored.objectKey);
-  return { ...stored.meta, bytes: unsealBinaryField(stored.keys, encrypted, location(id, "content")) };
+  const meta = stored.meta as typeof stored.meta & { pieces?: string[]; sizeBytes?: number };
+  async function* contents() {
+    if (meta.pieces) {
+      for (const [index, key] of meta.pieces.entries()) {
+        const bytes = unsealBinaryField(stored!.keys, await objects.get(key), location(id, `upload_part_${index}`));
+        if (bytes.length !== Math.min(UPLOAD_CHUNK_BYTES, meta.sizeBytes! - index * UPLOAD_CHUNK_BYTES)) throw new Error("Stored upload piece has unexpected size");
+        yield bytes;
+      }
+    } else {
+      yield unsealBinaryField(stored!.keys, await objects.get(stored!.objectKey), location(id, "content"));
+    }
+  }
+  const iterator = contents();
+  // Authenticate the first piece before sending response headers.
+  let next = await iterator.next();
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (next.done) { controller.close(); return; }
+      controller.enqueue(new Uint8Array(next.value));
+      next = await iterator.next();
+    },
+    async cancel() { await iterator.return(undefined); },
+  }, { highWaterMark: 0 });
+  return { name: meta.name, type: meta.type, relativePath: meta.relativePath, stream };
+}
+
+// Buffered convenience for small-file callers and storage tests. HTTP downloads
+// use streamFile so their memory usage stays independent of the file size.
+export async function readFile(db: Db, kek: Buffer, userId: string, id: string, objects: FileObjects) {
+  const file = await streamFile(db, kek, userId, id, objects);
+  if (!file) return null;
+  const bytes = Buffer.from(await new Response(file.stream).arrayBuffer());
+  return { name: file.name, type: file.type, relativePath: file.relativePath, bytes };
 }
 
 export async function deleteFile(db: Db, userId: string, id: string, objects: FileObjects, expiredBefore?: Date) {

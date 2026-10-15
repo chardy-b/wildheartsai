@@ -5,7 +5,7 @@ import { recordsKey } from "@/lib/records-keys";
 import { getSession } from "@/lib/session";
 import { fileError, PRIVATE_HEADERS, readUpload, sameOrigin, validFileId } from "@/lib/wildcards-http";
 import { fileObjects } from "@/lib/wildcards-r2";
-import { readFile } from "@/lib/wildcards-store";
+import { streamFile } from "@/lib/wildcards-store";
 import { authorized, cancel, claim, configured, enabledMethods, enqueue, fail, finish, hash, listRuns, references, saveReference, workerConfig } from "./store";
 
 const json = (value: unknown) => Response.json(value, { headers: PRIVATE_HEADERS });
@@ -48,19 +48,17 @@ export async function workerRequest(request: Request, path: string[]) {
     if (operation === "status" && request.method === "GET") return json({ status: (await authorized(db, token, true)).job.status });
     if (operation === "source" && request.method === "GET") {
       const { job, run } = await authorized(db, token);
-      const file = await readFile(db, recordsKey(), job.userId, run.fileId, fileObjects());
+      const file = await streamFile(db, recordsKey(), job.userId, run.fileId, fileObjects());
       if (!file) return fileError("Unavailable.", 404);
       await authorized(db, token);
-      // Authenticate complete ciphertext before streaming plaintext; never disclose filenames.
-      let offset = 0;
-      return new Response(new ReadableStream<Uint8Array>({ pull(controller) {
-        if (offset >= file.bytes.length) { controller.close(); return; }
-        const end = Math.min(offset + 64 * 1024, file.bytes.length);
-        controller.enqueue(new Uint8Array(file.bytes.subarray(offset, end))); offset = end;
-      } }), { headers: { ...PRIVATE_HEADERS, "Content-Type": file.type } });
+      // Each encrypted piece is authenticated before streaming its plaintext.
+      return new Response(file.stream, { headers: { ...PRIVATE_HEADERS, "Content-Type": file.type } });
     }
     if (operation === "finish" && request.method === "POST") { await finish(db, recordsKey(), token, await body(request)); return json({ ok: true }); }
-    if (operation === "fail" && request.method === "POST") { await fail(db, token); return json({ ok: true }); }
+    if (operation === "fail" && request.method === "POST") {
+      const { retryable } = z.object({ retryable: z.boolean().optional().default(false) }).strict().parse(await body(request));
+      await fail(db, token, retryable); return json({ ok: true });
+    }
     return fileError("Not found.", 404);
   } catch { return fileError("Run unavailable or invalid request.", 403); }
 }

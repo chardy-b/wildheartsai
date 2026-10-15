@@ -1,5 +1,6 @@
 import { UploadError, uploadDocument, type SelectedFile } from "./wildcards-client";
 import { fileSizeError } from "./wildcards";
+import { documentHash } from "./document-hash";
 import { recoveryUploadId } from "./documents-recovery";
 
 type Item = SelectedFile & { id: string; file: File; state: "waiting" | "active" | "done" | "failed"; message: string };
@@ -62,10 +63,9 @@ export class DocumentQueue {
           // Only opaque content hashes and upload IDs are retained in this tab.
           // Reselecting the same interrupted file after reload reuses its ID.
           if (!fileSizeError(item.file.size)) {
-            const digest = await crypto.subtle.digest("SHA-256", await item.file.arrayBuffer());
+            sha256 = await documentHash(item.file, this.controller.signal);
             const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
-            sha256 = hex(digest);
-            const fingerprint = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${item.relativePath ?? item.file.name}\0${hex(digest)}`));
+            const fingerprint = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${item.relativePath ?? item.file.name}\0${sha256}`));
             recoveryKey = `document-upload:${this.owner}:${hex(fingerprint)}`;
             try { item.id = await recoveryUploadId(recoveryKey, item.id); } catch { this.notice = "Browser recovery storage is unavailable. Keep this page open to pause and resume safely."; }
           }

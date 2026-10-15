@@ -32,7 +32,7 @@ def synthetic_pdf():
 
 def run():
     source = synthetic_pdf()
-    jobs, completed = {}, {}
+    jobs, completed, failures = {}, {}, {}
     mutex = threading.Lock()
     def fake_web(method, path, token, content=None):
         with mutex:
@@ -44,13 +44,31 @@ def run():
                 result = json.loads(content)
                 if result["sourceSha256"] != hashlib.sha256(job["source"]).hexdigest(): raise ValueError("source_mismatch")
                 completed[token] = result; return b'{"ok":true}', "application/json"
-            if path == "fail": raise ValueError("worker_failed")
+            if path == "fail":
+                failures[token] = json.loads(content or b"{}"); return b'{"ok":true}', "application/json"
             raise ValueError("unsupported")
     gateway.web = fake_web
     server = gateway.ThreadingHTTPServer(("0.0.0.0", 8080), gateway.Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     scores = []
     with httpx.Client(base_url=gateway.private_url(os.environ["IGGY_URL"]), headers={"Authorization": "Bearer " + os.environ["IGGY_BEARER_TOKEN"]}, trust_env=False, follow_redirects=False, timeout=15) as client:
+        if os.environ.get("EXTRACTION_TEST_RECOVERY") == "1":
+            token = "whdoc1." + secrets.token_urlsafe(32); run_id = str(uuid.uuid4())
+            jobs[token] = {"method": "native", "source": source, "mime": "application/pdf"}
+            endpoint = os.environ["EXTRACTION_INFERENCE_URL"]
+            os.environ["EXTRACTION_INFERENCE_URL"] = "http://127.0.0.1:1/v1"
+            try:
+                response = client.post("/v1/runs", json={"id": run_id, "profile": "health-chat/v1", "capability": token}); response.raise_for_status()
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline:
+                    time.sleep(2)
+                    state = client.get("/v1/runs/" + run_id).json()["status"]
+                    if state in {"succeeded", "failed", "cancelled"}: break
+                if token in completed or failures.get(token) != {"retryable": True}: raise ValueError("outage_not_retryable")
+                scores.append({"test": "inference_outage", "retryable": True, "partial_completion": False})
+            finally:
+                os.environ["EXTRACTION_INFERENCE_URL"] = endpoint
+                client.post("/v1/runs/" + run_id + "/cancel")
         for method in ("native", "tesseract"):
             token = "whdoc1." + secrets.token_urlsafe(32); run_id = str(uuid.uuid4())
             jobs[token] = {"method": method, "source": source, "mime": "application/pdf"}
@@ -81,6 +99,7 @@ def run():
                     score[detector + "_pii_recall"] = tp / len(gold_pii)
                     score[detector + "_pii_precision"] = tp / len(spans) if spans else None
                 if not all(score[k] for k in ("name_removed", "dob_removed", "id_removed", "age_correct", "quantities_preserved")): raise ValueError("privacy_or_preservation_failed")
+                if score["summary_status"] != "accepted" or score["measurements"] != 2: raise ValueError("local_inference_failed")
                 scores.append(score)
             finally:
                 try: client.post("/v1/runs/" + run_id + "/cancel")

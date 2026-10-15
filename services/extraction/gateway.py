@@ -49,6 +49,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self): self.handle_request()
     def handle_request(self):
         try:
+            # Private-network liveness gate; returns no endpoint, key, or model metadata.
+            if self.path == "/ready" and self.command == "GET":
+                with httpx.Client(trust_env=False, follow_redirects=False, timeout=5) as client:
+                    response = client.get(private_url(os.environ["EXTRACTION_INFERENCE_URL"]) + "/models",
+                                          headers={"Authorization": "Bearer " + os.environ.get("EXTRACTION_INFERENCE_KEY", "")})
+                    response.raise_for_status()
+                return self.respond(200, b'{"ready":true}')
             token = self.headers.get("Authorization", "").removeprefix("Bearer ")
             if not token.startswith("whdoc1."): raise ValueError("unauthorized")
             path = self.path.lstrip("/")
@@ -83,6 +90,10 @@ class Handler(BaseHTTPRequestHandler):
                 config = json.loads(output); config.update({"summaryModel": SUMMARY_MODEL, "visionModel": VISION_MODEL, "workerImage": os.environ.get("EXTRACTION_WORKER_IMAGE", "unrecorded")})
                 output = json.dumps(config).encode()
             self.respond(200, output, mime)
+        except (httpx.TransportError, httpx.HTTPStatusError) as error:
+            transient = isinstance(error, httpx.TransportError) or error.response.status_code in {408, 429} or error.response.status_code >= 500
+            try: self.respond(503 if transient else 403, b'{"error":"service_unavailable"}' if transient else b'{"error":"operation_unavailable"}')
+            except Exception: pass
         except Exception:
             try: self.respond(403, b'{"error":"operation_unavailable"}')
             except Exception: pass
@@ -94,6 +105,9 @@ def coordinator():
         request_id = str(uuid.uuid4())
         run = None
         try:
+            # Avoid consuming queued documents while the inference host is rebooting.
+            with httpx.Client(trust_env=False, follow_redirects=False, timeout=10) as readiness:
+                readiness.get("http://wildhearts-extraction-gateway:8080/ready").raise_for_status()
             # Retry the exact claim body, including when a reply was lost.
             for attempt in range(3):
                 try:
@@ -120,14 +134,14 @@ def coordinator():
                             if json.loads(state)["status"] == "completed": break
                             response = client.get(iggy + "/v1/runs/" + run["id"]); response.raise_for_status()
                             if response.json()["status"] in {"succeeded", "failed", "cancelled"}:
-                                web("POST", "fail", run["capability"], b"{}"); break
+                                web("POST", "fail", run["capability"], b'{"retryable":true}'); break
                     finally:
                         # Also cancel a timed-out start: it may have reached Iggy.
                         try: client.post(iggy + "/v1/runs/" + run["id"] + "/cancel")
                         except Exception: pass
         except Exception:
             if run:
-                try: web("POST", "fail", run["capability"], b"{}")
+                try: web("POST", "fail", run["capability"], b'{"retryable":true}')
                 except Exception: pass
         time.sleep(10)
 

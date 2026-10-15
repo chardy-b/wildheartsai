@@ -1,4 +1,5 @@
 import { fileSizeError } from "./wildcards";
+import { documentHash } from "./document-hash";
 import { MAX_PATH_DEPTH, relativePathError } from "./wildcards-paths";
 
 export class UploadError extends Error {
@@ -50,7 +51,7 @@ export async function uploadDocument(file: File, progress: (message: string) => 
   const id = settings.id ?? crypto.randomUUID();
   const { signal } = settings;
   signal?.throwIfAborted();
-  const sha256 = settings.sha256 ?? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const sha256 = settings.sha256 ?? await documentHash(file, signal);
   const startOptions = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name: file.name, size: file.size, relativePath, sha256 }) };
   const checkingUntil = Date.now() + 150_000;
   let started: Response;

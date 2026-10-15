@@ -13,6 +13,7 @@ const eslintConfig = defineConfig([
     "build/**",
     "services/chat/dist/**",
     "scripts/chat-acceptance/dist/**",
+    ".extraction-private/**",
     "next-env.d.ts",
   ]),
 ]);
