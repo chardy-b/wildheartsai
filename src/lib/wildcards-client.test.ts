@@ -68,8 +68,10 @@ describe("document upload feedback", () => {
   });
   it("distinguishes empty files and reports the actual size and limit", () => {
     expect(fileSizeError(0)).toContain("empty (0 bytes)");
-    expect(fileSizeError(28.4 * 1024 * 1024)).toContain("28.4 MB; the limit is 25.0 MB");
+    expect(fileSizeError(28.4 * 1024 * 1024)).toBeNull();
+    expect(fileSizeError(2.1 * 1024 * 1024 * 1024)).toContain("2.1 GB; the limit is 2.0 GB");
     expect(fileSizeError(MAX_FILE_BYTES)).toBeNull();
+    expect(fileSizeError(MAX_FILE_BYTES + 1)).toContain("the limit is 2.0 GB");
   });
   it("uploads a large file as bounded pieces and reports progress", async () => {
     const calls: { url: string; body?: BodyInit | null }[] = [];

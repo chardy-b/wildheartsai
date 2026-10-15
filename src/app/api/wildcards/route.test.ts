@@ -6,7 +6,7 @@ vi.mock("@/lib/wildcards-r2", () => ({ fileObjects: () => "test-objects", r2Conf
 vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/lib/records-keys", () => ({ recordsKey: () => Buffer.alloc(32) }));
 vi.mock("@/lib/wildcards-store", async (original) => ({ ...await original<typeof import("@/lib/wildcards-store")>(),
-  storeFile: mocks.store, readFile: mocks.read, deleteFile: mocks.remove }));
+  storeFile: mocks.store, streamFile: mocks.read, deleteFile: mocks.remove }));
 import { POST } from "./route";
 import { GET, DELETE } from "./[id]/route";
 import { UPLOAD_CHUNK_BYTES } from "@/lib/wildcards";
@@ -23,7 +23,7 @@ beforeEach(() => {
   mocks.configured.mockReturnValue(true);
   mocks.session.mockResolvedValue({ user: { id: "owner" } });
   mocks.store.mockResolvedValue(undefined);
-  mocks.read.mockResolvedValue({ name: "Résumé.pdf", type: "application/pdf", bytes: Buffer.from("%PDF-1.7") });
+  mocks.read.mockImplementation(async () => ({ name: "Résumé.pdf", type: "application/pdf", stream: new Response("%PDF-1.7").body }));
   mocks.remove.mockResolvedValue(true);
 });
 
@@ -76,7 +76,7 @@ describe("private file endpoints", () => {
   });
   it("streams downloads larger than the buffered hosting limit", async () => {
     const bytes = Buffer.alloc(6 * 1024 * 1024, 0x61);
-    mocks.read.mockResolvedValue({ name: "large.txt", type: "text/plain; charset=utf-8", bytes });
+    mocks.read.mockResolvedValue({ name: "large.txt", type: "text/plain; charset=utf-8", stream: new Response(bytes).body });
     const response = await GET(new Request(`${url}/${id}?download=1`), context);
     expect(response.headers.get("content-length")).toBeNull();
     expect(response.body).toBeInstanceOf(ReadableStream);

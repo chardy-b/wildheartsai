@@ -133,6 +133,5 @@ describe("file validation", () => {
     ["image.svg", Buffer.from("<svg/>")], ["page.html", Buffer.from("<html/>")],
     ["../x.txt", Buffer.from("text")], ["x\r\n.txt", Buffer.from("text")],
     ["empty.txt", Buffer.alloc(0)], ["binary.txt", Buffer.from([0xff, 0x00])],
-    ["big.txt", Buffer.alloc(MAX_FILE_BYTES + 1)],
   ])("rejects %s", (name, bytes) => expect(() => validateFile(name, bytes)).toThrow());
 });

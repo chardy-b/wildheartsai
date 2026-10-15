@@ -4,8 +4,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createTestDb, createTestUser } from "@/test/db";
 import type { Db } from "@/lib/db/types";
 import { wildcardFile } from "@/lib/db/schema";
-import { beginUpload, cleanupExpiredUploads, fileUsage, completeUpload, deleteFile, listFiles, readFile, uploadPart } from "./wildcards-store";
-import { MAX_FILE_BYTES, MAX_STORAGE_BYTES, UPLOAD_CHUNK_BYTES } from "./wildcards";
+import { beginUpload, cleanupExpiredUploads, fileUsage, completeUpload, deleteFile, listFiles, readFile, streamFile, uploadPart } from "./wildcards-store";
+import { MAX_FILE_BYTES, MAX_STORAGE_BYTES, SINGLE_OBJECT_BYTES, UPLOAD_CHUNK_BYTES } from "./wildcards";
 
 let db: Db;
 const kek = randomBytes(32);
@@ -24,6 +24,66 @@ async function parts(user: string, id: string, bytes: Buffer) {
 }
 
 describe("large private uploads", () => {
+  it("reserves exactly 2 GB, preserves the size on retry, and rejects one byte over", async () => {
+    const user = await person(), id = randomUUID();
+    const size = 2 * 1024 * 1024 * 1024;
+    await beginUpload(db, kek, user, "large.pdf", size, undefined, id);
+    expect(await fileUsage(db, user)).toEqual({ count: 1, bytes: size });
+    expect((await listFiles(db, kek, user))[0].sizeBytes).toBe(size);
+    expect(await beginUpload(db, kek, user, "large.pdf", size, undefined, id)).toMatchObject({ id, status: "pending" });
+    expect(() => beginUpload(db, kek, user, "too-large.pdf", size + 1)).toThrow("the limit is 2.0 GB");
+    const [row] = await db.select().from(wildcardFile).where(eq(wildcardFile.id, id));
+    expect(row.uploadChunkCount).toBe(683);
+    await uploadPart(db, kek, user, id, 682, Buffer.alloc(2 * 1024 * 1024), objects);
+    await expect(uploadPart(db, kek, user, id, 683, Buffer.from("extra"), objects)).rejects.toThrow("Invalid upload piece");
+    await deleteFile(db, user, id, objects);
+  });
+
+  it("streams large originals from authenticated pieces and deletes all pieces", async () => {
+    const user = await person();
+    const bytes = Buffer.alloc(SINGLE_OBJECT_BYTES + 1, 0x61); bytes.set([255, 216, 255]);
+    const { id } = await beginUpload(db, kek, user, "large.jpg", bytes.length);
+    await parts(user, id, bytes);
+    await completeUpload(db, kek, user, id, objects);
+    await completeUpload(db, kek, user, id, objects);
+    const [row] = await db.select().from(wildcardFile).where(eq(wildcardFile.id, id));
+    const keys = Object.values(row.uploadParts!);
+    expect(keys.every((key) => blobs.has(key))).toBe(true);
+    expect(blobs.has(row.objectKey)).toBe(false);
+    expect((await listFiles(db, kek, user))[0]).not.toHaveProperty("pieces");
+    const file = await streamFile(db, kek, user, id, objects);
+    const reader = file!.stream.getReader();
+    let offset = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      expect(value.length).toBeLessThanOrEqual(UPLOAD_CHUNK_BYTES);
+      expect(Buffer.from(value).equals(bytes.subarray(offset, offset + value.length))).toBe(true);
+      offset += value.length;
+    }
+    expect(offset).toBe(bytes.length);
+    blobs.get(keys[0])![30] ^= 1;
+    await expect(streamFile(db, kek, user, id, objects)).rejects.toThrow();
+    await deleteFile(db, user, id, objects);
+    expect(keys.every((key) => !blobs.has(key))).toBe(true);
+  }, 30_000);
+
+  it("validates large UTF-8 text across piece boundaries", async () => {
+    const user = await person();
+    const bytes = Buffer.alloc(SINGLE_OBJECT_BYTES + 1, 0x61);
+    bytes.set(Buffer.from("✓"), UPLOAD_CHUNK_BYTES - 1);
+    const { id } = await beginUpload(db, kek, user, "large.txt", bytes.length);
+    await parts(user, id, bytes);
+    await completeUpload(db, kek, user, id, objects);
+    expect((await listFiles(db, kek, user))[0].type).toBe("text/plain; charset=utf-8");
+    await deleteFile(db, user, id, objects);
+    bytes[bytes.length - 1] = 0xff;
+    const invalid = await beginUpload(db, kek, user, "invalid.txt", bytes.length);
+    await parts(user, invalid.id, bytes);
+    await expect(completeUpload(db, kek, user, invalid.id, objects)).rejects.toThrow("UTF-8");
+    expect(await listFiles(db, kek, user)).toEqual([]);
+  }, 30_000);
+
   it("reuses a reservation and received pieces after lost start responses", async () => {
     const user = await person(), id = randomUUID();
     await beginUpload(db, kek, user, "note.txt", 5, undefined, id);
@@ -69,10 +129,11 @@ describe("large private uploads", () => {
   });
   it("paginates metadata while counting all reserved bytes, including totals above 2 GB", async () => {
     const user = await person();
-    for (let i = 0; i < 85; i++) await beginUpload(db, kek, user, `${i}.pdf`, MAX_FILE_BYTES);
+    const size = 25 * 1024 * 1024;
+    for (let i = 0; i < 85; i++) await beginUpload(db, kek, user, `${i}.pdf`, size);
     expect(await listFiles(db, kek, user)).toHaveLength(50);
     expect(await listFiles(db, kek, user, 2)).toHaveLength(35);
-    expect(await fileUsage(db, user)).toEqual({ count: 85, bytes: 85 * MAX_FILE_BYTES });
+    expect(await fileUsage(db, user)).toEqual({ count: 85, bytes: 85 * size });
   });
 
   it("keeps encrypted relative paths through completion, listing, reading, and deletion without merging same-name files", async () => {
@@ -107,9 +168,9 @@ describe("large private uploads", () => {
     expect(await listFiles(db, kek, user)).toEqual([]);
   });
 
-  it("round trips a phone photo at the full file-size limit and cleans up encrypted temporary pieces", async () => {
+  it("round trips a phone photo at the single-object threshold and cleans up encrypted temporary pieces", async () => {
     const user = await person();
-    const bytes = Buffer.alloc(MAX_FILE_BYTES, 0x61); bytes.set([255, 216, 255]);
+    const bytes = Buffer.alloc(SINGLE_OBJECT_BYTES, 0x61); bytes.set([255, 216, 255]);
     const started = await beginUpload(db, kek, user, "synthetic.MP.jpg", bytes.length);
     expect(started.chunkBytes).toBe(UPLOAD_CHUNK_BYTES);
     await parts(user, started.id, bytes);
@@ -132,7 +193,7 @@ describe("large private uploads", () => {
   it("separates empty, too-large, unsupported-type, and quota errors before storing data", async () => {
     const user = await person();
     expect(() => beginUpload(db, kek, user, "empty.txt", 0)).toThrow("empty (0 bytes)");
-    expect(() => beginUpload(db, kek, user, "huge.jpg", MAX_FILE_BYTES + 1024 * 1024)).toThrow("26.0 MB; the limit is 25.0 MB");
+    expect(() => beginUpload(db, kek, user, "huge.jpg", MAX_FILE_BYTES + 1)).toThrow("the limit is 2.0 GB");
     expect(() => beginUpload(db, kek, user, "unsafe.svg", 10)).toThrow("type is not supported");
     await db.insert(wildcardFile).values(Array.from({ length: Math.ceil(MAX_STORAGE_BYTES / MAX_FILE_BYTES) }, (_, index) => ({ userId: user, sealedMetadata: "test", objectKey: randomUUID(), sizeBytes: Math.min(MAX_FILE_BYTES, MAX_STORAGE_BYTES - index * MAX_FILE_BYTES) })));
     await expect(beginUpload(db, kek, user, "extra.txt", 1)).rejects.toThrow("50.0 GB of 50.0 GB used");

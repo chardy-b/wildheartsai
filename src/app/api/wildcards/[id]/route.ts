@@ -1,7 +1,7 @@
 import { getSession } from "@/lib/session";
 import { db } from "@/lib/db";
 import { recordsKey } from "@/lib/records-keys";
-import { deleteFile, readFile } from "@/lib/wildcards-store";
+import { deleteFile, streamFile } from "@/lib/wildcards-store";
 import { fileError, PRIVATE_HEADERS, sameOrigin, validFileId } from "@/lib/wildcards-http";
 import { fileObjects } from "@/lib/wildcards-r2";
 
@@ -15,20 +15,11 @@ export async function GET(request: Request, context: Context) {
   const { id } = await context.params;
   if (!validFileId(id)) return fileError("File not found.", 404);
   try {
-    const file = await readFile(db, recordsKey(), session.user.id, id, fileObjects());
+    const file = await streamFile(db, recordsKey(), session.user.id, id, fileObjects());
     if (!file) return fileError("File not found.", 404);
     const disposition = new URL(request.url).searchParams.get("download") === "1" ? "attachment" : "inline";
     const filename = encodeURIComponent(file.name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-    // A real streaming response avoids Vercel's buffered response size limit.
-    // Keep GCM authentication complete before releasing any plaintext.
-    let offset = 0;
-    const stream = new ReadableStream<Uint8Array>({ pull(controller) {
-      if (offset >= file.bytes.length) { controller.close(); return; }
-      const end = Math.min(offset + 64 * 1024, file.bytes.length);
-      controller.enqueue(new Uint8Array(file.bytes.subarray(offset, end)));
-      offset = end;
-    } });
-    return new Response(stream, { headers: {
+    return new Response(file.stream, { headers: {
       ...PRIVATE_HEADERS,
       "Content-Type": file.type,
       "Content-Disposition": `${disposition}; filename="download"; filename*=UTF-8''${filename}`,

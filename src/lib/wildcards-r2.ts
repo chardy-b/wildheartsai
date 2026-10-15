@@ -1,7 +1,7 @@
 import "server-only";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { env } from "./env";
-import { MAX_FILE_BYTES } from "./wildcards";
+import { SINGLE_OBJECT_BYTES } from "./wildcards";
 
 export interface FileObjects {
   put(key: string, bytes: Buffer): Promise<void>;
@@ -38,7 +38,7 @@ export function fileObjects(): FileObjects {
       let size = 0;
       for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
         size += chunk.length;
-        if (size > MAX_FILE_BYTES + 29) throw new Error("Object exceeds the file limit");
+        if (size > SINGLE_OBJECT_BYTES + 29) throw new Error("Object exceeds the file limit");
         chunks.push(chunk);
       }
       return Buffer.concat(chunks, size);

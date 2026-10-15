@@ -72,9 +72,9 @@ describe("bounded document upload endpoints", () => {
     expect(mocks.begin).not.toHaveBeenCalled();
   });
   it("preserves useful size and quota errors while hiding internal errors", async () => {
-    mocks.begin.mockRejectedValue(new FileInputError("This file is 30.0 MB; the limit is 25.0 MB per file.", 413));
+    mocks.begin.mockRejectedValue(new FileInputError("This file is 2.1 GB; the limit is 2.0 GB per file.", 413));
     const size = await begin(request("POST", JSON.stringify({ name: "photo.jpg", size: 30_000_000 })));
-    expect(size.status).toBe(413); expect(await size.text()).toContain("30.0 MB");
+    expect(size.status).toBe(413); expect(await size.text()).toContain("2.1 GB");
     mocks.complete.mockRejectedValue(new Error("sensitive internal detail"));
     const response = await complete(request(), context);
     expect(response.status).toBe(500); expect(await response.text()).not.toContain("sensitive");
