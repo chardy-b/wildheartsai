@@ -7,6 +7,7 @@ import type { Db } from "@/lib/db/types";
 import { hmacFor, sealField, unsealField, userKeysFor } from "@/lib/crypto/user-keys";
 import { createSchema, METHODS, referenceSchema, resultSchema } from "./contracts";
 import { auditGroups, auditResult, type AuditRow } from "./audit";
+import { publicFailureCode } from "./failures";
 
 const location = (id: string, field: string) => ({ table: "extraction_run", rowId: id, field });
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -192,10 +193,10 @@ export async function finish(db: Db, kek: Buffer, capability: string, raw: unkno
     await tx.update(extractionJob).set({ status: "completed", errorCode: null }).where(eq(extractionJob.id, job.id));
   });
 }
-export async function fail(db: Db, capability: string, retryable = false) {
+export async function fail(db: Db, capability: string, retryable = false, code?: unknown) {
   const { job } = await authorized(db, capability);
   const delay = Math.min(30 * 2 ** Math.min(Math.max(job.attempts - 1, 0), 6), 1800);
   await asUser(db, job.userId, tx => tx.update(extractionJob).set({ status: retryable ? "queued" : "failed",
-    errorCode: retryable ? "service_unavailable_retrying" : "processing_failed", grantHash: null, claimId: null, deadlineAt: null,
+    errorCode: retryable ? "service_unavailable_retrying" : publicFailureCode(code), grantHash: null, claimId: null, deadlineAt: null,
     nextAttemptAt: new Date(Date.now() + delay * 1000) }).where(and(eq(extractionJob.id, job.id), eq(extractionJob.status, "running"), eq(extractionJob.grantHash, hash(capability)))));
 }

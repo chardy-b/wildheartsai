@@ -11,6 +11,7 @@ import httpx
 from parsers import parse
 from privacy import LocalPrivacy, age_context
 from inference import synthesize
+from failures import failure_code
 
 os.environ.update({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1", "TOKENIZERS_PARALLELISM": "false", "OMP_NUM_THREADS": "1"})
 
@@ -36,6 +37,7 @@ def main():
     def infer(mode, content):
         return request("POST", "/infer", json={"mode": mode, "content": content}).json()["text"]
     started = time.monotonic()
+    stage = "source"
     try:
         config = request("GET", "/config").json()
         with tempfile.TemporaryDirectory(prefix="document-") as temp:
@@ -51,8 +53,11 @@ def main():
                         size += len(chunk)
                         if size > 25 * 1024 * 1024: raise ValueError("size_limit")
                         sha.update(chunk); output.write(chunk)
+            stage = "privacy"
             privacy = LocalPrivacy("/models/pii")
+            stage = "parse"
             pages = parse(source, mime, config["method"], infer, check_active)
+            stage = "privacy"
             identifiers, warnings = [], []
             if any(not p["text"].strip() for p in pages): warnings.append("pages_without_extracted_text")
             for page in pages:
@@ -61,7 +66,9 @@ def main():
                 identifiers.extend(page["text"][s["start"]:s["end"]] for s in page["redaction"]["combined"])
             age = age_context("\n".join(p["text"] for p in pages), config.get("encounterDate"))
             if age is None: warnings.append("age_omitted_without_unambiguous_iso_dob_and_encounter_date")
+            stage = "inference"
             summary, measurements, summary_status, inference_warnings, inference_manifest = synthesize(pages,privacy,identifiers,age,infer,check_active,(ServiceUnavailable,))
+            stage = "result"
             warnings.extend(inference_warnings)
             manifest = {p: importlib.metadata.version(p) for p in ("openmed", "torch", "transformers", "tokenizers", "pdfplumber", "pypdfium2", "pytesseract", "Pillow")}
             import pytesseract
@@ -87,6 +94,7 @@ def main():
             encoded = json.dumps(result, ensure_ascii=False).encode()
             if len(encoded) > 2_500_000: raise ValueError("result_limit")
             check_active()
+            stage = "completion"
             # Exact bytes are reused on retry; completed grants authorize only duplicate completion.
             for attempt in range(3):
                 try:
@@ -96,7 +104,7 @@ def main():
                     time.sleep(1)
     except Exception as error:
         transient = isinstance(error, (ServiceUnavailable, httpx.TransportError)) or isinstance(error, httpx.HTTPStatusError) and (error.response.status_code in {408, 429} or error.response.status_code >= 500)
-        try: request("POST", "/fail", json={"retryable": transient})
+        try: request("POST", "/fail", json={"retryable": transient, "code": failure_code(error, stage)})
         except Exception: pass
         raise SystemExit(1) from None
     finally: client.close()

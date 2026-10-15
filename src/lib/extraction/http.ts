@@ -5,6 +5,7 @@ import { recordsKey } from "@/lib/records-keys";
 import { getSession } from "@/lib/session";
 import { fileError, PRIVATE_HEADERS, readUpload, sameOrigin, validFileId } from "@/lib/wildcards-http";
 import { fileObjects } from "@/lib/wildcards-r2";
+import { FAILURE_CODES } from "./failures";
 import { streamFile } from "@/lib/wildcards-store";
 import { authorized, cancel, claim, configured, enabledMethods, enqueue, extractionAudit, fail, finish, hash, listRuns, processingProgress, references, rerun, saveReference, workerConfig } from "./store";
 
@@ -62,8 +63,8 @@ export async function workerRequest(request: Request, path: string[]) {
     }
     if (operation === "finish" && request.method === "POST") { await finish(db, recordsKey(), token, await body(request)); return json({ ok: true }); }
     if (operation === "fail" && request.method === "POST") {
-      const { retryable } = z.object({ retryable: z.boolean().optional().default(false) }).strict().parse(await body(request));
-      await fail(db, token, retryable); return json({ ok: true });
+      const { retryable, code } = z.object({ retryable: z.boolean().optional().default(false), code: z.enum(FAILURE_CODES).optional() }).strict().parse(await body(request));
+      await fail(db, token, retryable, code); return json({ ok: true });
     }
     return fileError("Not found.", 404);
   } catch { return fileError("Run unavailable or invalid request.", 403); }

@@ -10,7 +10,7 @@ vi.mock("./store", () => ({
   authorized: vi.fn(async () => { throw new Error("private provider error"); }), cancel: vi.fn(), claim: vi.fn(), fail: vi.fn(), finish: vi.fn(), saveReference: vi.fn(), workerConfig: vi.fn(),
 }));
 import { getSession } from "@/lib/session";
-import { claim, configured, enqueue, extractionAudit, listRuns, processingProgress, rerun } from "./store";
+import { claim, configured, enqueue, extractionAudit, fail, listRuns, processingProgress, rerun } from "./store";
 import { browserRequest, workerRequest } from "./http";
 
 beforeEach(() => {
@@ -18,6 +18,21 @@ beforeEach(() => {
   vi.mocked(getSession).mockResolvedValue({ user: { id: "owner" }, session: { id: "session" } } as Awaited<ReturnType<typeof getSession>>);
 });
 describe("extraction HTTP boundary", () => {
+  it("accepts finite failure codes and legacy workers but rejects arbitrary diagnostic content", async () => {
+    const send = (body: unknown) => workerRequest(new Request("https://app.test/api/extraction/worker/v1/fail", {
+      method: "POST", headers: { authorization: "Bearer whdoc1.synthetic" }, body: JSON.stringify(body),
+    }), ["fail"]);
+    expect((await send({ retryable: false, code: "pdf_page_limit" })).status).toBe(200);
+    expect(fail).toHaveBeenLastCalledWith({}, "whdoc1.synthetic", false, "pdf_page_limit");
+    expect((await send({ retryable: true })).status).toBe(200);
+    expect(fail).toHaveBeenLastCalledWith({}, "whdoc1.synthetic", true, undefined);
+    vi.mocked(fail).mockClear();
+    for (const payload of [{ code: "synthetic private text" }, { code: "parse_failed", message: "private" }, { code: "parse_failed", stage: "private" }]) {
+      const denied = await send(payload);
+      expect(denied.status).toBe(403); expect(await denied.text()).not.toContain("private");
+    }
+    expect(fail).not.toHaveBeenCalled();
+  });
   it("scopes private benchmark and reruns to the authenticated owner", async () => {
     const audit = await browserRequest(new Request("https://app.test/api/extraction?benchmark=1"));
     expect(audit.headers.get("cache-control")).toBe("private, no-store");

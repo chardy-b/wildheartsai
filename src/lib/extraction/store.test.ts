@@ -94,9 +94,10 @@ describe("web-owned extraction custody", () => {
     expect(delayed.nextAttemptAt.getTime() - Date.now()).toBeLessThanOrEqual(1800_000);
     await asUser(db, owner, tx => tx.update(extractionJob).set({ nextAttemptAt: new Date(0) }).where(eq(extractionJob.id, a.id)));
     const final = (await claim(db, randomUUID(), "synthetic-grant-key"))!;
-    await fail(db, final.capability);
+    await fail(db, final.capability, false, "pdf_page_limit");
     expect(await claim(db, randomUUID(), "synthetic-grant-key")).toBeNull();
     expect((await listRuns(db, kek, owner, fileId)).find(r => r.id === a.id)?.status).toBe("failed");
+    expect((await listRuns(db, kek, owner, fileId)).find(r => r.id === a.id)?.errorCode).toBe("pdf_page_limit");
   });
   it("revokes access on cancel and session deletion", async () => {
     await enqueue(db, kek, owner, sessionId, { fileIds: [fileId], methods: ["native", "tesseract"] });

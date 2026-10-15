@@ -74,7 +74,7 @@ class RecoveryTests(unittest.TestCase):
         failures = []
         def request(method, path, **kwargs):
             calls.append((path, kwargs))
-            if path == "/fail": failures.append(repr(sys.exception()))
+            if path == "/fail": failures.append(type(sys.exception()).__name__)
             return httpx.Response(503 if path == "/infer" else 200, json={"method": "native"}, request=httpx.Request(method, "http://synthetic" + path))
         client = Mock()
         client.request.side_effect = request
@@ -82,7 +82,7 @@ class RecoveryTests(unittest.TestCase):
         with patch.object(worker.httpx, "Client", return_value=client), patch.dict(os.environ, {"IGGY_BROKER_CAPABILITY": "whdoc1.synthetic", "IGGY_GATEWAY_URL": "http://wildhearts-extraction-gateway:8080"}):
             with self.assertRaises(SystemExit) as raised: worker.main()
         self.assertEqual(raised.exception.code, 1)
-        self.assertEqual([kwargs["json"] for path, kwargs in calls if path == "/fail"], [{"retryable": True}], failures)
+        self.assertEqual([kwargs["json"] for path, kwargs in calls if path == "/fail"], [{"retryable": True, "code": "inference_failed"}], failures)
         self.assertFalse(any(path == "/finish" for path, _ in calls))
 
 
