@@ -74,7 +74,7 @@ def main():
                              "summary_model_revision": config.get("summaryModelRevision", "unknown-alias-only"), "vision_model_revision": config.get("visionModelRevision", "unknown-alias-only"), "source_mime": mime,
                              "parser_configuration": json.dumps({"render_scale_max":2.5,"max_pixels":20_000_000,"tesseract_psm":3,"foreground_threshold":220,"diagnostic_grid":20},sort_keys=True,separators=(',',':'))})
             # Run-specific completion counts are provenance, not part of tool identity.
-            manifest.update({k:v for k,v in inference_manifest.items() if not k.endswith(("_total","_processed"))})
+            manifest.update({k:v for k,v in inference_manifest.items() if k.startswith("inference_")})
             manifest["environment_fingerprint"] = hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
             manifest.update(inference_manifest)
             if config.get("parentRunId"):

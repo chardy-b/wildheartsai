@@ -22,6 +22,7 @@ class InferenceTests(unittest.TestCase):
         summary,facts,status,warnings,meta=synthesize([page(1,FACT['evidence'])],privacy,[],None,infer,lambda:None)
         self.assertEqual((summary,status),("","withheld"));self.assertEqual(facts,[FACT])
         self.assertIn("measurement_candidate_rejected",warnings);self.assertEqual(meta['measurement_chunks_processed'],'1')
+        self.assertEqual(meta['measurement_candidates_total'],'3');self.assertEqual(meta['measurement_candidates_rejected'],'1');self.assertEqual(meta['measurement_candidates_duplicates'],'1')
 
     def test_partial_large_input_never_claims_a_complete_summary(self):
         infer=lambda mode,text: json.dumps({"measurements":[]}) if '"measurements"' in text else json.dumps({"summary":"synthetic finding"})
