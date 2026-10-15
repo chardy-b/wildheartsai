@@ -2,11 +2,11 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createTestDb, createTestUser } from "@/test/db";
-import { extractionRun, session } from "@/lib/db/schema";
+import { extractionJob, extractionRun, session } from "@/lib/db/schema";
 import { asUser } from "@/lib/db/rls";
 import type { Db } from "@/lib/db/types";
 import { deleteFile, listFiles, storeFile } from "@/lib/wildcards-store";
-import { authorized, cancel, claim, enqueue, finish, listRuns, references, saveReference } from "./store";
+import { authorized, cancel, claim, enqueue, fail, finish, listRuns, references, saveReference } from "./store";
 import type { ExtractionResult } from "./contracts";
 
 const result: ExtractionResult = { version: 1, sourceSha256: "a".repeat(64), method: "native", manifest: { worker: "synthetic" }, elapsedMs: 10,
@@ -49,6 +49,42 @@ describe("web-owned extraction custody", () => {
     expect(raw.sealedResult).not.toContain("Jane");
     expect((await listRuns(db, kek, owner, fileId, run.id))[0].result).toEqual(result);
     await expect(authorized(db, run.capability)).rejects.toThrow();
+  });
+  it("persists outage backoff, revokes old attempts, and lets other work proceed", async () => {
+    await enqueue(db, kek, owner, sessionId, { fileIds: [fileId], methods: ["native", "tesseract"] });
+    const a = (await claim(db, randomUUID(), "synthetic-grant-key"))!;
+    await fail(db, a.capability, true);
+    await expect(authorized(db, a.capability)).rejects.toThrow();
+    const [delayed] = await asUser(db, owner, tx => tx.select().from(extractionJob).where(eq(extractionJob.id, a.id)));
+    expect(delayed.status).toBe("queued"); expect(delayed.attempts).toBe(1);
+    expect(delayed.nextAttemptAt.getTime()).toBeGreaterThan(Date.now());
+    const b = (await claim(db, randomUUID(), "synthetic-grant-key"))!;
+    expect(b.id).not.toBe(a.id);
+    await cancel(db, owner, b.id);
+    expect(await claim(db, randomUUID(), "synthetic-grant-key")).toBeNull();
+    await asUser(db, owner, tx => tx.update(extractionJob).set({ nextAttemptAt: new Date(0) }).where(eq(extractionJob.id, a.id)));
+    const retry = (await claim(db, randomUUID(), "synthetic-grant-key"))!;
+    expect(retry.id).toBe(a.id); expect(retry.capability).not.toBe(a.capability);
+    await expect(finish(db, kek, a.capability, result)).rejects.toThrow();
+    await finish(db, kek, retry.capability, result);
+  });
+  it("recovers expired VPS attempts after a restart and preserves terminal failures", async () => {
+    await enqueue(db, kek, owner, sessionId, { fileIds: [fileId], methods: ["native"] });
+    const a = (await claim(db, randomUUID(), "synthetic-grant-key"))!;
+    await asUser(db, owner, tx => tx.update(extractionJob).set({ deadlineAt: new Date(0) }).where(eq(extractionJob.id, a.id)));
+    expect(await claim(db, randomUUID(), "synthetic-grant-key")).toBeNull();
+    await expect(authorized(db, a.capability)).rejects.toThrow();
+    await asUser(db, owner, tx => tx.update(extractionJob).set({ nextAttemptAt: new Date(0), attempts: 50 }).where(eq(extractionJob.id, a.id)));
+    const retry = (await claim(db, randomUUID(), "synthetic-grant-key"))!;
+    await fail(db, retry.capability, true);
+    const [delayed] = await asUser(db, owner, tx => tx.select().from(extractionJob).where(eq(extractionJob.id, a.id)));
+    expect(delayed.nextAttemptAt.getTime() - Date.now()).toBeGreaterThan(1790_000);
+    expect(delayed.nextAttemptAt.getTime() - Date.now()).toBeLessThanOrEqual(1800_000);
+    await asUser(db, owner, tx => tx.update(extractionJob).set({ nextAttemptAt: new Date(0) }).where(eq(extractionJob.id, a.id)));
+    const final = (await claim(db, randomUUID(), "synthetic-grant-key"))!;
+    await fail(db, final.capability);
+    expect(await claim(db, randomUUID(), "synthetic-grant-key")).toBeNull();
+    expect((await listRuns(db, kek, owner, fileId)).find(r => r.id === a.id)?.status).toBe("failed");
   });
   it("revokes access on cancel and session deletion", async () => {
     await enqueue(db, kek, owner, sessionId, { fileIds: [fileId], methods: ["native", "tesseract"] });

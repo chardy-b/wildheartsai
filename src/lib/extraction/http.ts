@@ -60,7 +60,10 @@ export async function workerRequest(request: Request, path: string[]) {
       } }), { headers: { ...PRIVATE_HEADERS, "Content-Type": file.type } });
     }
     if (operation === "finish" && request.method === "POST") { await finish(db, recordsKey(), token, await body(request)); return json({ ok: true }); }
-    if (operation === "fail" && request.method === "POST") { await fail(db, token); return json({ ok: true }); }
+    if (operation === "fail" && request.method === "POST") {
+      const { retryable } = z.object({ retryable: z.boolean().optional().default(false) }).strict().parse(await body(request));
+      await fail(db, token, retryable); return json({ ok: true });
+    }
     return fileError("Not found.", 404);
   } catch { return fileError("Run unavailable or invalid request.", 403); }
 }

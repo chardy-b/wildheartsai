@@ -11,7 +11,13 @@ Migration `0013_document_extraction` adds three owner-scoped tables. File deleti
 - `EXTRACTION_COORDINATOR_TOKEN_HASH` is the SHA-256 verifier of a dedicated coordinator credential. Raw credential remains on the VPS.
 - `EXTRACTION_GRANT_KEY` is a random, independent, web-only secret of at least 32 characters. Rotating it prevents claim replay with old grants; explicitly cancel existing work during rotation.
 
-Use the normal reviewed deployment/migration path. Do not copy production secrets into preview or the VPS. Reference labeling and old results remain accessible to their owner with workers disabled. Source bytes stream only after the original ciphertext is completely authenticated. Runs expire after 30 minutes; cancellation, logout, expired sessions, and deleted/deleting source documents deny further protected calls. A running native parser may continue until its next checkpoint or the coordinator stops its container; already delivered plaintext cannot be recalled.
+Use the normal reviewed deployment/migration path. Do not copy production secrets into preview or the VPS. Reference labeling and old results remain accessible to their owner with workers disabled. Source bytes stream only after the original ciphertext is completely authenticated. Each attempt expires after 30 minutes; cancellation, logout, expired sessions, and deleted/deleting source documents deny further protected calls. A running native parser may continue until its next checkpoint or the coordinator stops its container; already delivered plaintext cannot be recalled.
+
+### Outage recovery
+
+Migration `0015_extraction_retries` adds durable attempt counts and retry timestamps. Transient transport errors, HTTP 408/429/5xx, and interrupted workers requeue the same job, with a fresh scoped grant per attempt. Backoff starts at 30 seconds and doubles to a 30-minute cap. Infrastructure retries have no attempt limit while the initiating session remains valid; logout/session expiry cancels them. Invalid documents, invalid model JSON, and privacy rejection do not trigger unbounded infrastructure retries. A model outage cannot produce a completed result with silently missing inference.
+
+The coordinator waits for the gateway's private `/ready` check before claiming work. Queued work stays in Postgres during either server's outage. On VPS recovery, Compose restarts the coordinator/gateway and Iggy; the coordinator resumes active monitoring, requeues interrupted workers, and recovers expired leases. Delayed jobs do not block other eligible jobs. Old attempt grants cannot complete or fail a newer attempt. No document contents enter readiness responses or retry metadata. Existing completed results (including older partial results) are immutable and must be explicitly rerun; this migration does not rewrite benchmark history.
 
 ## VPS preparation
 
