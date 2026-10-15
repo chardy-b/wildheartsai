@@ -1,5 +1,7 @@
 // Large files use bounded upload pieces and streaming downloads on Vercel.
-export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+// Keep existing small-file objects readable; larger files retain encrypted pieces.
+export const SINGLE_OBJECT_BYTES = 25 * 1024 * 1024;
 export const UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024;
 export const MAX_STORAGE_BYTES = 50 * 1024 * 1024 * 1024;
 export const MAX_FILES = 50_000;

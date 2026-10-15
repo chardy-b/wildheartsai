@@ -1,0 +1,1 @@
+ALTER TABLE "wildcard_file" ALTER COLUMN "size_bytes" SET DATA TYPE bigint;
