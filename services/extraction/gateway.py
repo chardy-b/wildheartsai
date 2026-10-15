@@ -98,6 +98,26 @@ class Handler(BaseHTTPRequestHandler):
             try: self.respond(403, b'{"error":"operation_unavailable"}')
             except Exception: pass
 
+def ensure_execution(client, iggy, run):
+    # Attempts have distinct IDs; lost replies/restarts reconnect to the same attempt.
+    execution_id = uuid.uuid5(uuid.UUID(run["id"]), run["capability"]).hex
+    if run.get("resumed"):
+        legacy = client.get(iggy + "/v1/runs/" + run["id"])
+        if legacy.status_code != 404:
+            legacy.raise_for_status()
+            if legacy.json()["status"] in {"queued", "running"}: return run["id"]
+    for attempt in range(3):
+        try:
+            existing = client.get(iggy + "/v1/runs/" + execution_id)
+            if existing.status_code != 404:
+                existing.raise_for_status(); return execution_id
+            created = client.post(iggy + "/v1/runs", json={"id":execution_id,"profile":"health-chat/v1","capability":run["capability"]})
+            if created.status_code == 409: continue
+            created.raise_for_status(); return execution_id
+        except httpx.TransportError:
+            if attempt == 2: raise
+    raise ValueError("execution_start_unconfirmed")
+
 def coordinator():
     iggy = private_url(os.environ["IGGY_URL"])
     control = os.environ["IGGY_BEARER_TOKEN"]
@@ -118,26 +138,19 @@ def coordinator():
                     time.sleep(2)
             if run:
                 with httpx.Client(trust_env=False, follow_redirects=False, timeout=15, headers={"Authorization": "Bearer " + control}) as client:
+                    execution_id = None
                     try:
-                        recovered = client.get(iggy + "/v1/runs/" + run["id"]) if run.get("resumed") else None
-                        if recovered is None or recovered.status_code == 404:
-                            for attempt in range(3):
-                                try:
-                                    response = client.post(iggy + "/v1/runs", json={"id": run["id"], "profile": "health-chat/v1", "capability": run["capability"]})
-                                    response.raise_for_status(); break
-                                except httpx.TransportError:
-                                    if attempt == 2: raise
-                        else: recovered.raise_for_status()
+                        execution_id = ensure_execution(client, iggy, run)
                         for _ in range(360):
                             time.sleep(5)
                             state, _ = web("GET", "status", run["capability"])
                             if json.loads(state)["status"] == "completed": break
-                            response = client.get(iggy + "/v1/runs/" + run["id"]); response.raise_for_status()
+                            response = client.get(iggy + "/v1/runs/" + execution_id); response.raise_for_status()
                             if response.json()["status"] in {"succeeded", "failed", "cancelled"}:
                                 web("POST", "fail", run["capability"], b'{"retryable":true}'); break
                     finally:
                         # Also cancel a timed-out start: it may have reached Iggy.
-                        try: client.post(iggy + "/v1/runs/" + run["id"] + "/cancel")
+                        try: client.post(iggy + "/v1/runs/" + (execution_id or uuid.uuid5(uuid.UUID(run["id"]), run["capability"]).hex) + "/cancel")
                         except Exception: pass
         except Exception:
             if run:
