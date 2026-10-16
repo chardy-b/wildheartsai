@@ -11,6 +11,8 @@ import httpx
 from parsers import parse
 from privacy import LocalPrivacy, age_context
 from inference import synthesize
+from failures import failure_code, bounded_processing_retry
+from auto_parser import parse_auto, POLICY
 
 os.environ.update({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1", "TOKENIZERS_PARALLELISM": "false", "OMP_NUM_THREADS": "1"})
 
@@ -36,6 +38,8 @@ def main():
     def infer(mode, content):
         return request("POST", "/infer", json={"mode": mode, "content": content}).json()["text"]
     started = time.monotonic()
+    stage = "source"
+    config = {}
     try:
         config = request("GET", "/config").json()
         with tempfile.TemporaryDirectory(prefix="document-") as temp:
@@ -51,17 +55,26 @@ def main():
                         size += len(chunk)
                         if size > 25 * 1024 * 1024: raise ValueError("size_limit")
                         sha.update(chunk); output.write(chunk)
+            stage = "privacy"
             privacy = LocalPrivacy("/models/pii")
-            pages = parse(source, mime, config["method"], infer, check_active)
+            stage = "parse"
+            pages = parse_auto(source, mime, infer, check_active, (ServiceUnavailable, httpx.HTTPError)) if config.get("pipeline") == POLICY else parse(source, mime, config["method"], infer, check_active)
+            stage = "privacy"
             identifiers, warnings = [], []
             if any(not p["text"].strip() for p in pages): warnings.append("pages_without_extracted_text")
             for page in pages:
                 check_active()
                 page["redaction"] = privacy.redact(page["text"])
                 identifiers.extend(page["text"][s["start"]:s["end"]] for s in page["redaction"]["combined"])
+                if "nativeAttempt" in page:
+                    native = page["nativeAttempt"]
+                    native["redaction"] = privacy.redact(native["text"])
+                    identifiers.extend(native["text"][s["start"]:s["end"]] for s in native["redaction"]["combined"])
             age = age_context("\n".join(p["text"] for p in pages), config.get("encounterDate"))
             if age is None: warnings.append("age_omitted_without_unambiguous_iso_dob_and_encounter_date")
+            stage = "inference"
             summary, measurements, summary_status, inference_warnings, inference_manifest = synthesize(pages,privacy,identifiers,age,infer,check_active,(ServiceUnavailable,))
+            stage = "result"
             warnings.extend(inference_warnings)
             manifest = {p: importlib.metadata.version(p) for p in ("openmed", "torch", "transformers", "tokenizers", "pdfplumber", "pypdfium2", "pytesseract", "Pillow")}
             import pytesseract
@@ -73,6 +86,8 @@ def main():
             manifest.update({"worker": "document-extraction/v3", "worker_image": config.get("workerImage", "unrecorded"), "privacy_policy": "no-names-dob-to-age/v1", "pii_model": Path("/models/pii/REVISION").read_text().strip(), "summary_model": config["summaryModel"], "vision_model": config.get("visionModel", "disabled"),
                              "summary_model_revision": config.get("summaryModelRevision", "unknown-alias-only"), "vision_model_revision": config.get("visionModelRevision", "unknown-alias-only"), "source_mime": mime,
                              "parser_configuration": json.dumps({"render_scale_max":2.5,"max_pixels":20_000_000,"tesseract_psm":3,"foreground_threshold":220,"diagnostic_grid":20},sort_keys=True,separators=(',',':'))})
+            if config.get("pipeline") == POLICY:
+                manifest.update({"pipeline": POLICY, "fallback_policy": "scanLike-or-empty-with-ink-or-sparse-image-header32-or-image-header-under300-coverage-under0.35;Tesseract-psm3"})
             # Run-specific completion counts are provenance, not part of tool identity.
             manifest.update({k:v for k,v in inference_manifest.items() if k.startswith("inference_")})
             manifest["environment_fingerprint"] = hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -87,6 +102,7 @@ def main():
             encoded = json.dumps(result, ensure_ascii=False).encode()
             if len(encoded) > 2_500_000: raise ValueError("result_limit")
             check_active()
+            stage = "completion"
             # Exact bytes are reused on retry; completed grants authorize only duplicate completion.
             for attempt in range(3):
                 try:
@@ -96,7 +112,10 @@ def main():
                     time.sleep(1)
     except Exception as error:
         transient = isinstance(error, (ServiceUnavailable, httpx.TransportError)) or isinstance(error, httpx.HTTPStatusError) and (error.response.status_code in {408, 429} or error.response.status_code >= 500)
-        try: request("POST", "/fail", json={"retryable": transient})
+        code = failure_code(error, stage)
+        if config.get("pipeline") == POLICY and bounded_processing_retry(code, config.get("attempt", 1)):
+            transient = True
+        try: request("POST", "/fail", json={"retryable": transient, "code": code})
         except Exception: pass
         raise SystemExit(1) from None
     finally: client.close()

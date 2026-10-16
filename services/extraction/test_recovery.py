@@ -61,6 +61,11 @@ class RecoveryTests(unittest.TestCase):
             handler.handle_request()
         self.assertEqual(handler.respond.call_args.args, (200, b'{"ready":true}'))
 
+    def test_memory_kills_are_bounded_but_infrastructure_failures_keep_retrying(self):
+        self.assertEqual(gateway.execution_failure({"exit_code": 137}, 2), {"retryable": True})
+        self.assertEqual(gateway.execution_failure({"exit_code": 137}, 3), {"retryable": False, "code": "resource_limit"})
+        self.assertEqual(gateway.execution_failure({"exit_code": -1}, 100), {"retryable": True})
+
     def test_worker_requeues_instead_of_finishing_partial_success(self):
         # Replace heavyweight parsing/privacy imports; exercise the real worker control flow.
         privacy = Mock()
@@ -74,7 +79,7 @@ class RecoveryTests(unittest.TestCase):
         failures = []
         def request(method, path, **kwargs):
             calls.append((path, kwargs))
-            if path == "/fail": failures.append(repr(sys.exception()))
+            if path == "/fail": failures.append(type(sys.exception()).__name__)
             return httpx.Response(503 if path == "/infer" else 200, json={"method": "native"}, request=httpx.Request(method, "http://synthetic" + path))
         client = Mock()
         client.request.side_effect = request
@@ -82,7 +87,7 @@ class RecoveryTests(unittest.TestCase):
         with patch.object(worker.httpx, "Client", return_value=client), patch.dict(os.environ, {"IGGY_BROKER_CAPABILITY": "whdoc1.synthetic", "IGGY_GATEWAY_URL": "http://wildhearts-extraction-gateway:8080"}):
             with self.assertRaises(SystemExit) as raised: worker.main()
         self.assertEqual(raised.exception.code, 1)
-        self.assertEqual([kwargs["json"] for path, kwargs in calls if path == "/fail"], [{"retryable": True}], failures)
+        self.assertEqual([kwargs["json"] for path, kwargs in calls if path == "/fail"], [{"retryable": True, "code": "inference_failed"}], failures)
         self.assertFalse(any(path == "/finish" for path, _ in calls))
 
 

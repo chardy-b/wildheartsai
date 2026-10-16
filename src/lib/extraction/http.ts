@@ -5,8 +5,9 @@ import { recordsKey } from "@/lib/records-keys";
 import { getSession } from "@/lib/session";
 import { fileError, PRIVATE_HEADERS, readUpload, sameOrigin, validFileId } from "@/lib/wildcards-http";
 import { fileObjects } from "@/lib/wildcards-r2";
+import { FAILURE_CODES } from "./failures";
 import { streamFile } from "@/lib/wildcards-store";
-import { authorized, cancel, claim, configured, enabledMethods, enqueue, extractionAudit, fail, finish, hash, listRuns, processingProgress, references, rerun, saveReference, workerConfig } from "./store";
+import { authorized, backfill, cancel, claim, configured, enabledMethods, enqueue, extractionAudit, fail, finish, hash, listRuns, processingProgress, references, rerun, saveReference, workerConfig } from "./store";
 
 const json = (value: unknown) => Response.json(value, { headers: PRIVATE_HEADERS });
 async function body(request: Request) { return JSON.parse((await readUpload(request)).toString("utf8")) as unknown; }
@@ -32,6 +33,10 @@ export async function browserRequest(request: Request) {
       return json({ id: await saveReference(db, recordsKey(), session.user.id, fileId, labels) });
     }
     if (!configured()) return fileError("Document workers are not configured yet.", 503);
+    if (input && typeof input === "object" && "backfill" in input) {
+      z.object({ backfill: z.literal(true) }).strict().parse(input);
+      return json(await backfill(db, recordsKey(), session.user.id, session.session.id));
+    }
     if (input && typeof input === "object" && "rerunOf" in input) {
       const { rerunOf } = z.object({rerunOf:z.uuid()}).strict().parse(input);
       return json({ids:await rerun(db,recordsKey(),session.user.id,session.session.id,rerunOf)});
@@ -47,8 +52,8 @@ export async function workerRequest(request: Request, path: string[]) {
     const operation = path.join("/");
     if (operation === "claim" && request.method === "POST") {
       if (hash(token) !== process.env.EXTRACTION_COORDINATOR_TOKEN_HASH) return fileError("Unauthorized.", 401);
-      const { requestId } = z.object({ requestId: z.uuid() }).strict().parse(await body(request));
-      return json({ run: await claim(db, requestId, process.env.EXTRACTION_GRANT_KEY!) });
+      const { requestId, pipeline } = z.object({ requestId: z.uuid(), pipeline: z.literal("native-ocr/v1").optional() }).strict().parse(await body(request));
+      return json({ run: await claim(db, requestId, process.env.EXTRACTION_GRANT_KEY!, pipeline === "native-ocr/v1") });
     }
     if (operation === "config" && request.method === "GET") return json(await workerConfig(db, recordsKey(), token));
     if (operation === "status" && request.method === "GET") return json({ status: (await authorized(db, token, true)).job.status });
@@ -62,8 +67,8 @@ export async function workerRequest(request: Request, path: string[]) {
     }
     if (operation === "finish" && request.method === "POST") { await finish(db, recordsKey(), token, await body(request)); return json({ ok: true }); }
     if (operation === "fail" && request.method === "POST") {
-      const { retryable } = z.object({ retryable: z.boolean().optional().default(false) }).strict().parse(await body(request));
-      await fail(db, token, retryable); return json({ ok: true });
+      const { retryable, code } = z.object({ retryable: z.boolean().optional().default(false), code: z.enum(FAILURE_CODES).optional() }).strict().parse(await body(request));
+      await fail(db, token, retryable, code); return json({ ok: true });
     }
     return fileError("Not found.", 404);
   } catch { return fileError("Run unavailable or invalid request.", 403); }

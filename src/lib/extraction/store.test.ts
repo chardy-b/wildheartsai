@@ -46,7 +46,7 @@ describe("web-owned extraction custody", () => {
     const requestId = randomUUID();
     const run = (await claim(db, requestId, "synthetic-grant-key"))!;
     expect(await claim(db, requestId, "synthetic-grant-key")).toEqual(run);
-    expect(Object.keys(run).sort()).toEqual(["capability", "id"]);
+    expect(Object.keys(run).sort()).toEqual(["attempt", "capability", "id"]);
     await finish(db, kek, run.capability, result);
     await finish(db, kek, run.capability, result);
     await expect(finish(db, kek, run.capability, { ...result, summary: "Changed" })).rejects.toThrow("conflicting_result");
@@ -94,9 +94,10 @@ describe("web-owned extraction custody", () => {
     expect(delayed.nextAttemptAt.getTime() - Date.now()).toBeLessThanOrEqual(1800_000);
     await asUser(db, owner, tx => tx.update(extractionJob).set({ nextAttemptAt: new Date(0) }).where(eq(extractionJob.id, a.id)));
     const final = (await claim(db, randomUUID(), "synthetic-grant-key"))!;
-    await fail(db, final.capability);
+    await fail(db, final.capability, false, "pdf_page_limit");
     expect(await claim(db, randomUUID(), "synthetic-grant-key")).toBeNull();
     expect((await listRuns(db, kek, owner, fileId)).find(r => r.id === a.id)?.status).toBe("failed");
+    expect((await listRuns(db, kek, owner, fileId)).find(r => r.id === a.id)?.errorCode).toBe("pdf_page_limit");
   });
   it("revokes access on cancel and session deletion", async () => {
     await enqueue(db, kek, owner, sessionId, { fileIds: [fileId], methods: ["native", "tesseract"] });

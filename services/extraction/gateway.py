@@ -118,6 +118,11 @@ def ensure_execution(client, iggy, run):
             if attempt == 2: raise
     raise ValueError("execution_start_unconfirmed")
 
+def execution_failure(execution, attempt):
+    exhausted_memory = execution.get("exit_code") == 137 and attempt >= 3
+    return {"retryable": False, "code": "resource_limit"} if exhausted_memory else {"retryable": True}
+
+
 def coordinator():
     iggy = private_url(os.environ["IGGY_URL"])
     control = os.environ["IGGY_BEARER_TOKEN"]
@@ -131,7 +136,7 @@ def coordinator():
             # Retry the exact claim body, including when a reply was lost.
             for attempt in range(3):
                 try:
-                    response, _ = web("POST", "claim", os.environ["EXTRACTION_COORDINATOR_TOKEN"], json.dumps({"requestId": request_id}).encode())
+                    response, _ = web("POST", "claim", os.environ["EXTRACTION_COORDINATOR_TOKEN"], json.dumps({"requestId": request_id, "pipeline": "native-ocr/v1"}).encode())
                     run = json.loads(response)["run"]; break
                 except Exception:
                     if attempt == 2: raise
@@ -146,8 +151,9 @@ def coordinator():
                             state, _ = web("GET", "status", run["capability"])
                             if json.loads(state)["status"] == "completed": break
                             response = client.get(iggy + "/v1/runs/" + execution_id); response.raise_for_status()
-                            if response.json()["status"] in {"succeeded", "failed", "cancelled"}:
-                                web("POST", "fail", run["capability"], b'{"retryable":true}'); break
+                            execution = response.json()
+                            if execution["status"] in {"succeeded", "failed", "cancelled"}:
+                                web("POST", "fail", run["capability"], json.dumps(execution_failure(execution, run.get("attempt", 1))).encode()); break
                     finally:
                         # Also cancel a timed-out start: it may have reached Iggy.
                         try: client.post(iggy + "/v1/runs/" + (execution_id or uuid.uuid5(uuid.UUID(run["id"]), run["capability"]).hex) + "/cancel")
