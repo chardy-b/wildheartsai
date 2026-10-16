@@ -36,8 +36,9 @@ class RecoveryTests(unittest.TestCase):
 
     def test_upgrade_resumes_legacy_active_worker(self):
         run={'id':'11111111-1111-4111-8111-111111111111','capability':'synthetic','resumed':True}
-        with httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'status':'running'}))) as client:
-            self.assertEqual(gateway.ensure_execution(client,'http://iggy',run),run['id'])
+        for status in ('queued','provisioning','running','teardown'):
+            with httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'status':status}))) as client:
+                self.assertEqual(gateway.ensure_execution(client,'http://iggy',run),run['id'])
 
     def test_gateway_distinguishes_outage_from_invalid_inference(self):
         for status, expected in [(503, 503), (429, 503), (401, 403)]:

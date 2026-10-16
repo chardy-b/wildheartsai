@@ -12,4 +12,12 @@ describe('honest extraction audit metrics',()=>{
     const ocr={...auditResult({...result,method:'tesseract'},'application/pdf'),runId:'ocr',fileId:'doc',createdAt:'2026-01-02'};
     const group=auditGroups([ocr,native])[0];expect(group.sourceType).toContain('scan-like');expect(group.coverageMedian).toBeNull();expect(group.tokenRecall).toBeNull();
   });
+  it('aggregates reviewed privacy counts without returning identifier surfaces',()=>{
+    const span={start:0,end:12,label:'NAME'};
+    const reviewed={...result,summary:'',summaryStatus:'withheld' as const,ageAtEncounter:44,pages:[{...result.pages[0],text:'Jane Example',redaction:{text:'[REDACTED]',rules:[span],openmed:[],combined:[span]}}]};
+    const row={...auditResult(reviewed,'application/pdf',{version:1,split:'test',pages:[{page:1,text:'Jane Example',pii:[span]}],measurements:[],measurementsComplete:false,expectedAgeAtEncounter:44}),runId:'run',fileId:'doc',createdAt:'2026-01-01'};
+    const group=auditGroups([row])[0];
+    expect(group.redaction.combined.recall).toBe(1);expect(group.redaction.openmed.recall).toBe(0);expect(group.ageCorrectRuns).toBe(1);
+    expect(JSON.stringify(group)).not.toContain('Jane Example');
+  });
 });

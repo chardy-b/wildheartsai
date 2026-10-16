@@ -105,7 +105,7 @@ def ensure_execution(client, iggy, run):
         legacy = client.get(iggy + "/v1/runs/" + run["id"])
         if legacy.status_code != 404:
             legacy.raise_for_status()
-            if legacy.json()["status"] in {"queued", "running"}: return run["id"]
+            if legacy.json()["status"] in {"queued", "provisioning", "running", "teardown"}: return run["id"]
     for attempt in range(3):
         try:
             existing = client.get(iggy + "/v1/runs/" + execution_id)
