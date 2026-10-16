@@ -11,7 +11,7 @@ import { holoSystemPrompt } from "../src/system-prompt.js";
 const executionGrant = `whchat1.execution.${"e".repeat(43)}`;
 const context = { messages: [{ role: "user", content: "What synthetic result is available?" }], modelId: "synthetic-model" };
 
-async function fixture(inferenceResponses: ReadonlyArray<string>, options: { failAnswerDelta?: boolean; cancelled?: boolean; openInference?: boolean; openReasoning?: boolean; toolLimitExceeded?: boolean; context?: typeof context } = {}) {
+async function fixture(inferenceResponses: ReadonlyArray<string>, options: { toolOutput?: Record<string, unknown>; failAnswerDelta?: boolean; cancelled?: boolean; openInference?: boolean; openReasoning?: boolean; toolLimitExceeded?: boolean; context?: typeof context } = {}) {
   const eventRows: Array<{ type: string; data: Record<string, unknown>; sequence: number }> = [];
   const toolRequests: Array<Record<string, unknown>> = [];
   const inferenceBodies: Array<Record<string, unknown>> = [];
@@ -46,7 +46,7 @@ async function fixture(inferenceResponses: ReadonlyArray<string>, options: { fai
         return response.end(JSON.stringify({ error: "tool_limit_reached" }));
       }
       response.writeHead(200, { "content-type": "application/json" });
-      return response.end(JSON.stringify({ status: "completed", output: { available: true } }));
+      return response.end(JSON.stringify({ status: "completed", output: options.toolOutput ?? { available: true } }));
     }
     response.writeHead(404); response.end("{}");
   });
@@ -185,6 +185,18 @@ describe("Pi health runner", () => {
       expect(types.indexOf("answer.delta")).toBeLessThan(types.indexOf("tool.started"));
       expect(types.indexOf("tool.started")).toBeLessThan(types.indexOf("tool.completed"));
       expect(types.at(-1)).toBe("completed");
+    } finally { await fixtureValue.close(); }
+  });
+
+  it("publishes actual search descriptions and counts from gateway results", async () => {
+    const first = stream([{ tool_calls: [{ index: 0, id: "search_1", type: "function", function: { name: "find_records", arguments: JSON.stringify({ categories: ["lab"], query: "synthetic", limit: 2 }) } }] }], "tool_calls");
+    const fixtureValue = await fixture([first, stream([{ content: "Synthetic answer." }], "stop")], { toolOutput: { records: [{ title: "Synthetic result" }], truncated: true } });
+    const runner = new PiHealthRunner({ gatewayUrl: fixtureValue.gatewayUrl, capability: executionGrant, modelId: "synthetic-model" }, event => fixtureValue.workerGateway.publish(event, new AbortController().signal).then(() => undefined));
+    try {
+      await runner.run(new AbortController().signal);
+      expect(fixtureValue.eventRows.find(event => event.type === "tool.started")?.data).toMatchObject({ description: "Searching lab results for “synthetic”" });
+      expect(fixtureValue.eventRows.find(event => event.type === "tool.completed")?.data).toMatchObject({ status: "completed", outcome: "1 result returned · Search limited" });
+      expect(fixtureValue.eventRows.find(event => event.type === "tool.completed")?.data).not.toHaveProperty("records");
     } finally { await fixtureValue.close(); }
   });
 

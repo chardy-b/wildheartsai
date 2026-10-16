@@ -5,6 +5,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import type { ToolName, WorkerEventType } from "./contracts.js";
 import { GatewayToolClient, GatewayToolError } from "./private-gateway.js";
 import { holoSystemPrompt } from "./system-prompt.js";
+import { describeToolActivity, summarizeToolActivity } from "../../../src/lib/chat/tool-activity.js";
 import { CHAT_MAX_TOOL_CALLS, chatToolDescriptions, chatToolJsonSchemas } from "../../../src/lib/chat/tools.js";
 
 const toolNames = ["get_data_coverage", "find_records", "read_records", "read_stored_note", "calculate_lab_trend", "find_saved_summaries", "save_summary", "search_research", "read_research"] as const satisfies readonly ToolName[];
@@ -327,7 +328,7 @@ export class PiHealthRunner {
         }
         const tool = toolNames.includes(event.toolName as ToolName) ? event.toolName as ToolName : undefined;
         if (tool) toolStartedAt.set(event.toolCallId, { tool, at: Date.now() });
-        await this.publish("tool.started", { toolCallId: event.toolCallId, tool: event.toolName });
+        await this.publish("tool.started", { toolCallId: event.toolCallId, tool: event.toolName, description: describeToolActivity(event.toolName, event.args) });
       }
       if (event.type === "tool_execution_end") {
         if (suppressedToolCalls.delete(event.toolCallId)) return;
@@ -338,6 +339,7 @@ export class PiHealthRunner {
         await this.publish("tool.completed", {
           toolCallId: event.toolCallId,
           status: event.isError ? "failed" : "completed",
+          ...(!event.isError ? event.result.details : {}),
           ...(started ? { tool: started.tool, durationMs: Math.min(300_000, Math.max(0, Date.now() - started.at)) } : {}),
           ...(event.isError ? { code: failure?.code ?? "tool_unavailable", stage: failure?.stage ?? (started ? toolFailureStage(started.tool) : "record_lookup") } : {}),
         });
@@ -433,7 +435,7 @@ export class PiHealthRunner {
           const failed = isToolReplyFailure(result);
           if (failed) state.failure(toolCallId, { code: "tool_unavailable", stage });
           const withBudget = addRemainingToolCalls(result, state.remaining());
-          return { content: [{ type: "text", text: JSON.stringify(withBudget) }], details: {}, ...(failed ? { isError: true } : {}) };
+          return { content: [{ type: "text", text: JSON.stringify(withBudget) }], details: failed ? {} : summarizeToolActivity(name, result), ...(failed ? { isError: true } : {}) };
         } catch (error) {
           const failure: ToolFailureInfo = { code: error instanceof GatewayToolError ? error.code : "tool_unavailable", stage };
           if (failure.code === "tool_limit_reached") state.exhaust();
