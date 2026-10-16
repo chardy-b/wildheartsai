@@ -36,5 +36,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          PREVIEW_CLEANUP_APPLY: ${{ github.event_name == 'pull_request_target' || inputs.apply == true }}
+          PREVIEW_CLEANUP_APPLY: ${{ (github.event_name == 'pull_request_target' && vars.PREVIEW_CLEANUP_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.apply == true) }}
         run: node scripts/cleanup-preview-deployments.mjs
