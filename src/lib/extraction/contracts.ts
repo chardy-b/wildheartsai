@@ -7,7 +7,7 @@ export const boxSchema = z.tuple([z.number().min(0).max(1), z.number().min(0).ma
   .refine(([x, y, r, b]) => x <= r && y <= b);
 export const piiSchema = z.object({ start: z.number().int().nonnegative(), end: z.number().int().positive(), label: short }).strict().refine(s => s.end > s.start);
 export const measurementSchema = z.object({ name: short, value: short, unit: short, date: short, range: short, page: z.number().int().positive(), evidence: z.string().max(2000) }).strict();
-export const pageSchema = z.object({
+const basePageSchema = z.object({
   page: z.number().int().positive(), text: z.string().max(100_000),
   words: z.array(z.object({ text: z.string().max(2000), box: boxSchema, confidence: z.number().min(0).max(1).optional() }).strict()).max(20_000),
   layoutRegions: z.array(z.object({ kind: z.enum(["table", "text", "chart", "image"]), box: boxSchema, origin: short }).strict()).max(500).optional(),
@@ -23,6 +23,10 @@ export const pageSchema = z.object({
     rules: z.array(piiSchema).max(10_000), openmed: z.array(piiSchema).max(10_000), combined: z.array(piiSchema).max(10_000),
     text: z.string().max(100_000),
   }).strict(),
+}).strict();
+export const pageSchema = basePageSchema.extend({
+  nativeAttempt: basePageSchema.pick({ text: true, words: true, tables: true, figures: true, redaction: true }).extend({ status: z.enum(["completed", "failed"]) }).strict().optional(),
+  fallbackReason: z.enum(["native_parser_failed", "scan_like_or_sparse_native_text"]).optional(),
 }).strict();
 export const resultSchema = z.object({
   version: z.literal(1), sourceSha256: z.string().regex(/^[a-f0-9]{64}$/), method: methodSchema,
@@ -41,6 +45,9 @@ export const resultSchema = z.object({
   }
   for (const p of r.pages) for (const spans of [p.redaction.rules, p.redaction.openmed, p.redaction.combined]) {
     if (spans.some(s => s.end > Array.from(p.text).length)) ctx.addIssue({ code: "custom", message: "Invalid offsets" });
+  }
+  for (const p of r.pages) if (p.nativeAttempt) for (const spans of [p.nativeAttempt.redaction.rules, p.nativeAttempt.redaction.openmed, p.nativeAttempt.redaction.combined]) {
+    if (spans.some(s => s.end > Array.from(p.nativeAttempt!.text).length)) ctx.addIssue({ code: "custom", message: "Invalid native attempt offsets" });
   }
 });
 export const referenceSchema = z.object({

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { hmacFor, sealBinaryField, sealField, unsealBinaryField, unsealField, userKeysFor, type UserKeys } from "@/lib/crypto/user-keys";
 import { asUser } from "@/lib/db/rls";
-import { wildcardFile } from "@/lib/db/schema";
+import { extractionJob, wildcardFile } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { fileSize, fileSizeError, MAX_FILES, MAX_STORAGE_BYTES, SINGLE_OBJECT_BYTES, UPLOAD_CHUNK_BYTES, type WildcardFile } from "./wildcards";
 import type { FileObjects } from "./wildcards-r2";
@@ -392,6 +392,8 @@ export async function deleteFile(db: Db, userId: string, id: string, objects: Fi
   const [row] = await asUser(db, userId, (tx) => tx.update(wildcardFile).set({ status: "deleting" })
     .where(and(eq(wildcardFile.id, id), eq(wildcardFile.userId, userId), expiredBefore ? and(inArray(wildcardFile.status, ["pending", "finalizing", "deleting"]), lt(wildcardFile.uploadedAt, expiredBefore)) : undefined)).returning({ objectKey: wildcardFile.objectKey, uploadParts: wildcardFile.uploadParts }));
   if (!row) return false;
+  await asUser(db, userId, tx => tx.update(extractionJob).set({ status: "cancelled", grantHash: null }).where(and(eq(extractionJob.userId, userId), inArray(extractionJob.status, ["waiting", "queued", "running"]),
+    sql`${extractionJob.id} in (select id from extraction_run where file_id = ${id} and user_id = ${userId})`)));
   // Retain the row until deletion succeeds. Retrying a failed deletion is safe.
   await objects.delete(row.objectKey);
   for (const key of Object.values(row.uploadParts ?? {})) await objects.delete(key);

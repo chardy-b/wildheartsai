@@ -4,13 +4,13 @@ vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/lib/records-keys", () => ({ recordsKey: () => Buffer.alloc(32) }));
 vi.mock("./store", () => ({
   configured: vi.fn(() => true), enabledMethods: () => ["native", "tesseract"], hash: () => "b".repeat(64),
-  listRuns: vi.fn(async () => []), references: vi.fn(async () => []), enqueue: vi.fn(async () => ["run"]),
+  listRuns: vi.fn(async () => []), references: vi.fn(async () => []), enqueue: vi.fn(async () => ["run"]), backfill: vi.fn(async () => ({ enrolled: 674, batchSize: 20 })),
   processingProgress: vi.fn(async () => ({ documents: 708, counts: { not_started: 699, completed: 9 }, files: [] })),
   extractionAudit: vi.fn(async () => ({ rows: [], groups: [] })), rerun: vi.fn(async () => ["child"]),
   authorized: vi.fn(async () => { throw new Error("private provider error"); }), cancel: vi.fn(), claim: vi.fn(), fail: vi.fn(), finish: vi.fn(), saveReference: vi.fn(), workerConfig: vi.fn(),
 }));
 import { getSession } from "@/lib/session";
-import { claim, configured, enqueue, extractionAudit, fail, listRuns, processingProgress, rerun } from "./store";
+import { backfill, claim, configured, enqueue, extractionAudit, fail, listRuns, processingProgress, rerun } from "./store";
 import { browserRequest, workerRequest } from "./http";
 
 beforeEach(() => {
@@ -18,6 +18,14 @@ beforeEach(() => {
   vi.mocked(getSession).mockResolvedValue({ user: { id: "owner" }, session: { id: "session" } } as Awaited<ReturnType<typeof getSession>>);
 });
 describe("extraction HTTP boundary", () => {
+  it("enrolls backfill only through the authenticated owner and rejects caller-supplied worker configuration", async () => {
+    const send = (body: unknown) => browserRequest(new Request("https://app.test/api/extraction", { method: "POST", headers: { origin: "https://app.test" }, body: JSON.stringify(body) }));
+    expect(await (await send({ backfill: true })).json()).toEqual({ enrolled: 674, batchSize: 20 });
+    expect(backfill).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "session");
+    vi.mocked(backfill).mockClear();
+    expect((await send({ backfill: true, userId: "other", pipeline: "vision" })).status).toBe(400);
+    expect(backfill).not.toHaveBeenCalled();
+  });
   it("accepts finite failure codes and legacy workers but rejects arbitrary diagnostic content", async () => {
     const send = (body: unknown) => workerRequest(new Request("https://app.test/api/extraction/worker/v1/fail", {
       method: "POST", headers: { authorization: "Bearer whdoc1.synthetic" }, body: JSON.stringify(body),

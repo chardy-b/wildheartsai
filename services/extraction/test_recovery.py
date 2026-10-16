@@ -61,6 +61,11 @@ class RecoveryTests(unittest.TestCase):
             handler.handle_request()
         self.assertEqual(handler.respond.call_args.args, (200, b'{"ready":true}'))
 
+    def test_memory_kills_are_bounded_but_infrastructure_failures_keep_retrying(self):
+        self.assertEqual(gateway.execution_failure({"exit_code": 137}, 2), {"retryable": True})
+        self.assertEqual(gateway.execution_failure({"exit_code": 137}, 3), {"retryable": False, "code": "resource_limit"})
+        self.assertEqual(gateway.execution_failure({"exit_code": -1}, 100), {"retryable": True})
+
     def test_worker_requeues_instead_of_finishing_partial_success(self):
         # Replace heavyweight parsing/privacy imports; exercise the real worker control flow.
         privacy = Mock()

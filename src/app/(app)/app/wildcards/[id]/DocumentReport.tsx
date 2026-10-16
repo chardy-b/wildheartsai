@@ -52,7 +52,7 @@ export function DocumentReport({ file }: { file: WildcardFile }) {
     <p><Link href="/app/wildcards/progress">All document progress</Link> · <Link href={`/app/wildcards/workbench?fileId=${file.id}`}>Queue a method or compare results</Link></p>
     {selected && !result && !error && <p role="status">Loading report…</p>}
     {result && coverage && <>
-      <dl className="document-report-facts"><div><dt>How the text was obtained</dt><dd>{extractionMethod(result.method, file.type)}{file.type.startsWith("text/") && <small>Requested comparison method: {result.method}; text uploads bypass OCR.</small>}</dd></div>
+      <dl className="document-report-facts"><div><dt>How the text was obtained</dt><dd>{extractionMethod(result.method, file.type, result.manifest.pipeline)}{file.type.startsWith("text/") && <small>Requested comparison method: {result.method}; text uploads bypass OCR.</small>}</dd></div>
         <div><dt>Text availability</dt><dd>{coverage.pagesWithText} of {coverage.totalPages} {file.type.startsWith("text/") ? "text sections" : "pages"} contain extracted text</dd></div>
         <div><dt>Content recall / accuracy</dt><dd>Not measured against a reviewed reference</dd></div>
         <div><dt>Processing time</dt><dd>{(result.elapsedMs / 1000).toFixed(1)} seconds</dd></div>
@@ -65,7 +65,9 @@ export function DocumentReport({ file }: { file: WildcardFile }) {
       <section><h3>Coverage and extracted content</h3><p>{file.type.startsWith("text/") ? "Visual coverage does not apply to text uploads. The file was read directly as UTF-8; completeness has not been independently verified." : "Visual coverage estimates the percentage of non-white page pixels inside extracted word boxes. Figures, rules, and scan backgrounds count too. It is not the percentage of correct text, and a document-wide recall score requires reviewed reference labels."}</p>
         {result.pages.map(p => <section key={p.page} id={`extracted-page-${p.page}`} className="document-source-page"><h4>{file.type.startsWith("text/") ? "Text section" : "Page"} {p.page}</h4><p>Visual coverage: <strong>{file.type.startsWith("text/") ? "Not applicable" : coveragePercent(p.foregroundCoverage)}</strong>{p.foregroundCoverage === null && !file.type.startsWith("text/") ? " — no usable word geometry for this estimate" : ""} · {p.tables.length} detected tables · {p.figures.length} image regions</p>
           {p.foregroundCoverage !== null && !file.type.startsWith("text/") && <meter min={0} max={1} value={p.foregroundCoverage} aria-label={`Page ${p.page} visual coverage`}>{coveragePercent(p.foregroundCoverage)}</meter>}
+          <p>Text source: {p.diagnostics?.textSource ?? "Direct text"}{p.fallbackReason ? ` · OCR fallback: ${p.fallbackReason.replaceAll("_", " ")}` : ""}</p>
           <ExtractedContent text={p.redaction.text} />
+          {p.nativeAttempt && <details><summary>Native result before OCR · {p.nativeAttempt.status}</summary><ExtractedContent text={p.nativeAttempt.redaction.text} /><p>{p.nativeAttempt.tables.length} native tables · {p.nativeAttempt.words.length} native word boxes retained</p></details>}
           {p.figures.length > 0 && <details><summary>Detected images and captions</summary><ul>{p.figures.map((figure, i) => <li key={i}>{figure.caption || "No caption available"} · annotation source: {figure.origin}</li>)}</ul></details>}
         </section>)}
       </section>

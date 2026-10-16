@@ -1,9 +1,15 @@
 import unittest
 import httpx
-from failures import failure_code
+from failures import failure_code, bounded_processing_retry
 
 
 class FailureTests(unittest.TestCase):
+    def test_processing_retries_are_bounded_and_limits_are_terminal(self):
+        self.assertTrue(bounded_processing_retry("parse_failed", 1))
+        self.assertTrue(bounded_processing_retry("ocr_timeout", 2))
+        self.assertFalse(bounded_processing_retry("parse_failed", 3))
+        for code in ("resource_limit", "pdf_page_limit", "text_limit", "result_size_limit"):
+            self.assertFalse(bounded_processing_retry(code, 1))
     def test_unknown_messages_never_leave_worker(self):
         for stage in ("source", "parse", "privacy", "inference", "result", "completion"):
             for error in (ValueError("synthetic private text /tmp/private.pdf"), RuntimeError("provider body"), KeyError("private field")):

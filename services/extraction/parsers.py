@@ -67,7 +67,7 @@ def image_data(image):
     buffer = io.BytesIO(); cropped.save(buffer, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
 
-def parse(source, mime, method, infer, check_active):
+def parse(source, mime, method, infer, check_active, page_numbers=None):
     if mime.startswith("text/"):
         text = source.read_text(encoding="utf-8")
         if len(text) > 100_000: raise ValueError("text_limit")
@@ -93,6 +93,9 @@ def parse(source, mime, method, infer, check_active):
     try:
         for number, image in rendered_pages(source, mime):
             check_active()
+            if page_numbers is not None and number not in page_numbers:
+                image.close()
+                continue
             text, words, tables, figures, layout = "", [], [], [], []
             if method == "native" and native:
                 page = native.pages[number - 1]

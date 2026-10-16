@@ -11,6 +11,13 @@ LIMITS = {
 }
 
 
+def bounded_processing_retry(code, attempt):
+    return attempt < 3 and code not in {
+        "source_size_limit", "pdf_page_limit", "image_pixel_limit", "text_limit",
+        "result_size_limit", "resource_limit",
+    }
+
+
 def failure_code(error, stage):
     if stage not in STAGES:
         return "processing_failed"

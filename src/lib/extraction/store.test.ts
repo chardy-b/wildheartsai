@@ -46,7 +46,7 @@ describe("web-owned extraction custody", () => {
     const requestId = randomUUID();
     const run = (await claim(db, requestId, "synthetic-grant-key"))!;
     expect(await claim(db, requestId, "synthetic-grant-key")).toEqual(run);
-    expect(Object.keys(run).sort()).toEqual(["capability", "id"]);
+    expect(Object.keys(run).sort()).toEqual(["attempt", "capability", "id"]);
     await finish(db, kek, run.capability, result);
     await finish(db, kek, run.capability, result);
     await expect(finish(db, kek, run.capability, { ...result, summary: "Changed" })).rejects.toThrow("conflicting_result");
