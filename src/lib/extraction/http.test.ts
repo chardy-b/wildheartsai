@@ -21,7 +21,9 @@ describe("extraction HTTP boundary", () => {
   it("enrolls backfill only through the authenticated owner and rejects caller-supplied worker configuration", async () => {
     const send = (body: unknown) => browserRequest(new Request("https://app.test/api/extraction", { method: "POST", headers: { origin: "https://app.test" }, body: JSON.stringify(body) }));
     expect(await (await send({ backfill: true })).json()).toEqual({ enrolled: 674, batchSize: 20 });
-    expect(backfill).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "session");
+    expect(backfill).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "session", false);
+    expect((await send({ backfill: true, resumeCancelled: true })).status).toBe(200);
+    expect(backfill).toHaveBeenLastCalledWith({}, expect.any(Buffer), "owner", "session", true);
     vi.mocked(backfill).mockClear();
     expect((await send({ backfill: true, userId: "other", pipeline: "vision" })).status).toBe(400);
     expect(backfill).not.toHaveBeenCalled();
