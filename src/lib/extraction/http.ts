@@ -34,8 +34,8 @@ export async function browserRequest(request: Request) {
     }
     if (!configured()) return fileError("Document workers are not configured yet.", 503);
     if (input && typeof input === "object" && "backfill" in input) {
-      z.object({ backfill: z.literal(true) }).strict().parse(input);
-      return json(await backfill(db, recordsKey(), session.user.id, session.session.id));
+      const { resumeCancelled } = z.object({ backfill: z.literal(true), resumeCancelled: z.boolean().optional().default(false) }).strict().parse(input);
+      return json(await backfill(db, recordsKey(), session.user.id, session.session.id, resumeCancelled));
     }
     if (input && typeof input === "object" && "rerunOf" in input) {
       const { rerunOf } = z.object({rerunOf:z.uuid()}).strict().parse(input);
