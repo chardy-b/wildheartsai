@@ -7,6 +7,7 @@ import { deleteConnection, getConnectionSecrets, saveConnection } from "@/lib/ep
 import { createTestDb, createTestUser } from "@/test/db";
 import { deleteSource } from "./sources";
 import { failRun, finishRun, recordStats, startRun } from "./sync/run";
+import { EpicError, ReconnectRequiredError, failureDiagnostic } from "./epic/errors";
 
 const tokenKey = randomBytes(32);
 const now = new Date("2026-09-27T12:00:00Z");
@@ -88,5 +89,17 @@ describe("audit trail", () => {
     await finishRun(db, run.runId, now);
     const stored = JSON.stringify(await db.select().from(auditEvent).where(eq(auditEvent.userId, userId)));
     for (const secret of ["secret-at", "secret-rt", "patient-123", "Lakeside", "lakeside.example"]) expect(stored).not.toContain(secret);
+  });
+
+  it("retains the precise reconnect cause separately from an app failure", async () => {
+    const { sourceId } = await connect();
+    const rejected = await startRun(db, { userId, sourceId, trigger: "scheduled" }, now);
+    await failRun(db, rejected.runId, "reconnect", now, failureDiagnostic(new ReconnectRequiredError("refresh_rejected", 400)));
+    const failed = await startRun(db, { userId, sourceId, trigger: "manual" }, at(1));
+    await recordStats(db, failed.runId, "Patient", { fetched: 0, inserted: 0, superseded: 0, unchanged: 0, removed: 0, errorCode: "missing_credentials", ...failureDiagnostic(new EpicError("refresh", undefined, "missing_credentials")) });
+    await finishRun(db, failed.runId, at(2));
+    const syncs = (await events()).filter((e) => e.action === "sync").map((e) => e.detail);
+    expect(syncs[0]).toMatchObject({ reason: "reconnect", failureStage: "refresh", failureCode: "refresh_rejected", httpStatus: 400 });
+    expect(syncs[1]).toMatchObject({ failureStage: "refresh", failureCode: "missing_credentials", status: "failed" });
   });
 });

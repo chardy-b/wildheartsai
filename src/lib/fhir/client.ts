@@ -1,4 +1,4 @@
-import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
+import { EpicError } from "@/lib/epic/errors";
 import { hasUnsafePathSyntax } from "@/lib/url-security";
 import type { Bundle, Resource } from "./types";
 
@@ -122,7 +122,9 @@ async function searchPages<T extends Resource>({
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/fhir+json" },
       cache: "no-store",
     });
-    if (response.status === 401) throw new ReconnectRequiredError();
+    // A resource's 401 alone does not prove the user's refresh grant was revoked.
+    // Only token refresh can decide that the person must authorize again.
+    if (response.status === 401) throw new EpicError("fhir", 401, "access_refused");
     if (!response.ok) throw new EpicError("fhir", response.status);
 
     const bundle = (await jsonWithinLimit(response, maxPageBytes)) as Bundle;
@@ -175,7 +177,7 @@ export async function fhirRead<T extends Resource = Resource>({
     headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/fhir+json" },
     cache: "no-store",
   });
-  if (response.status === 401) throw new ReconnectRequiredError();
+  if (response.status === 401) throw new EpicError("fhir", 401, "access_refused");
   if (!response.ok) throw new EpicError("fhir", response.status);
   const resource = (await jsonWithinLimit(response, maxBytes)) as T;
   if (typeof resource?.resourceType !== "string") throw fhirFailure("invalid_resource");

@@ -1,5 +1,6 @@
 import { auditEvent } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
+import type { FailureDiagnostic } from "@/lib/epic/errors";
 
 export type AuditAction = (typeof auditEvent.$inferInsert)["action"];
 
@@ -7,7 +8,7 @@ export type AuditAction = (typeof auditEvent.$inferInsert)["action"];
 // (record content, organization names) from being passed by accident.
 export type AuditDetail = Record<string, number | boolean | AuditWord>;
 // A status or trigger name: lowercase letters and underscores.
-type AuditWord = "connect" | "manual" | "scheduled" | "ok" | "partial" | "failed" | "reconnect" | "error";
+type AuditWord = "connect" | "manual" | "scheduled" | "ok" | "partial" | "failed" | "reconnect" | "error" | FailureDiagnostic["failureStage"] | FailureDiagnostic["failureCode"];
 
 export type AuditInput = { userId: string; sourceId?: string | null; action: AuditAction; detail?: AuditDetail };
 

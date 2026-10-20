@@ -3,7 +3,7 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { UserKeys } from "@/lib/crypto/user-keys";
 import { healthSource, syncRun, type SyncQueryStats } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
-import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
+import { EpicError, ReconnectRequiredError, failureDiagnostic, type FailureDiagnostic } from "@/lib/epic/errors";
 import type { Resource } from "@/lib/fhir/types";
 import { diffResources } from "./diff";
 import {
@@ -99,7 +99,7 @@ export async function recordStats(db: Db, runId: string, key: string, stats: Syn
 
 // Error codes safe to store and log: an HTTP status or the client's own code, never a message.
 function errorCodeOf(error: unknown): string {
-  if (error instanceof EpicError) return String(error.status ?? error.code ?? "fhir");
+  if (error instanceof EpicError) return String(failureDiagnostic(error).httpStatus ?? failureDiagnostic(error).failureCode);
   return "network";
 }
 
@@ -149,9 +149,10 @@ export async function syncQuery(deps: SyncDeps, source: SyncSource, query: SyncQ
       unchanged: 0,
       removed: 0,
       errorCode: errorCodeOf(error),
+      ...failureDiagnostic(error),
       ...(query.optional ? { optional: true } : {}),
     };
-    console.error(`[sync] ${query.key} failed ${stats.errorCode}`);
+    console.error("[sync] query failed", failureDiagnostic(error));
     await recordStats(deps.db, source.runId, query.key, stats);
     return stats;
   }
@@ -214,7 +215,13 @@ export async function finishRun(db: Db, runId: string, now: Date): Promise<RunSt
     const status = runStatusOf(run.stats);
     await tx.update(syncRun).set({ status, finishedAt: now }).where(eq(syncRun.id, runId));
     const inserted = Object.values(run.stats).reduce((sum, s) => sum + s.inserted + s.superseded, 0);
-    await recordAudit(tx, { userId: run.userId, sourceId: run.sourceId, action: "sync", detail: { trigger: run.trigger, status, inserted } }, now);
+    const failure = Object.values(run.stats).find((s) => s.failureCode);
+    const diagnostic = failure?.failureCode ? {
+      failureCode: failure.failureCode,
+      failureStage: failure.failureStage ?? "app" as const,
+      ...(failure.httpStatus ? { httpStatus: failure.httpStatus } : {}),
+    } : {};
+    await recordAudit(tx, { userId: run.userId, sourceId: run.sourceId, action: "sync", detail: { trigger: run.trigger, status, inserted, ...diagnostic } }, now);
     await tx
       .update(healthSource)
       .set({ lastSyncedAt: now, lastSyncStatus: status, updatedAt: now })
@@ -225,7 +232,7 @@ export async function finishRun(db: Db, runId: string, now: Date): Promise<RunSt
 
 // Ends a run that couldn't continue. When the source needs signing in again, marks it
 // so the connections page asks the person to reconnect and background syncs skip it.
-export async function failRun(db: Db, runId: string, reason: "reconnect" | "error", now: Date): Promise<void> {
+export async function failRun(db: Db, runId: string, reason: "reconnect" | "error", now: Date, diagnostic?: FailureDiagnostic): Promise<void> {
   await db.transaction(async (tx) => {
     const [run] = await tx
       .update(syncRun)
@@ -233,7 +240,7 @@ export async function failRun(db: Db, runId: string, reason: "reconnect" | "erro
       .where(and(eq(syncRun.id, runId), inArray(syncRun.status, ["queued", "running"])))
       .returning({ sourceId: syncRun.sourceId, userId: syncRun.userId, trigger: syncRun.trigger });
     if (!run) return; // already finished
-    await recordAudit(tx, { userId: run.userId, sourceId: run.sourceId, action: "sync", detail: { trigger: run.trigger, status: "failed", reason } }, now);
+    await recordAudit(tx, { userId: run.userId, sourceId: run.sourceId, action: "sync", detail: { trigger: run.trigger, status: "failed", reason, ...diagnostic } }, now);
     await tx
       .update(healthSource)
       .set({ lastSyncStatus: "failed", updatedAt: now, ...(reason === "reconnect" ? { status: "reconnect_required" as const } : {}) })

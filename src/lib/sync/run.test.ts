@@ -444,6 +444,22 @@ describe("failures", () => {
     expect(source.status).toBe("reconnect_required");
   });
 
+  it("keeps an app-side refresh failure connected and preserves safe diagnostics", async () => {
+    const { status, run } = await sync({ accessToken: async () => { throw new EpicError("refresh", undefined, "missing_credentials"); } });
+    expect(status).toBe("failed");
+    const [source] = await db.select().from(healthSource).where(eq(healthSource.id, sourceId));
+    expect(source.status).toBe("connected");
+    expect(Object.values(run.stats).some((stats) => stats.failureCode === "missing_credentials" && stats.failureStage === "refresh")).toBe(true);
+  });
+
+  it("records the reason for a genuine refresh rejection and stops further queries", async () => {
+    const { status, run } = await sync({ accessToken: async () => { throw new ReconnectRequiredError("refresh_rejected", 400); } });
+    expect(status).toBe("failed");
+    expect(run.stats).toEqual({});
+    const [source] = await db.select().from(healthSource).where(eq(healthSource.id, sourceId));
+    expect(source.status).toBe("reconnect_required");
+  });
+
   it("never records resource content in run stats", async () => {
     server.set(LAB, [lab("a", 5.4)]);
     server.fail(CONDITION, new EpicError("fhir", 500));

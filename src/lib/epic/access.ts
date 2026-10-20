@@ -19,7 +19,7 @@ export async function freshAccessToken(
   if (hasFreshAccessToken(connection, deps.now)) {
     return connection.accessToken;
   }
-  if (!connection.refreshToken) throw new ReconnectRequiredError();
+  if (!connection.refreshToken) throw new ReconnectRequiredError("missing_refresh_token");
   const tokens = await deps.refresh(connection);
   await deps.persist(connection.id, tokens);
   return tokens.accessToken;

@@ -13,6 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
+import type { FailureDiagnostic } from "@/lib/epic/errors";
 
 // Stored health records. Design: docs/superpowers/specs/2026-09-26-record-storage-and-sync-design.md
 // Every `sealed_*` column is encrypted with the owner's data key (src/lib/crypto/user-keys.ts),
@@ -133,6 +134,9 @@ export type SyncQueryStats = {
   unchanged: number;
   removed: number;
   errorCode?: string;
+  failureStage?: FailureDiagnostic["failureStage"];
+  failureCode?: FailureDiagnostic["failureCode"];
+  httpStatus?: number;
   // A search not every organization supports: a failure isn't reported to the person.
   optional?: boolean;
 };

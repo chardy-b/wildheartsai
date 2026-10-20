@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { EpicError, ReconnectRequiredError } from "@/lib/epic/errors";
+import { EpicError } from "@/lib/epic/errors";
 import { fhirRead, fhirSearch, fhirSearchBounded } from "./client";
 
 const base = "https://fhir.example.org/api/FHIR/R4";
@@ -119,11 +119,11 @@ describe("fhirSearch", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
-  it("asks for a reconnect on 401 and reports other failures", async () => {
+  it("reports a resource's 401 without claiming that the refresh grant expired", async () => {
     const unauthorized = vi.fn().mockResolvedValue(new Response("", { status: 401 }));
     await expect(
       fhirSearch({ baseUrl: base, path: "Condition", resourceType: "Condition", accessToken: "at", fetchImpl: unauthorized }),
-    ).rejects.toBeInstanceOf(ReconnectRequiredError);
+    ).rejects.toMatchObject({ stage: "fhir", status: 401, code: "access_refused" });
 
     const broken = vi.fn().mockResolvedValue(new Response("", { status: 500 }));
     await expect(
@@ -152,8 +152,8 @@ describe("fhirRead", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("asks for a reconnect on 401 and enforces the size limit", async () => {
-    await expect(fhirRead({ baseUrl: base, path: "Binary/b1", accessToken: "at", fetchImpl: vi.fn().mockResolvedValue(new Response("", { status: 401 })) })).rejects.toBeInstanceOf(ReconnectRequiredError);
+  it("reports a resource's 401 without claiming the refresh grant expired, and enforces the size limit", async () => {
+    await expect(fhirRead({ baseUrl: base, path: "Binary/b1", accessToken: "at", fetchImpl: vi.fn().mockResolvedValue(new Response("", { status: 401 })) })).rejects.toMatchObject({ stage: "fhir", status: 401, code: "access_refused" });
     const big = vi.fn().mockResolvedValue(new Response(JSON.stringify({ resourceType: "Binary", data: "x".repeat(2000) })));
     await expect(fhirRead({ baseUrl: base, path: "Binary/b1", accessToken: "at", fetchImpl: big, maxBytes: 100 })).rejects.toMatchObject({ code: "response_too_large" });
   });
