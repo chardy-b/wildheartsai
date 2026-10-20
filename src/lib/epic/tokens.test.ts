@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CLIENT_ASSERTION_TYPE } from "./client-assertion";
-import { EpicError, ReconnectRequiredError } from "./errors";
+import { EpicError } from "./errors";
 import { exchangeCode, refreshAccessToken } from "./tokens";
 
 const now = new Date("2026-09-23T10:00:00Z");
@@ -89,6 +89,20 @@ describe("refreshAccessToken", () => {
     const fetchImpl = vi.fn().mockResolvedValue(Response.json({ error: "invalid_grant" }, { status: 400 }));
     await expect(
       refreshAccessToken({ tokenEndpoint, refreshToken: "rt", clientId: "c", clientAssertion: "j", fetchImpl, now }),
-    ).rejects.toBeInstanceOf(ReconnectRequiredError);
+    ).rejects.toMatchObject({ name: "ReconnectRequiredError", reason: "refresh_rejected", status: 400 });
+  });
+
+  it("keeps app authentication failures separate and discards arbitrary OAuth descriptions", async () => {
+    for (const [error, expected] of [["invalid_client", "invalid_client"], ["secret-token patient-123", "upstream_error"]]) {
+      const fetchImpl = vi.fn().mockResolvedValue(Response.json({ error, error_description: "secret-token patient-123" }, { status: 401 }));
+      const request = refreshAccessToken({ tokenEndpoint, refreshToken: "rt", clientId: "c", clientAssertion: "j", fetchImpl, now });
+      await expect(request).rejects.toBeInstanceOf(EpicError);
+      await expect(request).rejects.toMatchObject({ stage: "refresh", code: expected });
+    }
+  });
+
+  it("reports network failure without preserving the thrown message", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("secret-token patient-123"));
+    await expect(refreshAccessToken({ tokenEndpoint, refreshToken: "rt", clientId: "c", clientAssertion: "j", fetchImpl, now })).rejects.toMatchObject({ stage: "refresh", code: "network_error", message: "Epic refresh failed: network_error" });
   });
 });

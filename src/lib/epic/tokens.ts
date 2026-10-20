@@ -38,12 +38,13 @@ async function postToken(
       client_assertion: clientAssertion,
     }),
     cache: "no-store",
-  });
+  }).catch(() => { throw new EpicError(stage, undefined, "network_error"); });
 
   const json: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const code = typeof json === "object" && json && "error" in json ? String(json.error) : undefined;
-    if (stage === "refresh" && code === "invalid_grant") throw new ReconnectRequiredError();
+    const rawCode = typeof json === "object" && json && "error" in json ? json.error : undefined;
+    if (stage === "refresh" && rawCode === "invalid_grant") throw new ReconnectRequiredError("refresh_rejected", response.status);
+    const code = ["invalid_client", "invalid_scope", "unauthorized_client", "invalid_request", "invalid_grant"].find((value) => value === rawCode) ?? "upstream_error";
     throw new EpicError(stage, response.status, code);
   }
 

@@ -6,7 +6,7 @@ import { freshAccessToken, hasFreshAccessToken } from "./access";
 import { createClientAssertion, parsePrivateJwk, type EpicEnvironment } from "./client-assertion";
 import { getConnectionSecretForUpdate, updateTokens, type ConnectionSecrets } from "./connections";
 import { credentialsFor, epicEnvironmentOf, publishedJwks, type EpicCredentials } from "./credentials";
-import { ReconnectRequiredError } from "./errors";
+import { EpicError, ReconnectRequiredError } from "./errors";
 import { refreshAccessToken } from "./tokens";
 
 export function tokenKey(): Buffer {
@@ -48,17 +48,20 @@ export async function accessTokenFor(connection: ConnectionSecrets): Promise<str
   return db.transaction(async (transaction) => {
     const tx = transaction as unknown as typeof db;
     const current = await getConnectionSecretForUpdate(tx, key, connection.id);
-    if (!current) throw new ReconnectRequiredError();
+    if (!current) throw new EpicError("refresh", undefined, "connection_unavailable");
     return freshAccessToken(current, {
       now: new Date(),
       refresh: async (c) => {
         const credentials = credentialsForOrganization(c.fhirBaseUrl);
-        if (!c.refreshToken || !credentials) throw new ReconnectRequiredError();
+        if (!c.refreshToken) throw new ReconnectRequiredError("missing_refresh_token");
+        if (!credentials) throw new EpicError("refresh", undefined, "missing_credentials");
+        const clientAssertion = await clientAssertionFor(c.tokenEndpoint, credentials)
+          .catch(() => { throw new EpicError("refresh", undefined, "invalid_client_configuration"); });
         return refreshAccessToken({
           tokenEndpoint: c.tokenEndpoint,
           refreshToken: c.refreshToken,
           clientId: credentials.clientId,
-          clientAssertion: await clientAssertionFor(c.tokenEndpoint, credentials),
+          clientAssertion,
         });
       },
       persist: (id, tokens) => updateTokens(tx, key, id, tokens, new Date()),

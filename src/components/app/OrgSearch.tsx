@@ -1,4 +1,8 @@
-import type { Organization } from "@/lib/epic/directory";
+import { normalize, type Organization } from "@/lib/epic/directory";
+import type { SourceSummary } from "@/lib/sources";
+import { OrgSearchForm } from "./OrgSearchForm";
+
+type SearchConnection = Pick<SourceSummary, "id" | "fhirBaseUrl" | "status">;
 
 // A clinic connects under its health system's name; `org` picks which of an address's listed
 // names that is (the authorize route only accepts a listed one).
@@ -16,19 +20,24 @@ function details(org: Organization): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-function ConnectList({ organizations, label }: { organizations: Organization[]; label: string }) {
+function ConnectList({ organizations, label, connections = [] }: { organizations: Organization[]; label: string; connections?: SearchConnection[] }) {
+  const byUrl = new Map(connections.map((source) => [normalize(source.fhirBaseUrl), source]));
   return (
     <ul className="org-results">
       {organizations.map((org) => {
         const more = details(org);
+        const existing = byUrl.get(normalize(org.fhirBaseUrl));
+        const connected = existing?.status === "connected";
+        const status = connected ? "Connected" : existing?.status === "reconnect_required" ? "Needs you to sign in again" : existing?.status === "disconnected" ? "Disconnected" : null;
         return (
           <li key={org.fhirBaseUrl}>
             <span>
               {org.name}
               {more ? <small className="org-aka">{more}</small> : null}
+              {status ? <small className="org-aka">{status}</small> : null}
             </span>
-            <a className="btn" href={connectHref(org)}>
-              {label}
+            <a className="btn" href={connected ? `#source-${existing.id}` : connectHref(org)}>
+              {connected ? "View connection" : existing ? "Reconnect" : label}
             </a>
           </li>
         );
@@ -43,26 +52,20 @@ export function OrgSearch({
   results,
   sample,
   formAction,
+  connections,
 }: {
   environment: "sandbox" | "production";
   query: string;
   results: Organization[];
   sample: Organization | null;
   formAction: string;
+  connections?: SearchConnection[];
 }) {
   return (
     <div className="org-search">
       {environment === "production" ? (
         <>
-          <form className="org-search-form" action={formAction} method="get" role="search">
-            <label className="field">
-              Find your health system
-              <input name="q" type="search" defaultValue={query} placeholder="Hospital, clinic or practice name" />
-            </label>
-            <button className="btn" type="submit">
-              Search
-            </button>
-          </form>
+          <OrgSearchForm query={query} formAction={formAction} />
           <p className="org-note">
             Search for where you use MyChart, or for the hospital or clinic you visited. You&apos;ll sign in to MyChart to
             approve the connection.
@@ -74,7 +77,7 @@ export function OrgSearch({
         </p>
       )}
       {results.length > 0 ? (
-        <ConnectList organizations={results} label="Connect" />
+        <ConnectList organizations={results} label="Connect" connections={connections} />
       ) : query ? (
         <p className="org-note">
           No health systems match “{query}”. Try one word from its name. Only health systems that offer MyChart

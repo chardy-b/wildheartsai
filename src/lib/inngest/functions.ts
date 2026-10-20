@@ -7,6 +7,7 @@ import { queueScheduledRefreshes, sourcesDueForRefresh } from "@/lib/sync/schedu
 import { loadSyncJob, prepareSyncJob, sendSyncRequest, startSyncJob } from "@/lib/sync/server";
 import { directoryRefreshRequested, inngest, syncRequested } from "./client";
 import { chatEnabled, webChatRuntime } from "@/lib/chat-web/runtime";
+import { beginSchedule, failSchedule, finishSchedule } from "@/lib/sync/schedule-history";
 
 // Syncs one source. One run per source at a time; each query is its own retried step.
 export const syncSource = inngest.createFunction(
@@ -20,7 +21,7 @@ export const syncSource = inngest.createFunction(
     // Every retry of a step failed: end the run so the source isn't stuck "importing".
     onFailure: async ({ event }) => {
       const { runId } = event.data.event.data as { runId: string };
-      await failRun(db, runId, "error", new Date());
+      await failRun(db, runId, "error", new Date(), { failureStage: "app", failureCode: "job_retries_exhausted" });
     },
   },
   async ({ event, step }) =>
@@ -38,8 +39,17 @@ const QUEUE_CHUNK = 100;
 
 // Nightly at 10:17 UTC (3:17am Pacific daylight time, 2:17am standard): queue a sync for every connected source not synced in a day.
 export const refreshSources = inngest.createFunction(
-  { id: "refresh-sources", triggers: [{ cron: "17 10 * * *" }], retries: 2 },
-  async ({ step }) => {
+  {
+    id: "refresh-sources", triggers: [{ cron: "17 10 * * *" }], retries: 2,
+    onFailure: async ({ event }) => {
+      const id = event.data.event.id;
+      if (id) await failSchedule(db, id, new Date());
+    },
+  },
+  async ({ event, step }) => {
+    const id = event.id;
+    if (!id) throw new Error("Missing schedule event ID");
+    await step.run("record schedule start", () => beginSchedule(db, id, new Date()));
     // IDs only: step results are stored by the queue.
     const due = await step.run("find due sources", () => sourcesDueForRefresh(db, new Date()));
     const totals = { due: due.length, queued: 0, skipped: 0, failed: 0 };
@@ -51,6 +61,8 @@ export const refreshSources = inngest.createFunction(
       totals.skipped += counts.skipped;
       totals.failed += counts.failed;
     }
+    await step.run("record schedule result", () => finishSchedule(db, id, totals, new Date()));
+    console.info("[sync] nightly schedule finished", totals);
     return totals;
   },
 );
