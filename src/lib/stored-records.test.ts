@@ -273,7 +273,8 @@ describe("timeline filters and paging", () => {
 
     const northOnly = await allMatching(db, keys, userId, sources, { ...ALL, sourceIds: [north], from: "2024-01-01" }, 1);
     const bundle = exportBundle(northOnly, sources, now);
-    expect(bundle).toMatchObject({ resourceType: "Bundle", type: "collection", timestamp: now.toISOString(), total: 2 });
+    expect(bundle).toMatchObject({ resourceType: "Bundle", type: "collection", timestamp: now.toISOString() });
+    expect(bundle).not.toHaveProperty("total");
     expect(bundle.entry).toEqual([
       { fullUrl: "https://north.example/R4/Observation/n2", resource: expect.objectContaining({ id: "n2", code: { text: "TSH" } }) },
       { fullUrl: "https://north.example/R4/Observation/n1", resource: expect.objectContaining({ id: "n1" }) },

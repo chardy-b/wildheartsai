@@ -67,3 +67,29 @@
 .document-markdown blockquote { margin-inline: 0; padding-inline-start: 16px; border-inline-start: 3px solid var(--line); }
 .document-report-note { color: var(--text-2); font-size: .85rem; }
 .wildcard-view-options input, .wildcard-view-options select, .document-report select { color: inherit; background: var(--surface); padding: 8px; border: 1px solid var(--line); border-radius: 8px; max-width: 100%; }
+.fhir-eyebrow { margin-top: 28px; color: var(--text-2); font-size: .85rem; letter-spacing: .06em; }
+.fhir-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px; margin: 24px 0; }
+.fhir-download { padding: 12px 22px; border-radius: 999px; color: var(--night); background: var(--text); text-decoration: none; font-weight: 600; }
+.document-fhir > section { margin: 32px 0; }
+.document-fhir .document-review-notes h2 { margin-top: 0; font-size: 1.2rem; }
+.fhir-run-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 24px 0; }
+.fhir-run-picker select, .fhir-run-picker button, .fhir-json select { padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; max-width: 100%; }
+.fhir-run-picker button { cursor: pointer; }
+.fhir-facts dd { margin: 8px 0 0; overflow-wrap: anywhere; }
+.fhir-measurements { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 18px; }
+.fhir-measurements article { padding: 24px; border: 1px solid var(--line); border-radius: 16px; min-width: 0; background: var(--surface); overflow-wrap: anywhere; }
+.fhir-result-heading { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.fhir-result-heading h3 { margin: 0; }
+.fhir-resource-tag { font-size: .75rem; color: var(--text-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; }
+.fhir-result-value { font-size: 1.8rem; margin: 20px 0; }
+.fhir-result-value span { font-size: 1rem; color: var(--text-2); }
+.fhir-measurements dl { display: flex; flex-wrap: wrap; gap: 16px 24px; }
+.fhir-measurements dt, .fhir-facts dt { color: var(--text-2); font-size: .8rem; }
+.fhir-measurements dd { margin: 6px 0 0; }
+.fhir-issues { padding-inline-start: 20px; font-size: .85rem; color: var(--text-2); }
+.fhir-measurements summary, .fhir-json summary { cursor: pointer; padding-block: 8px; }
+.fhir-measurements blockquote { margin: 12px 0; white-space: pre-wrap; border-inline-start: 2px solid var(--line); padding-inline-start: 14px; }
+.fhir-json { min-width: 0; }
+.fhir-json pre { max-height: 650px; overflow: auto; padding: 20px; border: 1px solid var(--line); border-radius: 12px; font-size: .8rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wildcard-actions { flex-wrap: wrap; }
+.fhir-summary { white-space: pre-line; line-height: 1.7; }

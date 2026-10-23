@@ -9,7 +9,6 @@ export type ExportBundle = {
   resourceType: "Bundle";
   type: "collection";
   timestamp: string;
-  total: number;
   entry: { fullUrl?: string; resource: RecordItem["resource"] }[];
 };
 
@@ -19,7 +18,6 @@ export function exportBundle(items: RecordItem[], sources: SourceSummary[], now:
     resourceType: "Bundle",
     type: "collection",
     timestamp: now.toISOString(),
-    total: items.length,
     entry: items.map(({ resource, sourceId }) => {
       const base = sourceId ? baseUrls.get(sourceId) : undefined;
       return base && resource.id ? { fullUrl: `${base}/${resource.resourceType}/${resource.id}`, resource } : { resource };

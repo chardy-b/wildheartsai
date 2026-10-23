@@ -32,7 +32,7 @@ export function FileList({ files, deleting, onDelete, progress }: {
       <td><time dateTime={file.uploadedAt}>{file.uploadedAt.slice(0, 16).replace("T", " ")} UTC</time></td>
       <td>{fileSize(file.sizeBytes)}</td>
       <td>{file.status !== "ready" ? "Awaiting upload" : progress ? <a href={`/app/wildcards/${file.id}`}>{statusLabel(latest.get(file.id)?.status ?? "not_started")}</a> : "Loading…"}</td>
-      <td><div className="wildcard-actions">{file.status === "ready" && <a href={`/api/wildcards/${file.id}?download=1`} download>Download<span className="sr-only"> {path}</span></a>}
+      <td><div className="wildcard-actions">{file.status === "ready" && <><a href={`/app/wildcards/${file.id}/fhir`}>FHIR<span className="sr-only"> view for {path}</span></a><a href={`/api/wildcards/${file.id}?download=1`} download>Download<span className="sr-only"> {path}</span></a></>}
         <button type="button" disabled={deleting !== null} onClick={() => onDelete(file)}>{deleting === file.id ? "Deleting…" : "Delete"}<span className="sr-only"> {path}</span></button></div></td>
     </tr>;
   }

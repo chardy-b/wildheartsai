@@ -21,8 +21,8 @@ export default async function FilePage({ params }: PageProps<"/app/wildcards/[id
     <h1 className="wildcard-filename">{file.name}</h1>
     {file.relativePath && <p className="wildcard-file-path">{file.relativePath}</p>}
     <p>{file.type.split(";")[0]} · {fileSize(file.sizeBytes)}</p>
-    <p><a href={`/api/wildcards/${file.id}?download=1`} download>Download original</a></p>
+    <p className="fhir-actions"><Link href={`/app/wildcards/${file.id}/fhir`}>View FHIR / Medplum data</Link><a href={`/api/wildcards/${file.id}?download=1`} download>Download original</a></p>
     <DocumentReport file={file} />
-    <details className="document-original"><summary>Original uploaded file — may contain identifiers</summary><p>This is the original file, separate from the extraction report above.</p><FileViewer file={file} /></details>
+    <details className="document-original" id="document-original"><summary>Original uploaded file — may contain identifiers</summary><p>This is the original file, separate from the extraction report above.</p><FileViewer file={file} /></details>
   </section>;
 }
