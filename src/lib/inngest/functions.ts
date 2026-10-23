@@ -42,13 +42,12 @@ export const refreshSources = inngest.createFunction(
   {
     id: "refresh-sources", triggers: [{ cron: "17 10 * * *" }], retries: 2,
     onFailure: async ({ event }) => {
-      const id = event.data.event.id;
-      if (id) await failSchedule(db, id, new Date());
+      await failSchedule(db, event.data.run_id, new Date());
     },
   },
-  async ({ event, step }) => {
-    const id = event.id;
-    if (!id) throw new Error("Missing schedule event ID");
+  async ({ runId: id, step }) => {
+    // Scheduled timer events have no event ID. The execution's run ID is stable
+    // across step retries and also appears in the failure-handler payload.
     await step.run("record schedule start", () => beginSchedule(db, id, new Date()));
     // IDs only: step results are stored by the queue.
     const due = await step.run("find due sources", () => sourcesDueForRefresh(db, new Date()));
