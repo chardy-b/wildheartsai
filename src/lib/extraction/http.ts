@@ -7,7 +7,7 @@ import { fileError, PRIVATE_HEADERS, readUpload, sameOrigin, validFileId } from 
 import { fileObjects } from "@/lib/wildcards-r2";
 import { FAILURE_CODES } from "./failures";
 import { streamFile } from "@/lib/wildcards-store";
-import { authorized, backfill, cancel, claim, configured, enabledMethods, enqueue, extractionAudit, fail, finish, hash, listRuns, processingProgress, references, rerun, saveReference, workerConfig } from "./store";
+import { authorized, backfill, cancel, claim, configured, enabledMethods, enqueue, extractionAudit, fail, fileCoverage, finish, hash, listRuns, processingProgress, references, rerun, saveReference, workerConfig } from "./store";
 
 const json = (value: unknown) => Response.json(value, { headers: PRIVATE_HEADERS });
 async function body(request: Request) { return JSON.parse((await readUpload(request)).toString("utf8")) as unknown; }
@@ -20,6 +20,11 @@ export async function browserRequest(request: Request) {
       const query = new URL(request.url).searchParams, fileId = query.get("fileId") ?? undefined, resultId = query.get("resultId") ?? undefined, referenceId = query.get("referenceId") ?? undefined;
       if (query.get("overview") === "1") return json(await processingProgress(db, session.user.id));
       if (query.get("benchmark") === "1") return json(await extractionAudit(db,recordsKey(),session.user.id));
+      if (query.get("coverage") === "1") {
+        const ids = query.getAll("fileId");
+        if (!ids.length || ids.length > 50 || ids.some(id => !validFileId(id)) || query.get("details") === "1" && ids.length !== 1) return fileError("Not found.", 404);
+        return json(await fileCoverage(db, recordsKey(), session.user.id, [...new Set(ids)], query.get("details") === "1"));
+      }
       if ([fileId, resultId, referenceId].some(id => id && !validFileId(id))) return fileError("Not found.", 404);
       return json({ available: configured(), methods: enabledMethods(), runs: await listRuns(db, recordsKey(), session.user.id, fileId, resultId), references: fileId ? await references(db, recordsKey(), session.user.id, fileId, resultId ? undefined : referenceId) : [] });
     }

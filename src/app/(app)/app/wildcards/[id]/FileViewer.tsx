@@ -5,9 +5,11 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs
 import type { WildcardFile } from "@/lib/wildcards";
 import { DocumentMarkdown } from "../DocumentMarkdown";
 
-export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFile; onPageChange?: (page: number) => void; overlays?: { box: [number, number, number, number]; label: string; color?: string }[] }) {
+export function FileViewer({ file, onPageChange, overlays, pageNumber, activeOverlay = -1 }: { file: WildcardFile; onPageChange?: (page: number) => void; pageNumber?: number; activeOverlay?: number; overlays?: { box: [number, number, number, number]; label: string; color?: string }[] }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
-  const [page, setPage] = useState(1);
+  const [internalPage, setInternalPage] = useState(1);
+  const page = pageNumber ?? internalPage;
+  const [renderedPage, setRenderedPage] = useState(0);
   const [error, setError] = useState("");
   const [text, setText] = useState<string | null>(null);
   const [pageText, setPageText] = useState("");
@@ -15,8 +17,15 @@ export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFil
   const [width, setWidth] = useState(600);
   const canvas = useRef<HTMLCanvasElement>(null);
   const container = useRef<HTMLDivElement>(null);
+  const activeMark = useRef<HTMLSpanElement>(null);
   const url = `/api/wildcards/${file.id}`;
   useEffect(() => { onPageChange?.(page); }, [page, onPageChange]);
+  function changePage(next: number) {
+    if (pageNumber === undefined) setInternalPage(next); else onPageChange?.(next);
+  }
+  useEffect(() => {
+    if (!rendering && (file.type !== "application/pdf" || renderedPage === page)) activeMark.current?.scrollIntoView({ block: "center", inline: "nearest" });
+  }, [activeOverlay, page, renderedPage, rendering, file.type]);
 
   useEffect(() => {
     const element = container.current;
@@ -69,6 +78,8 @@ export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFil
         canvas.current.height = Math.floor(viewport.height * outputScale);
         render = documentPage.render({ canvas: canvas.current, viewport, transform: [outputScale, 0, 0, outputScale, 0, 0] });
         await render.promise;
+        if (!active) return;
+        setRenderedPage(page);
         const content = await documentPage.getTextContent();
         if (active) setPageText(content.items.map((item) => "str" in item ? item.str : "").join(" "));
       } catch { if (active) setError("This page could not be previewed. Download the original to open it on your device."); }
@@ -84,12 +95,12 @@ export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFil
       {!pdf && !error && <p role="status">Loading PDF…</p>}
       {pdf && <>
         <div className="wildcard-pagination">
-          <button type="button" disabled={page === 1 || rendering} onClick={() => setPage((value) => value - 1)}>Previous page</button>
+          <button type="button" disabled={page === 1 || rendering} onClick={() => changePage(page - 1)}>Previous page</button>
           <span aria-live="polite">Page {page} of {pdf.numPages}</span>
-          <button type="button" disabled={page === pdf.numPages || rendering} onClick={() => setPage((value) => value + 1)}>Next page</button>
+          <button type="button" disabled={page === pdf.numPages || rendering} onClick={() => changePage(page + 1)}>Next page</button>
         </div>
-        <div className="workbench-overlay"><canvas ref={canvas} aria-label={`Page ${page} of ${file.name}`} />
-          {overlays?.map(({ box: [x, y, r, b], label, color }, i) => <span key={i} className="workbench-overlay-mark" title={label} style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${(r - x) * 100}%`, height: `${(b - y) * 100}%`, borderColor:color, background:color ? `${color}18` : undefined }} />)}
+        <div className="workbench-overlay" aria-busy={rendering}><canvas key={page} ref={canvas} style={{ visibility: renderedPage === page ? "visible" : "hidden" }} aria-label={`Page ${page} of ${file.name}`} />
+          {!rendering && renderedPage === page && overlays?.map(({ box: [x, y, r, b], label, color }, i) => <span key={i} ref={i === activeOverlay ? activeMark : undefined} className={`workbench-overlay-mark${i === activeOverlay ? " is-active" : ""}`} title={label} style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${(r - x) * 100}%`, height: `${(b - y) * 100}%`, borderColor:color, background:color ? `${color}18` : undefined }} />)}
         </div>
         {pageText && <details><summary>Read embedded PDF text</summary><p>Read in your browser by PDF.js from the PDF text layer; OCR was not run here.</p><DocumentMarkdown text={pageText} /></details>}
       </>}
@@ -97,7 +108,7 @@ export function FileViewer({ file, onPageChange, overlays }: { file: WildcardFil
       // Authenticated route serves the original; image optimization would cache it.
       // eslint-disable-next-line @next/next/no-img-element
       <div className="workbench-overlay"><img src={url} alt={file.name} onError={() => setError("This image could not be previewed. Try downloading the original.")} />
-        {overlays?.map(({box:[x,y,r,b],label,color},i)=><span key={i} className="workbench-overlay-mark" title={label} style={{left:`${x*100}%`,top:`${y*100}%`,width:`${(r-x)*100}%`,height:`${(b-y)*100}%`,borderColor:color,background:color ? `${color}18` : undefined}} />)}
+        {overlays?.map(({box:[x,y,r,b],label,color},i)=><span key={i} ref={i === activeOverlay ? activeMark : undefined} className={`workbench-overlay-mark${i === activeOverlay ? " is-active" : ""}`} title={label} style={{left:`${x*100}%`,top:`${y*100}%`,width:`${(r-x)*100}%`,height:`${(b-y)*100}%`,borderColor:color,background:color ? `${color}18` : undefined}} />)}
       </div> :
       text === null ? !error && <p role="status">Loading text…</p> : <><DocumentMarkdown text={text} /><details><summary>View original plain text</summary><pre>{text}</pre></details></>}
   </div>;
