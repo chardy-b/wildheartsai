@@ -7,9 +7,9 @@ import { coveragePercent, coverageSummary, extractionMethod, statusLabel, warnin
 import { DocumentMarkdown } from "../DocumentMarkdown";
 
 type Run = ProgressItem & { createdAt: string; result: ExtractionResult | null };
-function ExtractedContent({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  return <details onToggle={e => setOpen(e.currentTarget.open)}><summary>Read redacted extracted content</summary>{open && <DocumentMarkdown text={text || "No text was extracted from this page."} />}</details>;
+function ExtractedContent({ text, initialOpen = false }: { text: string; initialOpen?: boolean }) {
+  const [open, setOpen] = useState(initialOpen);
+  return <details open={open} onToggle={e => setOpen(e.currentTarget.open)}><summary>Read redacted extracted content</summary>{open && <><DocumentMarkdown text={text} structure /><details><summary>Plain extracted text</summary><pre className="document-plain-text">{text}</pre></details></>}</details>;
 }
 export function DocumentReport({ file }: { file: WildcardFile }) {
   const [runs, setRuns] = useState<Run[] | null>(null), [selected, setSelected] = useState("");
@@ -66,7 +66,7 @@ export function DocumentReport({ file }: { file: WildcardFile }) {
         {result.pages.map(p => <section key={p.page} id={`extracted-page-${p.page}`} className="document-source-page"><h4>{file.type.startsWith("text/") ? "Text section" : "Page"} {p.page}</h4><p>Visual coverage: <strong>{file.type.startsWith("text/") ? "Not applicable" : coveragePercent(p.foregroundCoverage)}</strong>{p.foregroundCoverage === null && !file.type.startsWith("text/") ? " — no usable word geometry for this estimate" : ""} · {p.tables.length} detected tables · {p.figures.length} image regions</p>
           {p.foregroundCoverage !== null && !file.type.startsWith("text/") && <meter min={0} max={1} value={p.foregroundCoverage} aria-label={`Page ${p.page} visual coverage`}>{coveragePercent(p.foregroundCoverage)}</meter>}
           <p>Text source: {p.diagnostics?.textSource ?? "Direct text"}{p.fallbackReason ? ` · OCR fallback: ${p.fallbackReason.replaceAll("_", " ")}` : ""}</p>
-          <ExtractedContent text={p.redaction.text} />
+          <ExtractedContent text={p.redaction.text} initialOpen={p.page === 1} />
           {p.nativeAttempt && <details><summary>Native result before OCR · {p.nativeAttempt.status}</summary><ExtractedContent text={p.nativeAttempt.redaction.text} /><p>{p.nativeAttempt.tables.length} native tables · {p.nativeAttempt.words.length} native word boxes retained</p></details>}
           {p.figures.length > 0 && <details><summary>Detected images and captions</summary><ul>{p.figures.map((figure, i) => <li key={i}>{figure.caption || "No caption available"} · annotation source: {figure.origin}</li>)}</ul></details>}
         </section>)}
