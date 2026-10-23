@@ -61,6 +61,15 @@
 .document-report summary, .document-original summary, .document-source-page summary { cursor: pointer; }
 .document-markdown { line-height: 1.7; overflow-wrap: anywhere; max-width: 100%; }
 .document-markdown p { white-space: pre-line; }
+.document-markdown > :first-child { margin-top: 0; }
+.document-markdown h3, .document-markdown h4, .document-markdown h5, .document-markdown h6 { margin: 24px 0 12px; font-size: 1.1rem; font-weight: 650; line-height: 1.4; }
+.document-markdown p, .document-markdown ul, .document-markdown ol, .document-markdown table { margin-block: 12px; }
+.document-markdown ul, .document-markdown ol { padding-inline-start: 24px; }
+.document-markdown ul { list-style: disc; }
+.document-markdown ol { list-style: decimal; }
+.document-markdown li + li { margin-top: 6px; }
+.document-markdown th { background: var(--surface); font-weight: 600; }
+.document-plain-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow: auto; font-size: .85rem; }
 .document-markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .document-markdown table { display: block; overflow-x: auto; border-collapse: collapse; max-width: 100%; }
 .document-markdown th, .document-markdown td { padding: 10px 14px; border: 1px solid var(--line); text-align: left; }

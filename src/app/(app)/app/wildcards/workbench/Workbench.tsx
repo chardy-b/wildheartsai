@@ -130,7 +130,7 @@ export function Workbench({ files, initialFileId }: { files: WildcardFile[]; ini
           {score && <><p>Reviewed pages: {score.labeledPages} of {score.totalPages}. Token recall across reviewed pages: {percent(score.textToken.recall)}.</p><p>Measurement precision {percent(score.measurements?.precision)} · recall {percent(score.measurements?.recall)}</p><p>Known identifier matches in summary: {score.summaryLeakedGoldSpans ?? "Unscored"} · Age: {score.ageCorrect === null ? "Unscored" : score.ageCorrect ? "Correct" : "Incorrect"}</p></>}
           <h3>Redacted summary</h3>{result.summaryStatus === "accepted" ? <DocumentMarkdown text={result.summary} /> : <p>Summary withheld; check the review flags.</p>}
           <p>Age at encounter: {result.ageAtEncounter ?? "Omitted — insufficient date evidence"}. Machine extraction; verify against the original.</p>
-          <h3>Page {page} redacted text</h3><DocumentMarkdown text={p?.redaction.text ?? "No page"} />
+          <h3>Page {page} redacted text</h3><DocumentMarkdown text={p?.redaction.text ?? "No page"} structure />
           {showRaw && <><h3>Private extracted text</h3><pre>{p?.text}</pre><details><summary>Run manifest and raw result</summary><pre>{JSON.stringify(result, null, 2)}</pre></details></>}
           <details><summary>Structured measurements ({result.measurements.length})</summary><pre>{JSON.stringify(result.measurements, null, 2)}</pre></details>
           {result.warnings.length > 0 && <p>Review flags: {result.warnings.join(", ")}</p>}
