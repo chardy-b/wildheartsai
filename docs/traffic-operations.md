@@ -21,7 +21,7 @@ Vercel Analytics continues to provide aggregate referrals, countries and devices
 
 The reviewed log-mode custom rule is stored in `ops/firewall/credential-file-probes.json`. It matches only root `.env` files and variants, `.git`, `.aws`, and `.config/gcloud`. It cannot match `/api/epic/*`, `/api/chat/*`, `/api/extraction/*`, `/api/auth/*`, `/api/inngest`, or `/api/health`. Regression tests cover the observed probes and these exclusions. No broad IP, country, browser, Node, curl, or fingerprint block is used.
 
-On October 22, 2026, this was staged for project `wildheartsai`, team `lichards-projects`, as `rule_credential_file_probes_9gVetq`. Staging is not publication. The operator must review the draft before publishing log mode:
+On October 23, 2026, this was staged for project `wildheartsai`, team `lichards-projects`, as `rule_credential_file_probes_9gVetq`. Staging is not publication. The operator must review the draft before publishing log mode:
 
 ```powershell
 npx vercel@latest --scope lichards-projects firewall diff --project wildheartsai
