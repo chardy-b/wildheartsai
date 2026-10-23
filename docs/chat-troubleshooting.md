@@ -12,6 +12,7 @@ JSON events:
 | `chat_database_pool_failed` | An idle database connection failed; includes data/queue pool and a safe code. |
 | `chat_run_failed` | A worker failure event or failed/interrupted coordinator finalization was accepted; includes fixed failure code and the worker request ID. Duplicate request retries are quiet. |
 | `chat_runs_reaped` | Lease/session cleanup closed one or more queued/running runs; includes only the count. |
+| `chat_wake_failed` | The committed job remains queued; a fixed `invalid_config`, `scheduling_failed` or `delivery_failed` code explains why its wake hint failed. The coordinator's recovery check covers missed hints. |
 
 Startup failures retain the existing `chat_runtime_initialization_failed phase=... code=...` format. Use the phase to distinguish configuration, database role preflight, and authority construction. `UNKNOWN` means the error had no allowlisted code; raw exception text is deliberately excluded.
 

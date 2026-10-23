@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { M_PLUS_Rounded_1c } from "next/font/google";
 import { connection } from "next/server";
 import { Analytics } from "./analytics";
+import { logPageRequest } from "@/lib/page-traffic";
 import "./globals.css";
 
 const rounded = M_PLUS_Rounded_1c({
@@ -38,6 +39,7 @@ export const viewport: Viewport = {
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   // Render every page per request, so each gets the Content-Security-Policy nonce from src/proxy.ts.
   await connection();
+  await logPageRequest();
   return (
     <html lang="en" className={rounded.variable}>
       <body>

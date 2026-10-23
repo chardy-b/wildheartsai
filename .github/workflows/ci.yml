@@ -23,3 +23,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: npm ci --prefix services/chat --no-audit --no-fund
+      - run: npm run typecheck --prefix services/chat
+      - run: npm test --prefix services/chat
+      - run: npm run build --prefix services/chat

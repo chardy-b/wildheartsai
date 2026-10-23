@@ -2,8 +2,19 @@ import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
 import { contentSecurityPolicy } from "./lib/csp";
 import { proxy } from "./proxy";
+import { PAGE_TRAFFIC_ROUTE_HEADER } from "./lib/traffic-route";
 
 describe("proxy", () => {
+  it("replaces caller-supplied traffic labels and strips resource IDs", () => {
+    const response = proxy(new NextRequest("http://localhost:3000/app/wildcards/private-document?token=secret", {
+      headers: { cookie: "better-auth.session_token=abc.def", [PAGE_TRAFFIC_ROUTE_HEADER]: "/private-person" },
+    }));
+    expect(response.headers.get(`x-middleware-request-${PAGE_TRAFFIC_ROUTE_HEADER}`)).toBe("/app/wildcards/[id]");
+    const action = proxy(new NextRequest("http://localhost:3000/", {
+      method: "POST", headers: { [PAGE_TRAFFIC_ROUTE_HEADER]: "/forged" },
+    }));
+    expect(action.headers.get(`x-middleware-request-${PAGE_TRAFFIC_ROUTE_HEADER}`)).toBeNull();
+  });
   it("redirects /app requests without a session cookie to sign-in", () => {
     const response = proxy(new NextRequest("http://localhost:3000/app"));
     expect(response.status).toBe(307);

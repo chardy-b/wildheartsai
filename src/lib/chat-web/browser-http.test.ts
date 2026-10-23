@@ -8,7 +8,8 @@ import { session, chatRun, chatMessage } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { createConversation, createUserMessage, submitQuestionAndRun, claimRun, appendWorkerEvent, finalizeWorkerEvent } from "@/lib/chat/store";
 
-const mocks = vi.hoisted(() => ({ runtime: vi.fn(), getSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({ runtime: vi.fn(), getSession: vi.fn(), wake: vi.fn() }));
+vi.mock("./wake", () => ({ scheduleChatWake: mocks.wake }));
 vi.mock("./runtime", () => ({ webChatRuntime: mocks.runtime, ChatUnavailableError: class extends Error {} }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: mocks.getSession } } }));
 vi.mock("@/lib/env", () => ({ appUrl: () => "https://wildhearts.example" }));
@@ -56,10 +57,44 @@ describe("same-origin browser chat against the restricted data role", () => {
     const runs = await f.db.select().from(chatRun);
     expect(runs).toHaveLength(1);
     expect(runs[0]).toMatchObject({ userId: f.alice, initiatingSessionId: f.identity.session.id, status: "queued" });
+    expect(mocks.wake).toHaveBeenCalledTimes(2); // queued idempotent retries can repair a lost hint
     expect(JSON.stringify(await f.db.select().from(chatMessage))).not.toContain("Synthetic question");
     const history = await f.call("GET", ["conversations", f.aliceConversation.id]);
     expect(history.status).toBe(200);
     expect((await history.json()).messages).toMatchObject([{ content: "Synthetic question" }]);
+  });
+
+  it("wakes only after commit and never for rejected or rolled-back submissions", async () => {
+    const f = await fixture();
+    const path = ["conversations", f.aliceConversation.id, "runs"];
+    let committed = false;
+    const dataDb = new Proxy(f.dataDb, { get(target, property) {
+      if (property === "transaction") return async (work: (tx: Db) => Promise<unknown>) => {
+        const result = await target.transaction(work);
+        committed = true;
+        return result;
+      };
+      return Reflect.get(target, property);
+    } });
+    mocks.runtime.mockResolvedValue({ dataDb, authority: { reap: async () => 0 } });
+    mocks.wake.mockImplementationOnce(() => { expect(committed).toBe(true); });
+    expect((await f.call("POST", path, { message: "Synthetic wake test" })).status).toBe(202);
+    expect(mocks.wake).toHaveBeenCalledOnce();
+    mocks.wake.mockClear();
+    const second = await createConversation(f.dataDb, { userId: f.alice });
+    const failingDb = new Proxy(f.dataDb, { get(target, property) {
+      if (property === "transaction") return (work: (tx: Db) => Promise<unknown>) => target.transaction(async (tx) => {
+        await work(tx as unknown as Db);
+        throw new Error("synthetic_commit_failure");
+      });
+      return Reflect.get(target, property);
+    } });
+    mocks.runtime.mockResolvedValue({ dataDb: failingDb, authority: { reap: async () => 0 } });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try { expect((await f.call("POST", ["conversations", second.id, "runs"], { message: "Must roll back" })).status).toBe(503); }
+    finally { log.mockRestore(); }
+    expect(mocks.wake).not.toHaveBeenCalled();
+    expect(await f.db.select().from(chatRun).where(eq(chatRun.conversationId, second.id))).toHaveLength(0);
   });
 
   it("replays thinking and safe failure details only to the owning browser", async () => {
@@ -91,6 +126,7 @@ describe("same-origin browser chat against the restricted data role", () => {
     const listed = await f.call("GET", ["conversations"]);
     expect((await listed.json()).conversations.map((row: { id: string }) => row.id)).toEqual([f.aliceConversation.id]);
     expect(await f.db.select().from(chatRun)).toHaveLength(1);
+    expect(mocks.wake).not.toHaveBeenCalled();
   });
 
   it("rejects a stale auth cache after logout or session expiration", async () => {

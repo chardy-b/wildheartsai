@@ -8,6 +8,7 @@ COPY services/chat/src ./src
 COPY src/lib/chat/tools.ts /app/src/lib/chat/tools.ts
 COPY src/lib/chat/tool-activity.ts /app/src/lib/chat/tool-activity.ts
 COPY src/lib/fhir/categories.ts /app/src/lib/fhir/categories.ts
+COPY src/lib/chat-wake-protocol.ts /app/src/lib/chat-wake-protocol.ts
 RUN npm run build
 
 FROM node:22-alpine AS dependencies

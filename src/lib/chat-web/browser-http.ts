@@ -8,6 +8,7 @@ import { chatRun } from "@/lib/db/schema";
 import * as store from "@/lib/chat/store";
 import { webChatRuntime } from "./runtime";
 import { body, empty, guarded, json, ChatRequestError } from "./http";
+import { scheduleChatWake } from "./wake";
 
 const id = z.uuid();
 const question = z.object({ message: z.string().trim().min(1).max(12_000) }).strict();
@@ -32,7 +33,8 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
       reaping ??= authority.reap().then(() => { nextReapAt = Date.now() + 15_000; }).finally(() => { reaping = undefined; });
       await reaping;
     }
-    return asUser(dataDb, identity.user.id, async (tx) => {
+    let shouldWake = false;
+    const response = await asUser(dataDb, identity.user.id, async (tx) => {
       const locked = await tx.execute(sql`select public.chat_lock_session(${identity.session.id}, ${identity.user.id}) at time zone 'UTC' as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
       if (!locked.rows[0]?.expires_at || !Number.isFinite(new Date(locked.rows[0].expires_at).getTime()) || new Date(locked.rows[0].expires_at).getTime() <= Date.now()) throw new ChatRequestError(401, "unauthorized");
       const sessionExpiresAt = new Date(locked.rows[0].expires_at).getTime();
@@ -73,6 +75,7 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
           const [queued] = await tx.select({ total: count() }).from(chatRun).where(and(eq(chatRun.userId, scope.userId), inArray(chatRun.status, ["queued", "running"])));
           if (!prior.length && queued.total >= 3) throw new ChatRequestError(429, "queue_limit");
           const submitted = await store.submitQuestionAndRun(tx, owned, { message, idempotencyKey, initiatingSessionId: identity.session.id });
+          shouldWake = submitted.run.status === "queued";
           return json({ runId: submitted.run.id, status: submitted.run.status, created: !submitted.duplicate }, 202);
         }
       }
@@ -109,5 +112,8 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
       if (sessionExpiresAt <= Date.now()) throw new ChatRequestError(401, "unauthorized");
       return response;
     });
+    // Outside asUser: a rollback or failed commit must never produce a wake-up.
+    if (shouldWake) scheduleChatWake();
+    return response;
   }, { surface: "browser", method: request.method, path });
 }
