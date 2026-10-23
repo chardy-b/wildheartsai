@@ -1,4 +1,5 @@
 import type { ExtractionResult } from "./contracts";
+import { combinedCoverage } from "./coverage";
 
 type Box = [number, number, number, number];
 export type DebugRun = { id: string; method: string; result: ExtractionResult | null };
@@ -32,6 +33,11 @@ export function combinedEvidence(runs: DebugRun[], page: number) {
 export function debugOverlays(runs: DebugRun[], page: number, source: string, layer: string, threshold = .7) {
   const selected = source === "combined" ? runs : runs.filter(r => r.id === source);
   const overlays: DebugOverlay[] = [];
+  if (layer === "uncovered") {
+    const measured = combinedCoverage(selected).pages.find(p => p.page === page);
+    const regions = measured?.uncovered.map(box => ({ box, label: "Unidentified non-white content across selected methods", color: "#dc2626" })) ?? [];
+    return { overlays: regions.slice(0, 4000), total: regions.length, displayed: Math.min(regions.length, 4000) };
+  }
   if (layer === "disagreements") {
     for (const w of combinedEvidence(runs,page)) if(w.alternatives.length) overlays.push({ box:w.box,label:"Methods disagree here; review original",color:"#dc2626" });
   } else for (const [index,run] of selected.entries()) {
@@ -41,7 +47,6 @@ export function debugOverlays(runs: DebugRun[], page: number, source: string, la
       if(layer==="low-confidence" && (w.confidence===undefined || w.confidence>=threshold)) continue;
       overlays.push({box:w.box,label:layer==="low-confidence" ? `${run.method}: confidence ${(100*w.confidence!).toFixed(0)}%; not calibrated accuracy` : `${run.method}: extracted geometry`,color:layer==="low-confidence" ? "#d97706" : color});
     }
-    if(layer==="uncovered") for(const region of p.diagnostics?.uncoveredRegions ?? []) overlays.push({box:region.box,label:`${run.method}: uncovered foreground; may be a figure, rule, or missed text`,color:"#dc2626"});
     if(layer==="layout") {
       for(const region of p.layoutRegions ?? []) overlays.push({box:region.box,label:`${run.method}: ${region.kind} region`,color});
       for(const figure of p.figures) overlays.push({box:figure.box,label:`${run.method}: image region; interpretation unverified`,color:"#9333ea"});

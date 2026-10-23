@@ -76,7 +76,8 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
   const sources = await loadSourcesFor(session.user.id);
   const now = new Date();
   const connectedUrls = new Set(sources.filter((s) => s.status !== "disconnected").map((s) => s.fhirBaseUrl));
-  const choices = await connectChoices(db, environment, query, connectedUrls).catch(() => null);
+  // Existing systems stay searchable; OrgSearch shows their status and the appropriate action.
+  const choices = await connectChoices(db, environment, query, new Set()).catch(() => null);
   const { results, sample } = choices ?? { results: [], sample: null };
   const refreshMessage = typeof refresh === "string" ? REFRESH_MESSAGES[refresh] : undefined;
   const errorMessage = connectErrorMessage(error) ?? (choices ? undefined : connectErrorMessage("unavailable"));
@@ -105,7 +106,14 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
 
       <div className="panel-light">
         <h2>Add a health system</h2>
-        <OrgSearch environment={environment} query={query} results={results} sample={sample} formAction="/app/connections" />
+        <OrgSearch
+          environment={environment}
+          query={query}
+          results={results}
+          sample={sample && !connectedUrls.has(sample.fhirBaseUrl) ? sample : null}
+          formAction="/app/connections"
+          connections={sources}
+        />
       </div>
 
       {metriportEnabled() ? (
@@ -162,7 +170,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
         ) : (
           <ul className="connection-list">
             {sources.map((source) => (
-              <li className="connection source" key={source.id}>
+              <li className="connection source" key={source.id} id={`source-${source.id}`}>
                 <div className="source-main">
                   <h3>{source.organizationName}</h3>
                   <p role={source.syncing ? "status" : undefined}>
@@ -181,7 +189,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                   <SourceIssues source={source} />
                   {newPermissions(source, expanded).length ? (
                     <p className="source-issue">
-                      Reconnect to add {listOf(newPermissions(source, expanded))}.
+                      Optional: sign in again to add {listOf(newPermissions(source, expanded))}.
                     </p>
                   ) : null}
                 </div>
@@ -195,12 +203,12 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
                     </form>
                   ) : null}
                   {/* Signing in again replaces the stored access and keeps the records already imported. */}
-                  {source.vendor === "epic" ? (
+                  {source.vendor === "epic" && (source.status !== "connected" || newPermissions(source, expanded).length > 0) ? (
                     <a
-                      className={source.status === "connected" && !newPermissions(source, expanded).length ? "btn btn-ghost" : "btn"}
+                      className="btn"
                       href={`/api/epic/authorize?${new URLSearchParams({ iss: source.fhirBaseUrl, org: source.organizationName })}`}
                     >
-                      Reconnect
+                      {source.status === "connected" ? "Add permissions" : "Reconnect"}
                     </a>
                   ) : null}
                   {source.connectionId ? (

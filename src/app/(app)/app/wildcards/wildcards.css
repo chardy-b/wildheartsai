@@ -17,7 +17,7 @@
 .wildcard-list-heading h2 { margin-bottom: 8px; }
 .wildcard-list-heading h2 span { font-weight: 400; }
 .wildcard-list-heading p { font-size: 14px; margin-top: 0; }
-.wildcard-table-wrap { overflow-x: auto; }
+.wildcard-table-wrap { overflow-x: auto; position: relative; }
 .wildcard-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .wildcard-table th, .wildcard-table td { text-align: left; padding: 16px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .wildcard-table tbody th { min-width: 180px; max-width: 320px; overflow-wrap: anywhere; }
@@ -35,6 +35,18 @@
 .wildcard-empty { padding: 32px; border: 1px solid var(--line); border-radius: 16px; }
 .wildcard-filename { overflow-wrap: anywhere; margin-top: 20px !important; }
 .wildcard-viewer { max-width: 100%; margin-top: 24px; }
+.workbench-overlay { position: relative; width: fit-content; max-width: 100%; }
+.workbench-overlay-mark { position: absolute; box-sizing: border-box; border: 1px solid #198754; background: #19875422; pointer-events: none; min-width: 2px; min-height: 2px; }
+.workbench-overlay-mark.is-active { outline: 3px solid #dc2626; outline-offset: 3px; box-shadow: 0 0 0 5px #fff; }
+.document-coverage-review { margin: 28px 0; padding: clamp(16px, 3vw, 28px); border: 1px solid var(--line); border-radius: 16px; scroll-margin-top: 20px; }
+.document-coverage-review h2 { margin-top: 0; }
+.document-coverage-review dd { margin: 8px 0 0; font-size: 1.5rem; }
+.coverage-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-block: 20px; }
+.coverage-controls label { display: inline-flex; gap: 8px; align-items: center; }
+.coverage-controls button { padding: 8px 14px; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font: inherit; }
+.coverage-controls button:disabled { opacity: .5; cursor: default; }
+.wildcard-coverage-detail { display: block; margin-top: 6px; font-size: .8rem; color: var(--text-2); }
+.wildcard-coverage-legend { color: var(--text-2); font-size: .85rem; max-width: 80ch; }
 .wildcard-viewer canvas, .wildcard-viewer img { display: block; max-width: 100%; height: auto; }
 .wildcard-viewer pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 24px; border: 1px solid var(--line); border-radius: 16px; }
 .wildcard-pagination { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 20px; }
@@ -61,9 +73,44 @@
 .document-report summary, .document-original summary, .document-source-page summary { cursor: pointer; }
 .document-markdown { line-height: 1.7; overflow-wrap: anywhere; max-width: 100%; }
 .document-markdown p { white-space: pre-line; }
+.document-markdown > :first-child { margin-top: 0; }
+.document-markdown h3, .document-markdown h4, .document-markdown h5, .document-markdown h6 { margin: 24px 0 12px; font-size: 1.1rem; font-weight: 650; line-height: 1.4; }
+.document-markdown p, .document-markdown ul, .document-markdown ol, .document-markdown table { margin-block: 12px; }
+.document-markdown ul, .document-markdown ol { padding-inline-start: 24px; }
+.document-markdown ul { list-style: disc; }
+.document-markdown ol { list-style: decimal; }
+.document-markdown li + li { margin-top: 6px; }
+.document-markdown th { background: var(--surface); font-weight: 600; }
+.document-plain-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow: auto; font-size: .85rem; }
 .document-markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .document-markdown table { display: block; overflow-x: auto; border-collapse: collapse; max-width: 100%; }
 .document-markdown th, .document-markdown td { padding: 10px 14px; border: 1px solid var(--line); text-align: left; }
 .document-markdown blockquote { margin-inline: 0; padding-inline-start: 16px; border-inline-start: 3px solid var(--line); }
 .document-report-note { color: var(--text-2); font-size: .85rem; }
 .wildcard-view-options input, .wildcard-view-options select, .document-report select { color: inherit; background: var(--surface); padding: 8px; border: 1px solid var(--line); border-radius: 8px; max-width: 100%; }
+.fhir-eyebrow { margin-top: 28px; color: var(--text-2); font-size: .85rem; letter-spacing: .06em; }
+.fhir-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px; margin: 24px 0; }
+.fhir-download { padding: 12px 22px; border-radius: 999px; color: var(--night); background: var(--text); text-decoration: none; font-weight: 600; }
+.document-fhir > section { margin: 32px 0; }
+.document-fhir .document-review-notes h2 { margin-top: 0; font-size: 1.2rem; }
+.fhir-run-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 24px 0; }
+.fhir-run-picker select, .fhir-run-picker button, .fhir-json select { padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; max-width: 100%; }
+.fhir-run-picker button { cursor: pointer; }
+.fhir-facts dd { margin: 8px 0 0; overflow-wrap: anywhere; }
+.fhir-measurements { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 18px; }
+.fhir-measurements article { padding: 24px; border: 1px solid var(--line); border-radius: 16px; min-width: 0; background: var(--surface); overflow-wrap: anywhere; }
+.fhir-result-heading { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.fhir-result-heading h3 { margin: 0; }
+.fhir-resource-tag { font-size: .75rem; color: var(--text-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; }
+.fhir-result-value { font-size: 1.8rem; margin: 20px 0; }
+.fhir-result-value span { font-size: 1rem; color: var(--text-2); }
+.fhir-measurements dl { display: flex; flex-wrap: wrap; gap: 16px 24px; }
+.fhir-measurements dt, .fhir-facts dt { color: var(--text-2); font-size: .8rem; }
+.fhir-measurements dd { margin: 6px 0 0; }
+.fhir-issues { padding-inline-start: 20px; font-size: .85rem; color: var(--text-2); }
+.fhir-measurements summary, .fhir-json summary { cursor: pointer; padding-block: 8px; }
+.fhir-measurements blockquote { margin: 12px 0; white-space: pre-wrap; border-inline-start: 2px solid var(--line); padding-inline-start: 14px; }
+.fhir-json { min-width: 0; }
+.fhir-json pre { max-height: 650px; overflow: auto; padding: 20px; border: 1px solid var(--line); border-radius: 12px; font-size: .8rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wildcard-actions { flex-wrap: wrap; }
+.fhir-summary { white-space: pre-line; line-height: 1.7; }

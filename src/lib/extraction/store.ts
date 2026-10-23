@@ -7,6 +7,8 @@ import type { Db } from "@/lib/db/types";
 import { hmacFor, sealField, unsealField, userKeysFor } from "@/lib/crypto/user-keys";
 import { createSchema, METHODS, referenceSchema, resultSchema } from "./contracts";
 import { auditGroups, auditResult, type AuditRow } from "./audit";
+import { publicFailureCode } from "./failures";
+import { combinedCoverage, type CoverageRun } from "./coverage";
 
 const location = (id: string, field: string) => ({ table: "extraction_run", rowId: id, field });
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -14,7 +16,54 @@ function grant(id: string, claimId: string, key: string) { return `whdoc1.${crea
 export function enabledMethods() { return METHODS.filter(method => (process.env.EXTRACTION_METHODS ?? "native,tesseract").split(",").includes(method)); }
 export function configured() { return process.env.EXTRACTION_ENABLED === "1" && enabledMethods().length > 0 && /^[a-f0-9]{64}$/.test(process.env.EXTRACTION_COORDINATOR_TOKEN_HASH ?? "") && (process.env.EXTRACTION_GRANT_KEY?.length ?? 0) >= 32; }
 
-export async function enqueue(db: Db, kek: Buffer, userId: string, sessionId: string, raw: unknown, lineage?: { parentRunId: string; expectedEnvironment: string }) {
+export const BACKFILL_BATCH_SIZE = 20;
+export async function backfill(db: Db, kek: Buffer, userId: string, sessionId: string, resumeCancelled = false) {
+  if (!enabledMethods().includes("native") || !enabledMethods().includes("tesseract")) throw new Error("method_unavailable");
+  return asUser(db, userId, async tx => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`extraction:${userId}`}))`);
+    const [initiator] = await tx.select({ id: session.id }).from(session).where(and(eq(session.id, sessionId), eq(session.userId, userId), gt(session.expiresAt, new Date()))).for("share");
+    if (!initiator) throw new Error("inactive_session");
+    // Match deletion/completion lock order: file before job.
+    await tx.select({ id: wildcardFile.id }).from(wildcardFile).where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"))).for("share");
+    // Only the signed-in owner can extend authorization. Inspect encrypted
+    // configuration in owner context, never in the dispatch metadata context.
+    const existing = await tx.select({ id: extractionJob.id, status: extractionJob.status, durable: extractionJob.durable, errorCode: extractionJob.errorCode, config: extractionRun.sealedConfig })
+      .from(extractionJob).innerJoin(extractionRun, eq(extractionRun.id, extractionJob.id)).innerJoin(wildcardFile, eq(wildcardFile.id, extractionRun.fileId))
+      .where(and(eq(extractionJob.userId, userId), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"), inArray(extractionJob.status, resumeCancelled ? ["waiting", "queued", "running", "cancelled"] : ["waiting", "queued", "running"]))).for("update", { of: extractionJob });
+    const existingKeys = existing.length ? await userKeysFor(tx, kek, userId, new Date()) : null;
+    const upgrades: string[] = [], resumptions: string[] = [];
+    for (const job of existing) {
+      if (JSON.parse(unsealField(existingKeys!, job.config, location(job.id, "config"))).pipeline !== "native-ocr/v1" || job.errorCode === "cancelled_by_owner") continue;
+      if (job.status === "cancelled") {
+        resumptions.push(job.id);
+      } else if (!job.durable) {
+        upgrades.push(job.id);
+      }
+    }
+    for (let offset = 0; offset < upgrades.length; offset += BACKFILL_BATCH_SIZE) {
+      await tx.update(extractionJob).set({ durable: true }).where(inArray(extractionJob.id, upgrades.slice(offset, offset + BACKFILL_BATCH_SIZE)));
+    }
+    for (let offset = 0; offset < resumptions.length; offset += BACKFILL_BATCH_SIZE) {
+      await tx.update(extractionJob).set({ durable: true, status: "waiting", sessionId, grantHash: null, claimId: null, deadlineAt: null, errorCode: null, nextAttemptAt: new Date() }).where(inArray(extractionJob.id, resumptions.slice(offset, offset + BACKFILL_BATCH_SIZE)));
+    }
+    // Snapshot only ready documents that have never had a run. A repeated click
+    // cannot duplicate enrollment or silently rerun an existing document.
+    const files = await tx.select({ id: wildcardFile.id }).from(wildcardFile).where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready"),
+      sql`not exists (select 1 from extraction_run r where r.file_id = ${wildcardFile.id} and r.user_id = ${userId})`)).for("share");
+    const keys = files.length ? await userKeysFor(tx, kek, userId, new Date()) : null;
+    for (let offset = 0; offset < files.length; offset += BACKFILL_BATCH_SIZE) {
+      const runs = files.slice(offset, offset + BACKFILL_BATCH_SIZE).map(file => {
+        const id = randomUUID();
+        return { id, userId, fileId: file.id, method: "native", sealedConfig: sealField(keys!, JSON.stringify({ encounterDate: null, pipeline: "native-ocr/v1" }), location(id, "config")) };
+      });
+      await tx.insert(extractionRun).values(runs);
+      await tx.insert(extractionJob).values(runs.map(r => ({ id: r.id, userId, sessionId, status: "waiting", durable: true })));
+    }
+    return { enrolled: files.length, upgraded: upgrades.length, resumed: resumptions.length, batchSize: BACKFILL_BATCH_SIZE };
+  });
+}
+
+export async function enqueue(db: Db, kek: Buffer, userId: string, sessionId: string, raw: unknown, lineage?: { parentRunId: string; expectedEnvironment: string; pipeline?: string }) {
   const input = createSchema.parse(raw);
   if (input.methods.some(method => !enabledMethods().includes(method))) throw new Error("method_unavailable");
   return asUser(db, userId, async tx => {
@@ -31,7 +80,7 @@ export async function enqueue(db: Db, kek: Buffer, userId: string, sessionId: st
     for (const fileId of files) for (const method of methods) {
       const id = randomUUID();
       await tx.insert(extractionRun).values({ id, userId, fileId, method, sealedConfig: sealField(keys, JSON.stringify({ encounterDate: input.encounterDate ?? null, ...lineage }), location(id, "config")) });
-      await tx.insert(extractionJob).values({ id, userId, sessionId });
+      await tx.insert(extractionJob).values({ id, userId, sessionId, ...(lineage?.pipeline === "native-ocr/v1" ? { status: "waiting", durable: true } : {}) });
       ids.push(id);
     }
     return ids;
@@ -45,10 +94,10 @@ export async function rerun(db: Db, kek: Buffer, userId: string, sessionId: stri
     const keys=await userKeysFor(tx,kek,userId,new Date());
     const config=JSON.parse(unsealField(keys,run.sealedConfig,location(id,"config")));
     const result=run.sealedResult ? resultSchema.parse(JSON.parse(unsealField(keys,run.sealedResult,location(id,"result")))) : null;
-    return { fileIds:[run.fileId],methods:[run.method],...(config.encounterDate ? {encounterDate:config.encounterDate} : {}), expectedEnvironment:result?.manifest.environment_fingerprint ?? "unknown" };
+    return { fileIds:[run.fileId],methods:[run.method],...(config.encounterDate ? {encounterDate:config.encounterDate} : {}), expectedEnvironment:result?.manifest.environment_fingerprint ?? "unknown", pipeline:config.pipeline };
   });
-  const {expectedEnvironment,...selection}=input;
-  return enqueue(db,kek,userId,sessionId,selection,{parentRunId:id,expectedEnvironment});
+  const {expectedEnvironment,pipeline,...selection}=input;
+  return enqueue(db,kek,userId,sessionId,selection,{parentRunId:id,expectedEnvironment,...(pipeline === "native-ocr/v1" ? {pipeline} : {})});
 }
 
 export async function listRuns(db: Db, kek: Buffer, userId: string, fileId?: string, resultId?: string) {
@@ -63,19 +112,47 @@ export async function listRuns(db: Db, kek: Buffer, userId: string, fileId?: str
   });
 }
 
+// Only requested visible files, and one completed result per method. Responses
+// contain derived coverage, never extracted text, PII spans or page rasters.
+export async function fileCoverage(db: Db, kek: Buffer, userId: string, fileIds: string[], details = false) {
+  if (!fileIds.length || fileIds.length > 50) throw new Error("coverage_file_limit");
+  return asUser(db, userId, async tx => {
+    const files = await tx.select({ id: wildcardFile.id }).from(wildcardFile)
+      .where(and(eq(wildcardFile.userId, userId), inArray(wildcardFile.id, fileIds), eq(wildcardFile.status, "ready")));
+    if (!files.length) return { files: [] };
+    const metadata = await tx.selectDistinctOn([extractionRun.fileId, extractionRun.method], {
+      id: extractionRun.id, fileId: extractionRun.fileId, method: extractionRun.method,
+    }).from(extractionRun).innerJoin(extractionJob, eq(extractionRun.id, extractionJob.id))
+      .where(and(eq(extractionRun.userId, userId), inArray(extractionRun.fileId, files.map(f => f.id)), eq(extractionJob.status, "completed")))
+      .orderBy(extractionRun.fileId, extractionRun.method, desc(extractionRun.createdAt), desc(extractionRun.id));
+    const keys = metadata.length ? await userKeysFor(tx, kek, userId, new Date()) : null;
+    const output = [];
+    for (const file of files) {
+      const runs: CoverageRun[] = [];
+      for (const run of metadata.filter(r => r.fileId === file.id)) {
+        const [stored] = await tx.select({ result: extractionRun.sealedResult }).from(extractionRun).where(eq(extractionRun.id, run.id));
+        if (stored?.result && keys) runs.push({ ...run, result: resultSchema.parse(JSON.parse(unsealField(keys, stored.result, location(run.id, "result")))) });
+      }
+      const { pages, ...summary } = combinedCoverage(runs);
+      output.push({ fileId: file.id, coverage: details ? { ...summary, pages } : summary });
+    }
+    return { files: output };
+  });
+}
+
 // Account-wide progress reads dispatch metadata only, never document/result ciphertext.
 export async function processingProgress(db: Db, userId: string) {
   return asUser(db, userId, async tx => {
     const [total] = await tx.select({ count: sql<number>`count(*)::int` }).from(wildcardFile).where(and(eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready")));
     const rows = await tx.selectDistinctOn([extractionRun.fileId], { fileId: extractionRun.fileId, id: extractionRun.id, method: extractionRun.method,
-      status: extractionJob.status, attempts: extractionJob.attempts, nextAttemptAt: extractionJob.nextAttemptAt, deadlineAt: extractionJob.deadlineAt, errorCode: extractionJob.errorCode })
+      status: extractionJob.status, durable: extractionJob.durable, attempts: extractionJob.attempts, nextAttemptAt: extractionJob.nextAttemptAt, deadlineAt: extractionJob.deadlineAt, errorCode: extractionJob.errorCode })
       .from(extractionRun).innerJoin(extractionJob, eq(extractionJob.id, extractionRun.id)).innerJoin(wildcardFile, eq(wildcardFile.id, extractionRun.fileId))
       .where(and(eq(extractionRun.userId, userId), eq(wildcardFile.userId, userId), eq(wildcardFile.status, "ready")))
-      .orderBy(extractionRun.fileId, sql`case when ${extractionJob.status} in ('queued', 'running') then 0 else 1 end`, desc(extractionRun.createdAt), desc(extractionRun.id));
+      .orderBy(extractionRun.fileId, sql`case when ${extractionJob.status} in ('waiting', 'queued', 'running') then 0 else 1 end`, desc(extractionRun.createdAt), desc(extractionRun.id));
     const files = rows.map(({ deadlineAt, ...r }) => ({ ...r, nextAttemptAt: r.nextAttemptAt.toISOString(), status: r.status === "running" && deadlineAt && deadlineAt < new Date() ? "recovering" : r.status }));
-    const counts: Record<string, number> = { not_started: total.count - files.length, queued: 0, running: 0, recovering: 0, completed: 0, failed: 0, cancelled: 0, expired: 0 };
+    const counts: Record<string, number> = { not_started: total.count - files.length, waiting: 0, queued: 0, running: 0, recovering: 0, completed: 0, failed: 0, cancelled: 0, expired: 0 };
     for (const file of files) counts[file.status] = (counts[file.status] ?? 0) + 1;
-    return { documents: total.count, counts, files };
+    return { documents: total.count, counts, files, durablePending: files.filter(f => f.durable && ["waiting", "queued", "running", "recovering"].includes(f.status)).length };
   });
 }
 
@@ -125,7 +202,7 @@ export async function references(db: Db, kek: Buffer, userId: string, fileId: st
   });
 }
 export async function cancel(db: Db, userId: string, id: string) {
-  return asUser(db, userId, async tx => (await tx.update(extractionJob).set({ status: "cancelled", grantHash: null }).where(and(eq(extractionJob.id, id), eq(extractionJob.userId, userId), inArray(extractionJob.status, ["queued", "running"]))).returning({ id: extractionJob.id })).length > 0);
+  return asUser(db, userId, async tx => (await tx.update(extractionJob).set({ status: "cancelled", grantHash: null, errorCode: "cancelled_by_owner" }).where(and(eq(extractionJob.id, id), eq(extractionJob.userId, userId), inArray(extractionJob.status, ["waiting", "queued", "running"]))).returning({ id: extractionJob.id })).length > 0);
 }
 
 // This context reveals only queue metadata. It is never used for documents, keys, labels, or results.
@@ -135,24 +212,29 @@ async function queue<T>(db: Db, work: (tx: Db) => Promise<T>) {
     return work(tx as unknown as Db);
   });
 }
-export async function claim(db: Db, requestId: string, key: string) {
+export async function claim(db: Db, requestId: string, key: string, admitBackfill = false) {
   return queue(db, async tx => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('extraction-claim'))`);
-    await tx.update(extractionJob).set({ status: "cancelled", grantHash: null }).where(and(inArray(extractionJob.status, ["queued", "running"]), sql`not exists (select 1 from public.session s where s.id = ${extractionJob.sessionId} and s.user_id = ${extractionJob.userId} and s.expires_at > now())`));
+    await tx.update(extractionJob).set({ status: "cancelled", grantHash: null }).where(and(eq(extractionJob.durable, false), inArray(extractionJob.status, ["waiting", "queued", "running"]), sql`not exists (select 1 from public.session s where s.id = ${extractionJob.sessionId} and s.user_id = ${extractionJob.userId} and s.expires_at > now())`));
     // The queue survives the VPS. Revoke expired attempt grants before issuing new ones.
     await tx.update(extractionJob).set({ status: "queued", grantHash: null, claimId: null, deadlineAt: null,
       errorCode: "worker_interrupted", nextAttemptAt: new Date(Date.now() + 30_000) })
       .where(and(eq(extractionJob.status, "running"), sql`${extractionJob.deadlineAt} <= now()`));
     const [previous] = await tx.select().from(extractionJob).where(eq(extractionJob.claimId, requestId));
-    if (previous) return previous.status === "running" && previous.deadlineAt! > new Date() ? { id: previous.id, capability: grant(previous.id, requestId, key) } : null;
+    if (previous) return previous.status === "running" && previous.deadlineAt! > new Date() ? { id: previous.id, capability: grant(previous.id, requestId, key), attempt: previous.attempts } : null;
     // Recover monitoring after a coordinator restart without launching another job.
     const [active] = await tx.select().from(extractionJob).where(and(eq(extractionJob.status, "running"), gt(extractionJob.deadlineAt, new Date()))).orderBy(asc(extractionJob.createdAt)).limit(1);
-    if (active?.claimId) return { id: active.id, capability: grant(active.id, active.claimId, key), resumed: true };
+    if (active?.claimId) return { id: active.id, capability: grant(active.id, active.claimId, key), resumed: true, attempt: active.attempts };
+    const [count] = await tx.select({ total: sql<number>`count(*)::int` }).from(extractionJob).where(inArray(extractionJob.status, ["queued", "running"]));
+    if (admitBackfill && count.total < BACKFILL_BATCH_SIZE) {
+      const waiting = await tx.select({ id: extractionJob.id }).from(extractionJob).where(eq(extractionJob.status, "waiting")).orderBy(asc(extractionJob.createdAt), asc(extractionJob.id)).limit(BACKFILL_BATCH_SIZE - count.total).for("update", { skipLocked: true });
+      if (waiting.length) await tx.update(extractionJob).set({ status: "queued" }).where(inArray(extractionJob.id, waiting.map(r => r.id)));
+    }
     const [next] = await tx.select().from(extractionJob).where(and(eq(extractionJob.status, "queued"), sql`${extractionJob.nextAttemptAt} <= now()`)).orderBy(asc(extractionJob.nextAttemptAt), asc(extractionJob.createdAt)).limit(1).for("update", { skipLocked: true });
     if (!next) return null;
     const capability = grant(next.id, requestId, key);
     await tx.update(extractionJob).set({ status: "running", claimId: requestId, grantHash: hash(capability), attempts: sql`${extractionJob.attempts} + 1`, deadlineAt: new Date(Date.now() + 30 * 60_000) }).where(eq(extractionJob.id, next.id));
-    return { id: next.id, capability };
+    return { id: next.id, capability, attempt: next.attempts + 1 };
   });
 }
 export async function authorized(db: Db, capability: string, allowCompleted = false) {
@@ -162,7 +244,7 @@ export async function authorized(db: Db, capability: string, allowCompleted = fa
   return asUser(db, row.userId, async tx => {
     const [active] = await tx.select({ id: session.id }).from(session).where(and(eq(session.id, row.sessionId), eq(session.userId, row.userId), gt(session.expiresAt, new Date())));
     const [run] = await tx.select().from(extractionRun).innerJoin(wildcardFile, eq(extractionRun.fileId, wildcardFile.id)).where(and(eq(extractionRun.id, row.id), eq(extractionRun.userId, row.userId), eq(wildcardFile.status, "ready"), eq(wildcardFile.userId, row.userId)));
-    if (!active || !run) throw new Error("inactive");
+    if ((!row.durable && !active) || !run) throw new Error("inactive");
     return { job: row, run: run.extraction_run };
   });
 }
@@ -170,7 +252,7 @@ export async function workerConfig(db: Db, kek: Buffer, capability: string) {
   const { job, run } = await authorized(db, capability);
   return asUser(db, job.userId, async tx => {
     const keys = await userKeysFor(tx, kek, job.userId, new Date());
-    return { method: run.method, ...JSON.parse(unsealField(keys, run.sealedConfig, location(run.id, "config"))), deadlineAt: job.deadlineAt!.toISOString() };
+    return { method: run.method, ...JSON.parse(unsealField(keys, run.sealedConfig, location(run.id, "config"))), attempt: job.attempts, deadlineAt: job.deadlineAt!.toISOString() };
   });
 }
 export async function finish(db: Db, kek: Buffer, capability: string, raw: unknown) {
@@ -178,10 +260,11 @@ export async function finish(db: Db, kek: Buffer, capability: string, raw: unkno
   const { job, run } = await authorized(db, capability, true);
   if (result.method !== run.method) throw new Error("wrong_method");
   return asUser(db, job.userId, async tx => {
-    // Serialize completion with logout/session revocation and document deletion.
+    // Durable backfills retain account authorization across logout. File
+    // deletion, explicit cancellation and short-lived attempt grants still apply.
     const [activeSession] = await tx.select({ id: session.id }).from(session).where(and(eq(session.id, job.sessionId), eq(session.userId, job.userId), gt(session.expiresAt, new Date()))).for("share");
     const [activeFile] = await tx.select({ id: wildcardFile.id }).from(wildcardFile).where(and(eq(wildcardFile.id, run.fileId), eq(wildcardFile.userId, job.userId), eq(wildcardFile.status, "ready"))).for("share");
-    if (!activeSession || !activeFile) throw new Error("inactive");
+    if ((!job.durable && !activeSession) || !activeFile) throw new Error("inactive");
     const [current] = await tx.select().from(extractionJob).where(eq(extractionJob.id, job.id)).for("update");
     if (!current || current.grantHash !== hash(capability) || !current.deadlineAt || current.deadlineAt <= new Date() || !["running", "completed"].includes(current.status)) throw new Error("inactive");
     const keys = await userKeysFor(tx, kek, job.userId, new Date());
@@ -192,10 +275,11 @@ export async function finish(db: Db, kek: Buffer, capability: string, raw: unkno
     await tx.update(extractionJob).set({ status: "completed", errorCode: null }).where(eq(extractionJob.id, job.id));
   });
 }
-export async function fail(db: Db, capability: string, retryable = false) {
+export async function fail(db: Db, capability: string, retryable = false, code?: unknown) {
   const { job } = await authorized(db, capability);
   const delay = Math.min(30 * 2 ** Math.min(Math.max(job.attempts - 1, 0), 6), 1800);
+  const reason = publicFailureCode(code);
   await asUser(db, job.userId, tx => tx.update(extractionJob).set({ status: retryable ? "queued" : "failed",
-    errorCode: retryable ? "service_unavailable_retrying" : "processing_failed", grantHash: null, claimId: null, deadlineAt: null,
+    errorCode: retryable ? (reason === "processing_failed" ? "service_unavailable_retrying" : `${reason}_retrying`) : reason, grantHash: null, claimId: null, deadlineAt: null,
     nextAttemptAt: new Date(Date.now() + delay * 1000) }).where(and(eq(extractionJob.id, job.id), eq(extractionJob.status, "running"), eq(extractionJob.grantHash, hash(capability)))));
 }

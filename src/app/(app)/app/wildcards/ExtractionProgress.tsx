@@ -27,10 +27,26 @@ export function useExtractionProgress() {
 }
 
 export function ExtractionProgress({ data, error }: { data: ProgressData | null; error: boolean }) {
+  const [busy, setBusy] = useState(false), [message, setMessage] = useState("");
+  async function startBackfill(resumeCancelled = false) {
+    setBusy(true); setMessage("");
+    try {
+      const response = await fetch("/api/extraction", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ backfill: true, resumeCancelled }) });
+      if (!response.ok) throw new Error();
+      const result = await response.json();
+      setMessage(`${result.enrolled} documents enrolled, ${result.upgraded} existing jobs made durable, ${result.resumed} cancelled backfill jobs resumed. Up to ${result.batchSize} jobs are admitted at a time; counts refresh shortly.`);
+    } catch { setMessage("Backfill could not be started. Please try again."); }
+    finally { setBusy(false); }
+  }
   return <section className="extraction-progress" aria-label="Document processing progress"><h2>Extraction progress</h2>
-    <p>Uploading stores the original. Extraction starts when you queue a method in the workbench.</p>
+    <p>Uploading stores the original. Queue individual methods in the workbench or backfill all unprocessed documents.</p>
     {error ? <p role="alert">Progress could not be refreshed. Displayed counts may be out of date.</p> : !data ? <p role="status">Loading processing progress…</p> : null}
     {data && <><p>{data.documents} uploaded documents · active run, otherwise latest run per document · refreshes every 10 seconds</p><dl className="extraction-counts">{Object.entries(data.counts).map(([status, count]) => <div key={status}><dt>{statusLabel(status)}</dt><dd>{count}</dd></div>)}</dl></>}
+    {data?.durablePending !== undefined && <p>{data.durablePending} pending documents authorized to continue after sign-out or session expiry.</p>}
+    <button disabled={busy || !data || data.counts.not_started === 0} onClick={() => void startBackfill()}>{busy ? "Enrolling documents…" : "Backfill unprocessed documents"}</button>
+    <button disabled={busy || !data} onClick={() => void startBackfill(true)}>Make existing backfill durable and resume cancelled jobs</button>
+    <p role="status">{message}</p>
+    <p>Backfill uses native parsing first and selective OCR fallback. Waiting documents are stored durably and admitted in batches of 20. New backfills continue after sign-out or session expiry. Upgrade existing backfill jobs above; this also resumes previously cancelled backfill jobs, except jobs explicitly cancelled under the current policy. You can still cancel work or delete a document. Individual method experiments remain tied to their initiating session.</p>
     <p>Completed means the run finished. Open its report to check withheld summaries, warnings, measurements, and coverage.</p>
     <div className="wildcard-actions"><Link href="/app/wildcards/progress">View all document statuses</Link><Link href="/app/wildcards/workbench">Queue or compare extraction methods</Link><Link href="/app/wildcards/benchmark">Quality report and metrics</Link></div>
   </section>;

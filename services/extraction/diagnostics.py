@@ -1,5 +1,19 @@
 """Bounded, local page diagnostics. Suspicious ink is a review proxy, not OCR truth."""
+import base64
 from PIL import Image, ImageChops, ImageDraw
+
+def foreground_mask(image):
+    """Small spatial evidence for combining runs; stored only inside encrypted results."""
+    sample = image.convert('L')
+    sample.thumbnail((200, 200))
+    packed = bytearray((sample.width * sample.height + 7) // 8)
+    for index, value in enumerate(sample.getdata()):
+        if value < 220:
+            packed[index // 8] |= 1 << (index % 8)
+    result = {'width': sample.width, 'height': sample.height,
+              'bits': base64.b64encode(packed).decode('ascii')}
+    sample.close()
+    return result
 
 def page_diagnostics(image, words, kind, native_characters=None, image_regions=0):
     sample = image.convert("L")
@@ -28,7 +42,7 @@ def page_diagnostics(image, words, kind, native_characters=None, image_regions=0
     result = {"version": 1, "textSource": kind, "foregroundPixels": total, "coveredForegroundPixels": matched,
               "sampleWidth": sample.width, "sampleHeight": sample.height, "uncoveredRegions": regions,
               "lowConfidenceWords": sum(c < .7 for c in confidences), "confidenceWords": len(confidences),
-              "imageRegions": image_regions}
+              "imageRegions": image_regions, "foregroundMask": foreground_mask(image)}
     if native_characters is not None:
         result["nativeCharacters"] = native_characters
         result["scanLike"] = native_characters < 40 and image_regions > 0

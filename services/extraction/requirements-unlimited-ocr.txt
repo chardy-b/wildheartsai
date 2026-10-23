@@ -1,0 +1,7 @@
+# Install Torch/torchvision for the host GPU separately (see README).
+transformers==4.57.1
+Pillow==12.1.1
+einops==0.8.2
+addict==2.4.0
+easydict==1.13
+psutil==7.2.2

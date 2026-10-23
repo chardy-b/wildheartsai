@@ -1,11 +1,12 @@
 import type { ExtractionResult } from "./contracts";
 
 export type ProgressItem = { fileId: string; id: string; method: string; status: string; attempts: number; nextAttemptAt: string; errorCode: string | null };
-export type ProgressData = { documents: number; counts: Record<string, number>; files: ProgressItem[] };
-export const statusLabel = (status: string) => ({ queued: "Queued / waiting to retry", running: "Processing", recovering: "Recovering interrupted work", completed: "Completed — review result", failed: "Failed", cancelled: "Cancelled", expired: "Expired", not_started: "Not started" })[status] ?? status;
-export function extractionMethod(method: string, mime: string) {
+export type ProgressData = { documents: number; counts: Record<string, number>; files: ProgressItem[]; durablePending?: number };
+export const statusLabel = (status: string) => ({ waiting: "Waiting for batch admission", queued: "Queued / waiting to retry", running: "Processing", recovering: "Recovering interrupted work", completed: "Completed — review result", failed: "Failed", cancelled: "Cancelled", expired: "Expired", not_started: "Not started" })[status] ?? status;
+export function extractionMethod(method: string, mime: string, pipeline?: string) {
   if (mime.startsWith("text/")) return "Direct UTF-8 text reading; OCR was not needed";
-  return ({ native: "Native PDF text and tables · pdfplumber", tesseract: "Rendered-page OCR · Tesseract", rapidocr: "Offline neural OCR · RapidOCR / PP-OCRv6", docling: "Document layout extraction · Docling", vision: "Local vision-model transcription" })[method] ?? method;
+  if (pipeline === "native-ocr/v1") return "Native PDF parsing first; selective Tesseract OCR fallback · per-page attempts retained";
+  return ({ native: "Native PDF text and tables · pdfplumber", tesseract: "Rendered-page OCR · Tesseract", rapidocr: "Offline neural OCR · RapidOCR / PP-OCRv6", docling: "Document layout extraction · Docling", vision: "Local vision-model transcription", unlimitedocr: "Local document OCR · Baidu Unlimited OCR (experimental)" })[method] ?? method;
 }
 export function coverageSummary(result: ExtractionResult) {
   return { pagesWithText: result.pages.filter(p => p.text.trim()).length, measuredPages: result.pages.filter(p => p.foregroundCoverage !== null).length, totalPages: result.totalPages };

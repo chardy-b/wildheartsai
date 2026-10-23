@@ -1,4 +1,4 @@
-import { index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 import { wildcardFile } from "./wildcard-schema";
 
@@ -14,6 +14,7 @@ export const extractionJob = pgTable("extraction_job", {
   id: uuid("id").primaryKey().references(() => extractionRun.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   sessionId: text("session_id").notNull(), status: text("status").notNull().default("queued"),
+  durable: boolean("durable").notNull().default(false),
   claimId: uuid("claim_id").unique(), grantHash: text("grant_hash").unique(),
   deadlineAt: timestamp("deadline_at", { withTimezone: true }), errorCode: text("error_code"),
   attempts: integer("attempts").notNull().default(0),

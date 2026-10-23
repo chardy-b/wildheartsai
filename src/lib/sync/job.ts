@@ -1,6 +1,6 @@
 import type { Db } from "@/lib/db/types";
 import { grantsResource } from "@/lib/epic/authorize";
-import { ReconnectRequiredError } from "@/lib/epic/errors";
+import { ReconnectRequiredError, failureDiagnostic } from "@/lib/epic/errors";
 import { SYNC_QUERIES } from "./plan";
 import { NOTES_STATS_KEY, syncNoteTexts } from "./notes";
 import { REFERENCES_STATS_KEY, syncReferences } from "./references";
@@ -70,7 +70,7 @@ export async function runSyncJob(request: SyncRequest, step: StepRunner, env: Jo
       return "next";
     } catch (error) {
       if (!(error instanceof ReconnectRequiredError)) throw error;
-      await failRun(env.db, request.runId, "reconnect", env.now());
+      await failRun(env.db, request.runId, "reconnect", env.now(), failureDiagnostic(error));
       return "stop";
     }
   };

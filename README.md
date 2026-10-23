@@ -102,3 +102,13 @@ To refresh the snapshot, update the private checkout on the VPS with the operato
 ## Deployment
 
 Import the GitHub repository into Vercel using the native GitHub integration, select Next.js, and use `main` as the production branch. No Vercel deployment workflow or durable Vercel token is required in GitHub.
+
+### Background sync diagnostics
+
+In Inngest's **Production** environment, the `wild-hearts-health` app must be synced to the production `/api/inngest` URL. Check that `refresh-sources` is active with cron `17 10 * * *` (10:17 UTC daily). A deployed function definition alone does not establish that its cloud schedule is registered or enabled.
+
+The **Register production Inngest functions** GitHub workflow resyncs `https://www.wildheartsai.com/api/inngest` after Vercel reports a successful **Production** deployment. It avoids the native integration's protected deployment alias without changing deployment protection. The SDK signs the outgoing registration using the existing server-side Inngest key; GitHub receives no Inngest credentials. The workflow retries three times, validates the registration response, and fails visibly if it cannot register. Preview and failed deployments are ignored. To retry registration without deploying, run this workflow manually on `main` in GitHub Actions. Registration updates function definitions; it does not itself trigger a records refresh.
+
+`background_job_run` retains a heartbeat for each nightly refresh: start/end times, running/ok/partial/failed status, and counts of due, queued, skipped and failed sources. It contains no user/source identifiers or medical data. After a deployment, invoke `refresh-sources` once in Inngest and verify its completed heartbeat. A latest start older than 26 hours means the daily schedule needs investigation; a running row older than 3 hours or a failed/partial result needs investigation too. Keep `/api/health` independent of this check.
+
+Connection audit events and sync query stats retain `failureStage`, `failureCode` and, where available, `httpStatus`. `refresh_rejected` and `missing_refresh_token` require renewed user authorization. `missing_credentials`, `invalid_client_configuration`, `invalid_client`, network errors and individual FHIR resource failures are app/service failures: they keep the connection eligible for later background refresh. Never copy token responses, exception messages, URLs or patient identifiers into these diagnostics.

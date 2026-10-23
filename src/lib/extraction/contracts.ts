@@ -1,18 +1,25 @@
 import { z } from "zod";
 
-export const METHODS = ["native", "tesseract", "rapidocr", "docling", "vision"] as const;
+export const METHODS = ["native", "tesseract", "rapidocr", "docling", "vision", "unlimitedocr"] as const;
 export const methodSchema = z.enum(METHODS);
 const short = z.string().max(200);
+const foregroundMaskSchema = z.object({
+  width: z.number().int().min(1).max(200), height: z.number().int().min(1).max(200),
+  bits: z.string().min(4).max(6668).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+}).strict().refine(mask => {
+  try { return atob(mask.bits).length === Math.ceil(mask.width * mask.height / 8); } catch { return false; }
+}, "Invalid foreground mask size");
 export const boxSchema = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
   .refine(([x, y, r, b]) => x <= r && y <= b);
 export const piiSchema = z.object({ start: z.number().int().nonnegative(), end: z.number().int().positive(), label: short }).strict().refine(s => s.end > s.start);
 export const measurementSchema = z.object({ name: short, value: short, unit: short, date: short, range: short, page: z.number().int().positive(), evidence: z.string().max(2000) }).strict();
-export const pageSchema = z.object({
+const basePageSchema = z.object({
   page: z.number().int().positive(), text: z.string().max(100_000),
   words: z.array(z.object({ text: z.string().max(2000), box: boxSchema, confidence: z.number().min(0).max(1).optional() }).strict()).max(20_000),
   layoutRegions: z.array(z.object({ kind: z.enum(["table", "text", "chart", "image"]), box: boxSchema, origin: short }).strict()).max(500).optional(),
   diagnostics: z.object({ version: z.literal(1), textSource: short, foregroundPixels: z.number().int().nonnegative(), coveredForegroundPixels: z.number().int().nonnegative(),
     sampleWidth: z.number().int().min(1).max(1000), sampleHeight: z.number().int().min(1).max(1000),
+    foregroundMask: foregroundMaskSchema.optional(),
     uncoveredRegions: z.array(z.object({ box: boxSchema, uncoveredFraction: z.number().min(0).max(1) }).strict()).max(400),
     lowConfidenceWords: z.number().int().nonnegative(), confidenceWords: z.number().int().nonnegative(), imageRegions: z.number().int().nonnegative(), nativeCharacters: z.number().int().nonnegative().optional(), scanLike: z.boolean().optional(),
   }).strict().refine(d => d.coveredForegroundPixels <= d.foregroundPixels && d.foregroundPixels <= d.sampleWidth*d.sampleHeight && d.lowConfidenceWords <= d.confidenceWords).optional(),
@@ -23,6 +30,10 @@ export const pageSchema = z.object({
     rules: z.array(piiSchema).max(10_000), openmed: z.array(piiSchema).max(10_000), combined: z.array(piiSchema).max(10_000),
     text: z.string().max(100_000),
   }).strict(),
+}).strict();
+export const pageSchema = basePageSchema.extend({
+  nativeAttempt: basePageSchema.pick({ text: true, words: true, tables: true, figures: true, redaction: true }).extend({ status: z.enum(["completed", "failed"]) }).strict().optional(),
+  fallbackReason: z.enum(["native_parser_failed", "scan_like_or_sparse_native_text"]).optional(),
 }).strict();
 export const resultSchema = z.object({
   version: z.literal(1), sourceSha256: z.string().regex(/^[a-f0-9]{64}$/), method: methodSchema,
@@ -41,6 +52,9 @@ export const resultSchema = z.object({
   }
   for (const p of r.pages) for (const spans of [p.redaction.rules, p.redaction.openmed, p.redaction.combined]) {
     if (spans.some(s => s.end > Array.from(p.text).length)) ctx.addIssue({ code: "custom", message: "Invalid offsets" });
+  }
+  for (const p of r.pages) if (p.nativeAttempt) for (const spans of [p.nativeAttempt.redaction.rules, p.nativeAttempt.redaction.openmed, p.nativeAttempt.redaction.combined]) {
+    if (spans.some(s => s.end > Array.from(p.nativeAttempt!.text).length)) ctx.addIssue({ code: "custom", message: "Invalid native attempt offsets" });
   }
 });
 export const referenceSchema = z.object({
