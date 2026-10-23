@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import type { FinalizeInput } from "./protocol.js";
 import type { ClaimedWebRun } from "./contracts.js";
 
@@ -96,12 +97,14 @@ export class IggyRunDispatcher {
 
 export type DispatchLoopOptions = Readonly<{ minIdleMs?: number; maxIdleMs?: number; random?: () => number; sleep?: (ms: number) => Promise<void> }>;
 
-/** Claims at a rate that stays below the web API's six-claims-per-minute limit. */
+/** Back off empty/error claims to 30–60s; active-run heartbeats are independent. */
 export async function runDispatchLoop(dispatcher: Pick<IggyRunDispatcher, "dispatchOnce">, signal: AbortSignal, options: DispatchLoopOptions = {}): Promise<void> {
   const minimum = Math.min(30_000, Math.max(10_000, options.minIdleMs ?? 10_000));
-  const maximum = Math.max(minimum, Math.min(30_000, options.maxIdleMs ?? 30_000));
+  const maximum = Math.max(minimum, Math.min(60_000, options.maxIdleMs ?? 60_000));
   const random = options.random ?? Math.random;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const sleep = options.sleep ?? ((ms: number) => delay(ms, undefined, { signal }).catch((error: unknown) => {
+    if (!signal.aborted) throw error;
+  }));
   let idleRounds = 0;
   while (!signal.aborted) {
     let claimed = false;
@@ -116,7 +119,9 @@ export async function runDispatchLoop(dispatcher: Pick<IggyRunDispatcher, "dispa
     else idleRounds += 1;
     if (signal.aborted) return;
     const ceiling = Math.min(maximum, minimum * (2 ** Math.min(16, idleRounds)));
+    // Equal jitter keeps even the shortest idle delay growing with the backoff.
+    const floor = Math.max(minimum, ceiling / 2);
     const jitter = Math.max(0, Math.min(0.999_999, random()));
-    await sleep(Math.max(minimum + Math.floor((ceiling - minimum) * jitter), retryAfterMs));
+    await sleep(Math.max(floor + Math.floor((ceiling - floor) * jitter), retryAfterMs));
   }
 }

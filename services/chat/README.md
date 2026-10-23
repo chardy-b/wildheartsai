@@ -4,6 +4,8 @@ This package runs the VPS coordinator and private Iggy gateway. The web applicat
 
 The coordinator sends an idempotent claim request to `CHAT_WEB_API_URL`, then gives Iggy the run's execution grant. It keeps the separate control grant in coordinator memory for heartbeat and finalization calls. User IDs and database scope never enter the coordinator or worker. Each retry reuses the original request ID and body so a lost response cannot claim a different run.
 
+Empty or failed claims back off from 10–20 seconds to 30–60 seconds with jitter, averaging about 1,920 requests per fully idle day instead of 4,320. A newly queued chat can wait up to 60 seconds for pickup after sustained inactivity. Processing a run resets the claim delay to 10 seconds. Active-run heartbeats remain every five seconds, and shutdown interrupts the idle wait. Deploying the web app alone does not update this loop: rebuild and restart only `chat-coordinator` when no chat is running.
+
 The fixed gateway forwards worker context, cancellation, tool, and event requests to the web API. It accepts only an execution grant. Before forwarding inference it checks cancellation; while a stream is open it polls the web API every second and aborts if the run is cancelled or the authority cannot be reached. The inference URL and model come only from gateway configuration. Requests override model selection and cap `max_tokens`; upstream response bytes and request bodies are bounded. Prompts, answers, tokens, and provider errors are never written to logs.
 
 ## Configure

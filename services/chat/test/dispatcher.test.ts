@@ -43,13 +43,33 @@ describe("remote run dispatcher", () => {
     let attempts = 0;
     await runDispatchLoop({ dispatchOnce: async () => { attempts += 1; return false; } }, controller.signal, {
       minIdleMs: 20,
-      maxIdleMs: 30_000,
       random: () => 0.9,
       sleep: async (ms) => { delays.push(ms); if (delays.length === 3) controller.abort(); },
     });
     expect(attempts).toBe(3);
-    expect(delays).toEqual([19_000, 28_000, 28_000]);
-    expect(delays.every((delay) => delay <= 30_000)).toBe(true);
+    expect(delays).toEqual([19_000, 38_000, 57_000]);
+    expect(delays.every((delay) => delay <= 60_000)).toBe(true);
+  });
+
+  it("resets idle backoff after processing a run", async () => {
+    const delays: number[] = [];
+    const controller = new AbortController();
+    const outcomes = [false, false, false, true, false];
+    await runDispatchLoop({ dispatchOnce: async () => outcomes.shift()! }, controller.signal, {
+      random: () => 0,
+      sleep: async (ms) => { delays.push(ms); if (delays.length === 5) controller.abort(); },
+    });
+    expect(delays).toEqual([10_000, 20_000, 30_000, 10_000, 10_000]);
+  });
+
+  it("interrupts an idle wait immediately on shutdown", async () => {
+    const controller = new AbortController();
+    const dispatchOnce = vi.fn(async () => false);
+    const loop = runDispatchLoop({ dispatchOnce }, controller.signal);
+    await vi.waitFor(() => expect(dispatchOnce).toHaveBeenCalledOnce());
+    controller.abort();
+    await loop;
+    expect(dispatchOnce).toHaveBeenCalledOnce();
   });
 
   it("leaves web-terminal successful completion untouched", async () => {
@@ -112,12 +132,11 @@ describe("remote run dispatcher", () => {
     let attempts = 0;
     await runDispatchLoop({ dispatchOnce: async () => { attempts += 1; throw new Error("synthetic outage"); } }, controller.signal, {
       minIdleMs: 20,
-      maxIdleMs: 30_000,
       random: () => 0.9,
       sleep: async (ms) => { delays.push(ms); if (delays.length === 2) controller.abort(); },
     });
     expect(attempts).toBe(2);
-    expect(delays).toEqual([19_000, 28_000]);
+    expect(delays).toEqual([19_000, 38_000]);
   });
 
   it("honors bounded HTTP rate-limit backoff in the coordinator loop", async () => {

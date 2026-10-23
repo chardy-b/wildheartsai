@@ -90,7 +90,7 @@ export default function PrivacyPage() {
 
         <Section id="what-we-dont-do" title="What we don't do">
           <p>
-            We don&apos;t sell your information, show ads, or use analytics or advertising trackers. We don&apos;t
+            We don&apos;t sell your information, show ads, or use advertising trackers. We don&apos;t
             share your information with anyone except the services below, which we use to run Wild Hearts.
           </p>
         </Section>
@@ -98,7 +98,11 @@ export default function PrivacyPage() {
         <Section id="services" title="Services we use">
           <ul className="list-disc space-y-2 pl-6">
             <li>
-              <strong>Vercel</strong> hosts the site and keeps short-lived request logs.
+              <strong>Vercel</strong> hosts the site and keeps short-lived request logs. We use its cookie-free
+              analytics for aggregate page visits, referral sources, countries and device types. We remove URL
+              queries and replace document identifiers and record categories with generic page labels before
+              sending page addresses to analytics. Our page-request logs distinguish verified sign-ins from
+              anonymous requests without recording account details, session tokens or record contents in those entries.
             </li>
             <li>
               <strong>Inngest</strong> schedules the background work that imports your records. It only receives
