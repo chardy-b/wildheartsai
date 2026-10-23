@@ -2,6 +2,14 @@
 
 Authenticated users open `/app/wildcards/workbench`, select existing ready uploads and methods, and queue one immutable run per document/method. The web backend owns identity, sessions, document decryption, result encryption, cancellation, and reference-label versions. The VPS receives scoped execution grants, never database/R2 credentials or record encryption keys. Extraction is disabled unless all web settings are present.
 
+## Per document FHIR view
+
+Every ready file has a **FHIR** link in Documents and **View FHIR / Medplum data** on its detail page. `/app/wildcards/[id]/fhir` shows the latest completed extraction by default; its version picker and `runId` query select a specific completed run. This also works while workers are disabled. Files without a completed extraction still have a source DocumentReference.
+
+The view produces a draft FHIR R4 collection with the source DocumentReference, a separate linked machine-summary DocumentReference when available, evidence-backed Observations, and software Provenance. Literal numbers/comparators and unambiguous ISO dates are mapped conservatively. Source fields and quotes are preserved; clinical codes, standardized units, final clinical status, and patient identity are not guessed. Partial extraction warnings remain visible. Exact repeated candidates are deduplicated within a run; different runs are not clinically reconciled.
+
+`/api/wildcards/[id]/fhir?runId=…&download=1` downloads private `application/fhir+json`, checks ownership/readiness/completed-run membership, rejects a mismatch with the verified source fingerprint, and records a counts-only export audit. Original bytes are linked through the authenticated file endpoint, not embedded. The authored subset and internal references are validated locally; Medplum project profiles require separate validation. No information is sent to Medplum and no extracted fact is published to the timeline. Review, patient assignment, and a transport adapter remain separate work.
+
 ## Web configuration and migration
 
 Migration `0013_document_extraction` adds three owner-scoped tables. File deletion cascades runs, queue metadata, and reference labels; all text, results, labels, and encounter-date configuration are encrypted using the existing per-user keys. The explicit web dispatch context applies only to the queue metadata table. No document contents or labels enter that context.
