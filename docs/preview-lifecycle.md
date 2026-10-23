@@ -6,6 +6,12 @@ The Vercel-managed Neon integration retains a database branch while any correspo
 
 Sources: [Neon integration cleanup](https://neon.com/blog/big-dx-improvements-for-neon-users-on-vercel), [Vercel deployment retention](https://vercel.com/docs/deployments/retention-policy).
 
+## October 23, 2026 recurrence
+
+The project again reached its confirmed ten-branch limit: production, four previews for merged PRs (#77, #78, #79 and #81), and five previews for open PRs (#51, #54, #67, #75 and #80). New Git branches failed during integration provisioning, before their builds started. An existing preview could still deploy because it reused its database branch.
+
+The lifecycle fix was still an unmerged draft; the repository had no `VERCEL_TOKEN` Actions secret and `PREVIEW_CLEANUP_ENABLED` was not true. A read-only run of the cleanup script completed successfully against the current inventory and preserved open PRs, changed Git refs and deployments containing unmerged work. Merging the script alone does not activate cleanup: finish the credential and activation steps below, then verify that deleting the completed previews actually reduces the Neon branch count before testing a fresh PR branch.
+
 ## Cleanup after merging
 
 `.github/workflows/preview-cleanup.yml` runs after a merged PR closes and sweeps all eligible merged-PR previews, including leftovers from earlier merges. It checks out trusted default-branch code, never the PR head, and uses read-only GitHub permissions. GitHub's automatic deletion of merged source branches remains responsible for Git refs.
