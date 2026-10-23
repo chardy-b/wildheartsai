@@ -24,7 +24,7 @@ function Note({ note }: { note: RecordItem }) {
   return attachment && note.sourceId ? (
     <NoteText sourceId={note.sourceId} attachmentUrl={attachment.url} />
   ) : (
-    <p className="record-note">This document isn&apos;t text we can show here. You can open it in MyChart.</p>
+    <p className="record-note">Full text isn&apos;t available for this document.</p>
   );
 }
 
