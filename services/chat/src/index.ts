@@ -1,6 +1,8 @@
 import { createPrivateToolGateway } from "./private-gateway.js";
 import { IggyRunDispatcher, runDispatchLoop } from "./dispatcher.js";
 import { createCoordinatorRuntime, createGatewayRuntime, required } from "./runtime.js";
+import { once } from "node:events";
+import { CoordinatorWake, createCoordinatorWakeServer } from "./wake.js";
 
 async function main(): Promise<void> {
   const mode = process.env.CHAT_SERVICE_MODE;
@@ -11,7 +13,15 @@ async function main(): Promise<void> {
   if (mode === "coordinator") {
     const runtime = createCoordinatorRuntime();
     const dispatcher = new IggyRunDispatcher(runtime.api, runtime.iggy, runtime.workerId);
-    await runDispatchLoop(dispatcher, controller.signal);
+    const wake = runtime.wake ? new CoordinatorWake() : undefined;
+    const listener = runtime.wake && wake ? createCoordinatorWakeServer(runtime.wake.secret, wake.notify) : undefined;
+    if (listener) {
+      listener.listen(runtime.wake!.port, "0.0.0.0");
+      await once(listener, "listening");
+    }
+    console.info(JSON.stringify({ event: "chat_coordinator_started", mode: wake ? "notifications" : "polling" }));
+    try { await runDispatchLoop(dispatcher, controller.signal, { wake }); }
+    finally { if (listener) await new Promise<void>((resolve) => listener.close(() => resolve())); }
     return;
   }
   if (mode === "gateway") {
@@ -25,8 +35,7 @@ async function main(): Promise<void> {
     });
     return;
   }
-  // Compatibility mode is intentionally not provided: no browser/public API
-  // listener or database fallback exists in this service image.
+  // No browser/patient-data API or database fallback exists in this service image.
   throw new Error(`invalid_chat_service_mode_${required(process.env, "CHAT_SERVICE_MODE")}`);
 }
 

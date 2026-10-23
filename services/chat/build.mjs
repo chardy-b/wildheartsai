@@ -15,6 +15,7 @@ await build({
     "server-only": "./src/server-only.ts",
     // Resolve this shared static module before packages:external can treat @/ as a package.
     "@/lib/fhir/categories": fileURLToPath(new URL("../../src/lib/fhir/categories.ts", import.meta.url)),
+    "@/lib/chat-wake-protocol.js": fileURLToPath(new URL("../../src/lib/chat-wake-protocol.ts", import.meta.url)),
   },
   logLevel: "info",
 });

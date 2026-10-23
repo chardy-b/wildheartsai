@@ -47,8 +47,8 @@ describe("remote run dispatcher", () => {
       sleep: async (ms) => { delays.push(ms); if (delays.length === 3) controller.abort(); },
     });
     expect(attempts).toBe(3);
-    expect(delays).toEqual([19_000, 38_000, 57_000]);
-    expect(delays.every((delay) => delay <= 60_000)).toBe(true);
+    expect(delays).toEqual([19_000, 28_000, 28_000]);
+    expect(delays.every((delay) => delay <= 30_000)).toBe(true);
   });
 
   it("resets idle backoff after processing a run", async () => {
@@ -59,7 +59,7 @@ describe("remote run dispatcher", () => {
       random: () => 0,
       sleep: async (ms) => { delays.push(ms); if (delays.length === 5) controller.abort(); },
     });
-    expect(delays).toEqual([10_000, 20_000, 30_000, 10_000, 10_000]);
+    expect(delays).toEqual([10_000, 10_000, 10_000, 10_000, 10_000]);
   });
 
   it("interrupts an idle wait immediately on shutdown", async () => {
@@ -136,7 +136,7 @@ describe("remote run dispatcher", () => {
       sleep: async (ms) => { delays.push(ms); if (delays.length === 2) controller.abort(); },
     });
     expect(attempts).toBe(2);
-    expect(delays).toEqual([19_000, 38_000]);
+    expect(delays).toEqual([19_000, 28_000]);
   });
 
   it("honors bounded HTTP rate-limit backoff in the coordinator loop", async () => {

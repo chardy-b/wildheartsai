@@ -1,0 +1,8 @@
+# Optional ingress for a TLS reverse proxy on the VPS host. No worker/gateway ports.
+services:
+  chat-coordinator:
+    environment:
+      CHAT_WAKE_SECRET: ${CHAT_WAKE_SECRET:?required}
+      CHAT_WAKE_PORT: "8091"
+    ports:
+      - "127.0.0.1:${CHAT_WAKE_HOST_PORT:-8091}:8091"

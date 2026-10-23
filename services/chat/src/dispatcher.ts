@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { FinalizeInput } from "./protocol.js";
 import type { ClaimedWebRun } from "./contracts.js";
+import type { CoordinatorWake } from "./wake.js";
 
 export interface IggyControlPlane {
   startHealthRun(input: { id: string; capability: string }): Promise<void>;
@@ -95,16 +96,37 @@ export class IggyRunDispatcher {
   }
 }
 
-export type DispatchLoopOptions = Readonly<{ minIdleMs?: number; maxIdleMs?: number; random?: () => number; sleep?: (ms: number) => Promise<void> }>;
+export type DispatchLoopOptions = Readonly<{ minIdleMs?: number; maxIdleMs?: number; random?: () => number; sleep?: (ms: number) => Promise<void>; wake?: CoordinatorWake; recoveryCheckMs?: number }>;
 
-/** Back off empty/error claims to 30–60s; active-run heartbeats are independent. */
+/** Wake on notifications, with startup/drain/recovery claims. Legacy polling aids rollout. */
 export async function runDispatchLoop(dispatcher: Pick<IggyRunDispatcher, "dispatchOnce">, signal: AbortSignal, options: DispatchLoopOptions = {}): Promise<void> {
   const minimum = Math.min(30_000, Math.max(10_000, options.minIdleMs ?? 10_000));
-  const maximum = Math.max(minimum, Math.min(60_000, options.maxIdleMs ?? 60_000));
+  const maximum = Math.max(minimum, Math.min(30_000, options.maxIdleMs ?? 30_000));
   const random = options.random ?? Math.random;
   const sleep = options.sleep ?? ((ms: number) => delay(ms, undefined, { signal }).catch((error: unknown) => {
     if (!signal.aborted) throw error;
   }));
+  if (options.wake) {
+    const recoveryMs = Math.max(60_000, Math.min(900_000, options.recoveryCheckMs ?? 300_000));
+    while (!signal.aborted) {
+      const startedAt = Date.now();
+      let claimed = false;
+      let retryAfterMs = 0;
+      try { claimed = await dispatcher.dispatchOnce(); }
+      catch (error) {
+        const hint = (error as { retryAfterMs?: unknown }).retryAfterMs;
+        if (typeof hint === "number" && Number.isFinite(hint)) retryAfterMs = Math.max(0, Math.min(30_000, hint));
+      }
+      if (signal.aborted) return;
+      // Wake bursts cannot exceed the authority's six-claims-per-minute allowance.
+      const cooldown = Math.max(0, minimum - (Date.now() - startedAt), retryAfterMs);
+      if (cooldown) await sleep(cooldown);
+      if (signal.aborted) return;
+      // After work, drain more queued jobs even if their notifications coalesced.
+      if (!claimed) await options.wake.wait(Math.max(0, recoveryMs - (Date.now() - startedAt)), signal);
+    }
+    return;
+  }
   let idleRounds = 0;
   while (!signal.aborted) {
     let claimed = false;
@@ -119,9 +141,7 @@ export async function runDispatchLoop(dispatcher: Pick<IggyRunDispatcher, "dispa
     else idleRounds += 1;
     if (signal.aborted) return;
     const ceiling = Math.min(maximum, minimum * (2 ** Math.min(16, idleRounds)));
-    // Equal jitter keeps even the shortest idle delay growing with the backoff.
-    const floor = Math.max(minimum, ceiling / 2);
     const jitter = Math.max(0, Math.min(0.999_999, random()));
-    await sleep(Math.max(floor + Math.floor((ceiling - floor) * jitter), retryAfterMs));
+    await sleep(Math.max(minimum + Math.floor((ceiling - minimum) * jitter), retryAfterMs));
   }
 }

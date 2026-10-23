@@ -14,6 +14,18 @@ const valid = {
 };
 
 describe("parseEnv", () => {
+  it("validates optional paired wake configuration and limits it to the dedicated HTTPS path", () => {
+    const secret = `whwake1.${"w".repeat(43)}`;
+    const url = "https://wake.example/internal/chat/wake";
+    expect(parseEnv({ ...valid, CHAT_WAKE_URL: "", CHAT_WAKE_SECRET: "" }).CHAT_WAKE_URL).toBeUndefined();
+    expect(parseEnv({ ...valid, CHAT_WAKE_URL: url, CHAT_WAKE_SECRET: secret }).CHAT_WAKE_URL).toBe(url);
+    expect(() => parseEnv({ ...valid, CHAT_WAKE_URL: url })).toThrow(/together/);
+    expect(() => parseEnv({ ...valid, CHAT_WAKE_SECRET: secret })).toThrow(/together/);
+    for (const unsafe of ["http://remote.example/internal/chat/wake", url + "?token=synthetic", "https://user:pass@wake.example/internal/chat/wake", "https://wake.example/api/chat/worker/v1/claims"]) {
+      expect(() => parseEnv({ ...valid, CHAT_WAKE_URL: unsafe, CHAT_WAKE_SECRET: secret })).toThrow(/wake URL/);
+    }
+    expect(() => parseEnv({ ...valid, CHAT_WAKE_URL: url, CHAT_WAKE_SECRET: "ordinary-coordinator-token" })).toThrow();
+  });
   it("allows R2 to be disabled and requires complete server-only configuration when enabled", () => {
     expect(parseEnv(valid).R2_BUCKET_NAME).toBeUndefined();
     expect(() => parseEnv({ ...valid, R2_BUCKET_NAME: "private-files" })).toThrow(/R2_ACCOUNT_ID/);

@@ -4,7 +4,7 @@ This package runs the VPS coordinator and private Iggy gateway. The web applicat
 
 The coordinator sends an idempotent claim request to `CHAT_WEB_API_URL`, then gives Iggy the run's execution grant. It keeps the separate control grant in coordinator memory for heartbeat and finalization calls. User IDs and database scope never enter the coordinator or worker. Each retry reuses the original request ID and body so a lost response cannot claim a different run.
 
-Empty or failed claims back off from 10–20 seconds to 30–60 seconds with jitter, averaging about 1,920 requests per fully idle day instead of 4,320. A newly queued chat can wait up to 60 seconds for pickup after sustained inactivity. Processing a run resets the claim delay to 10 seconds. Active-run heartbeats remain every five seconds, and shutdown interrupts the idle wait. Deploying the web app alone does not update this loop: rebuild and restart only `chat-coordinator` when no chat is running.
+With wake ingress configured, Vercel sends an authenticated empty hint after a chat submission commits to Neon. The coordinator checks at startup, on a hint, and every five minutes to recover missed hints (about 288 checks per fully idle day). It drains queued jobs after completing work, even when hints coalesce, and preserves hints arriving while busy or in a claim cooldown. A ten-second minimum between claim starts and HTTP Retry-After cooldowns bound wake bursts below six claims/minute. Active-run heartbeats remain every five seconds; shutdown interrupts idle waits. Without wake configuration, the original 10–30 second polling remains for staged rollout and rollback. Deploying the web app alone does not update this loop: rebuild and restart only `chat-coordinator` when no chat is running.
 
 The fixed gateway forwards worker context, cancellation, tool, and event requests to the web API. It accepts only an execution grant. Before forwarding inference it checks cancellation; while a stream is open it polls the web API every second and aborts if the run is cancelled or the authority cannot be reached. The inference URL and model come only from gateway configuration. Requests override model selection and cap `max_tokens`; upstream response bytes and request bodies are bounded. Prompts, answers, tokens, and provider errors are never written to logs.
 
@@ -27,6 +27,23 @@ docker compose --env-file services/chat/.env -f services/chat/docker-compose.yml
 ```
 
 Neither service publishes a host port. Compose creates the fixed `wildhearts-chat-trusted` network for the coordinator and gateway. Attach the separately provisioned Iggy management container to that network, give it the DNS name `wildhearts-iggy`, and have it listen on port 8417 inside the network without publishing that port. Iggy attaches the fixed gateway container to each isolated worker network; each worker joins only its own network and receives only its execution grant and gateway URL. The coordinator does not join worker networks.
+
+### Optional notification ingress
+
+The base Compose file above publishes no ports. To enable wake notifications, add `docker-compose.wake.yml`. It publishes only the coordinator's wake listener on host loopback `127.0.0.1:8091`; Iggy, the worker and the gateway remain private. A VPS-host TLS reverse proxy must forward **only** the exact `/internal/chat/wake` path to that listener, preserving the Authorization header and rejecting other paths/methods. Do not forward a whole host to Iggy or the gateway. Keep normal network and request-size/rate protections on the proxy; never log Authorization headers.
+
+Generate a new, separate `whwake1.` credential followed by 32 random bytes encoded as base64url (43 characters). Store it as `CHAT_WAKE_SECRET` in the coordinator's protected environment and in the matching Vercel environment as a Secret. Do not reuse coordinator, Iggy, execution, research, database or record-encryption credentials. Set Vercel's `CHAT_WAKE_URL` to the HTTPS endpoint with the exact `/internal/chat/wake` path and no credentials/query/fragment. HTTP is accepted only for loopback tests. Preview must use its own test coordinator, URL and secret, not production's.
+
+The receiver accepts only `POST`, a valid dedicated bearer credential and an empty request body. It responds with 204, holds at most one in-memory wake flag, and cannot receive a job ID, tenant, prompt, or operation. It does not give the VPS database access. The sender schedules delivery with Next.js `after()` **after the database transaction has committed**, sends no user/record data, refuses redirects, times out each attempt after two seconds, and retries once. Failed hints never roll back a saved message; `chat_wake_failed` emits a fixed safe code and the recovery check discovers the job. An idempotent replay of a still-queued submission sends another hint.
+
+Rollout (no active chat):
+
+1. Deploy the web code first with wake settings absent; existing polling continues. Configure the separate environment-scoped Vercel wake URL/Secret for the next web deployment.
+2. Prepare the TLS reverse proxy, then build/restart only `chat-coordinator` using both the base and wake Compose files. Preserve any existing research overrides. Startup reports `chat_coordinator_started` with mode `notifications`. During this short transition, queued jobs can wait for the five-minute recovery check.
+3. Redeploy the web app with both wake settings and verify a synthetic chat is picked up promptly, even after more than five minutes idle. Verify empty/bad credentials and scope-bearing bodies are rejected, and the coordinator makes roughly 12 claims/hour when fully idle.
+4. In a synthetic environment, interrupt notification delivery and verify saved queued work is discovered on the next recovery check. No secrets or health data should enter acceptance output.
+
+To roll back dispatch, remove the wake override/Secret and restart the coordinator in polling mode, then remove the web wake settings and the reverse-proxy route. Keep the Neon queue and grants unchanged. Merging this PR does not publish a VPS endpoint, set secrets, or deploy the coordinator.
 
 ### Optional offline research snapshot
 

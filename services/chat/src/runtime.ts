@@ -1,14 +1,20 @@
 import { ChatWebApi } from "./web-api.js";
 import { IggyClient } from "./iggy-client.js";
 import { ResearchCorpus } from "./research-corpus.js";
+import { CHAT_WAKE_SECRET_PATTERN } from "@/lib/chat-wake-protocol.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
 export function createCoordinatorRuntime(env: Environment = process.env) {
+  const wakeSecret = env.CHAT_WAKE_SECRET?.trim();
+  if (wakeSecret && (!CHAT_WAKE_SECRET_PATTERN.test(wakeSecret) || wakeSecret === env.CHAT_COORDINATOR_TOKEN || wakeSecret === env.IGGY_BEARER_TOKEN)) throw new Error("invalid_chat_wake_secret");
+  const wakePort = Number(env.CHAT_WAKE_PORT ?? "8091");
+  if (!Number.isSafeInteger(wakePort) || wakePort < 1 || wakePort > 65_535) throw new Error("invalid_chat_wake_port");
   return {
     api: new ChatWebApi({ baseUrl: requiredUrl(env, "CHAT_WEB_API_URL"), coordinatorToken: required(env, "CHAT_COORDINATOR_TOKEN") }),
     iggy: new IggyClient(requiredUrl(env, "IGGY_URL"), required(env, "IGGY_BEARER_TOKEN")),
     workerId: required(env, "CHAT_WORKER_ID"),
+    ...(wakeSecret ? { wake: { secret: wakeSecret, port: wakePort } } : {}),
   };
 }
 

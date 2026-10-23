@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CHAT_WAKE_SECRET_PATTERN, chatWakeUrl } from "./chat-wake-protocol";
 
 const schema = z
   .object({
@@ -9,6 +10,8 @@ const schema = z
     R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
     // Optional verifier only; the raw research credential belongs exclusively to the VPS gateway.
     CHAT_RESEARCH_GATEWAY_TOKEN_HASH: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    CHAT_WAKE_URL: z.string().refine((value) => { try { chatWakeUrl(value); return true; } catch { return false; } }, "Invalid chat wake URL").optional(),
+    CHAT_WAKE_SECRET: z.string().regex(CHAT_WAKE_SECRET_PATTERN).optional(),
     BETTER_AUTH_SECRET: z.string().min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
     BETTER_AUTH_URL: z.url().optional(),
     VERCEL_URL: z.string().optional(),
@@ -55,6 +58,9 @@ const schema = z
       .refine((value) => Buffer.from(value, "base64").length === 32, "RECORDS_ENCRYPTION_KEY must be 32 bytes, base64-encoded"),
   })
   .superRefine((value, ctx) => {
+    if (Boolean(value.CHAT_WAKE_URL) !== Boolean(value.CHAT_WAKE_SECRET)) {
+      ctx.addIssue({ code: "custom", path: ["CHAT_WAKE_URL"], message: "Set CHAT_WAKE_URL and CHAT_WAKE_SECRET together" });
+    }
     const r2Keys = ["R2_ACCOUNT_ID", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] as const;
     if (r2Keys.some((key) => value[key])) {
       for (const key of r2Keys) {

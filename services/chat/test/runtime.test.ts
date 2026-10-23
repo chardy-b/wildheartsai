@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { createCoordinatorRuntime, createGatewayRuntime } from "../src/runtime.js";
 
 describe("remote-only runtime configuration", () => {
+  it("enables wake ingress only with a distinct wake credential and valid listener port", () => {
+    const base = {
+      CHAT_WEB_API_URL: "https://www.wildheartsai.com/api/chat/worker/v1",
+      CHAT_COORDINATOR_TOKEN: "synthetic-coordinator-token-with-enough-length",
+      CHAT_WORKER_ID: "worker-test", IGGY_URL: "http://127.0.0.1:8417", IGGY_BEARER_TOKEN: "synthetic-iggy-token",
+    };
+    const secret = `whwake1.${"w".repeat(43)}`;
+    expect(createCoordinatorRuntime(base)).not.toHaveProperty("wake");
+    expect(createCoordinatorRuntime({ ...base, CHAT_WAKE_SECRET: secret }).wake).toEqual({ secret, port: 8091 });
+    expect(() => createCoordinatorRuntime({ ...base, CHAT_WAKE_SECRET: "short" })).toThrow("invalid_chat_wake_secret");
+    expect(() => createCoordinatorRuntime({ ...base, CHAT_COORDINATOR_TOKEN: secret, CHAT_WAKE_SECRET: secret })).toThrow("invalid_chat_wake_secret");
+    expect(() => createCoordinatorRuntime({ ...base, CHAT_WAKE_SECRET: secret, CHAT_WAKE_PORT: "1.5" })).toThrow("invalid_chat_wake_port");
+  });
   it("starts coordinator and gateway adapters without database or record-key settings", () => {
     const coordinator = createCoordinatorRuntime({
       CHAT_WEB_API_URL: "https://www.wildheartsai.com/api/chat/worker/v1",
