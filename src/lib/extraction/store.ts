@@ -8,6 +8,7 @@ import { hmacFor, sealField, unsealField, userKeysFor } from "@/lib/crypto/user-
 import { createSchema, METHODS, referenceSchema, resultSchema } from "./contracts";
 import { auditGroups, auditResult, type AuditRow } from "./audit";
 import { publicFailureCode } from "./failures";
+import { combinedCoverage, type CoverageRun } from "./coverage";
 
 const location = (id: string, field: string) => ({ table: "extraction_run", rowId: id, field });
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -108,6 +109,34 @@ export async function listRuns(db: Db, kek: Buffer, userId: string, fileId?: str
     return rows.map(({ run, job }) => ({ id: run.id, fileId: run.fileId, method: run.method, status: job.status === "running" && job.deadlineAt && job.deadlineAt < new Date() ? "recovering" : job.status,
       attempts: job.attempts, nextAttemptAt: job.nextAttemptAt.toISOString(),
       errorCode: job.errorCode, createdAt: run.createdAt.toISOString(), result: run.sealedResult && run.id === resultId ? resultSchema.parse(JSON.parse(unsealField(keys, run.sealedResult, location(run.id, "result")))) : null }));
+  });
+}
+
+// Only requested visible files, and one completed result per method. Responses
+// contain derived coverage, never extracted text, PII spans or page rasters.
+export async function fileCoverage(db: Db, kek: Buffer, userId: string, fileIds: string[], details = false) {
+  if (!fileIds.length || fileIds.length > 50) throw new Error("coverage_file_limit");
+  return asUser(db, userId, async tx => {
+    const files = await tx.select({ id: wildcardFile.id }).from(wildcardFile)
+      .where(and(eq(wildcardFile.userId, userId), inArray(wildcardFile.id, fileIds), eq(wildcardFile.status, "ready")));
+    if (!files.length) return { files: [] };
+    const metadata = await tx.selectDistinctOn([extractionRun.fileId, extractionRun.method], {
+      id: extractionRun.id, fileId: extractionRun.fileId, method: extractionRun.method,
+    }).from(extractionRun).innerJoin(extractionJob, eq(extractionRun.id, extractionJob.id))
+      .where(and(eq(extractionRun.userId, userId), inArray(extractionRun.fileId, files.map(f => f.id)), eq(extractionJob.status, "completed")))
+      .orderBy(extractionRun.fileId, extractionRun.method, desc(extractionRun.createdAt), desc(extractionRun.id));
+    const keys = metadata.length ? await userKeysFor(tx, kek, userId, new Date()) : null;
+    const output = [];
+    for (const file of files) {
+      const runs: CoverageRun[] = [];
+      for (const run of metadata.filter(r => r.fileId === file.id)) {
+        const [stored] = await tx.select({ result: extractionRun.sealedResult }).from(extractionRun).where(eq(extractionRun.id, run.id));
+        if (stored?.result && keys) runs.push({ ...run, result: resultSchema.parse(JSON.parse(unsealField(keys, stored.result, location(run.id, "result")))) });
+      }
+      const { pages, ...summary } = combinedCoverage(runs);
+      output.push({ fileId: file.id, coverage: details ? { ...summary, pages } : summary });
+    }
+    return { files: output };
   });
 }
 

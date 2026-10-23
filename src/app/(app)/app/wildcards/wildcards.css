@@ -17,7 +17,7 @@
 .wildcard-list-heading h2 { margin-bottom: 8px; }
 .wildcard-list-heading h2 span { font-weight: 400; }
 .wildcard-list-heading p { font-size: 14px; margin-top: 0; }
-.wildcard-table-wrap { overflow-x: auto; }
+.wildcard-table-wrap { overflow-x: auto; position: relative; }
 .wildcard-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .wildcard-table th, .wildcard-table td { text-align: left; padding: 16px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .wildcard-table tbody th { min-width: 180px; max-width: 320px; overflow-wrap: anywhere; }
@@ -35,6 +35,18 @@
 .wildcard-empty { padding: 32px; border: 1px solid var(--line); border-radius: 16px; }
 .wildcard-filename { overflow-wrap: anywhere; margin-top: 20px !important; }
 .wildcard-viewer { max-width: 100%; margin-top: 24px; }
+.workbench-overlay { position: relative; width: fit-content; max-width: 100%; }
+.workbench-overlay-mark { position: absolute; box-sizing: border-box; border: 1px solid #198754; background: #19875422; pointer-events: none; min-width: 2px; min-height: 2px; }
+.workbench-overlay-mark.is-active { outline: 3px solid #dc2626; outline-offset: 3px; box-shadow: 0 0 0 5px #fff; }
+.document-coverage-review { margin: 28px 0; padding: clamp(16px, 3vw, 28px); border: 1px solid var(--line); border-radius: 16px; scroll-margin-top: 20px; }
+.document-coverage-review h2 { margin-top: 0; }
+.document-coverage-review dd { margin: 8px 0 0; font-size: 1.5rem; }
+.coverage-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-block: 20px; }
+.coverage-controls label { display: inline-flex; gap: 8px; align-items: center; }
+.coverage-controls button { padding: 8px 14px; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font: inherit; }
+.coverage-controls button:disabled { opacity: .5; cursor: default; }
+.wildcard-coverage-detail { display: block; margin-top: 6px; font-size: .8rem; color: var(--text-2); }
+.wildcard-coverage-legend { color: var(--text-2); font-size: .85rem; max-width: 80ch; }
 .wildcard-viewer canvas, .wildcard-viewer img { display: block; max-width: 100%; height: auto; }
 .wildcard-viewer pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 24px; border: 1px solid var(--line); border-radius: 16px; }
 .wildcard-pagination { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 20px; }

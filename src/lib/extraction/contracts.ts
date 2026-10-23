@@ -3,6 +3,12 @@ import { z } from "zod";
 export const METHODS = ["native", "tesseract", "rapidocr", "docling", "vision", "unlimitedocr"] as const;
 export const methodSchema = z.enum(METHODS);
 const short = z.string().max(200);
+const foregroundMaskSchema = z.object({
+  width: z.number().int().min(1).max(200), height: z.number().int().min(1).max(200),
+  bits: z.string().min(4).max(6668).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+}).strict().refine(mask => {
+  try { return atob(mask.bits).length === Math.ceil(mask.width * mask.height / 8); } catch { return false; }
+}, "Invalid foreground mask size");
 export const boxSchema = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
   .refine(([x, y, r, b]) => x <= r && y <= b);
 export const piiSchema = z.object({ start: z.number().int().nonnegative(), end: z.number().int().positive(), label: short }).strict().refine(s => s.end > s.start);
@@ -13,6 +19,7 @@ const basePageSchema = z.object({
   layoutRegions: z.array(z.object({ kind: z.enum(["table", "text", "chart", "image"]), box: boxSchema, origin: short }).strict()).max(500).optional(),
   diagnostics: z.object({ version: z.literal(1), textSource: short, foregroundPixels: z.number().int().nonnegative(), coveredForegroundPixels: z.number().int().nonnegative(),
     sampleWidth: z.number().int().min(1).max(1000), sampleHeight: z.number().int().min(1).max(1000),
+    foregroundMask: foregroundMaskSchema.optional(),
     uncoveredRegions: z.array(z.object({ box: boxSchema, uncoveredFraction: z.number().min(0).max(1) }).strict()).max(400),
     lowConfidenceWords: z.number().int().nonnegative(), confidenceWords: z.number().int().nonnegative(), imageRegions: z.number().int().nonnegative(), nativeCharacters: z.number().int().nonnegative().optional(), scanLike: z.boolean().optional(),
   }).strict().refine(d => d.coveredForegroundPixels <= d.foregroundPixels && d.foregroundPixels <= d.sampleWidth*d.sampleHeight && d.lowConfidenceWords <= d.confidenceWords).optional(),
