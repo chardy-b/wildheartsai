@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const METHODS = ["native", "tesseract", "rapidocr", "docling", "vision"] as const;
+export const METHODS = ["native", "tesseract", "rapidocr", "docling", "vision", "unlimitedocr"] as const;
 export const methodSchema = z.enum(METHODS);
 const short = z.string().max(200);
 export const boxSchema = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])

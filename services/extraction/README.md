@@ -45,9 +45,51 @@ Dedicated deployment root: `/opt/wildhearts-extraction`. Existing production cha
 - `tesseract`: rendered-page OCR, with word geometry and preserved line order. This also handles image uploads.
 - `rapidocr`: optional `worker-neural` image target with pinned RapidOCR/ONNX Runtime and explicitly verified bundled PP-OCRv6 model hashes. CPU execution inside Iggy; no runtime downloads. The desktop DirectML experiment is a separate synthetic benchmark, not the production execution provider.
 - `vision`: page transcription through a separately configured `EXTRACTION_VISION_MODEL` on the same private inference endpoint. No remote image URLs or provider fallback. The current staged endpoint has no verified vision profile; leave this method disabled until tested.
+- `unlimitedocr`: experimental Baidu Unlimited OCR through a separate authenticated GPU service on the private network. It uses the same owner-selected jobs, scoped source access, isolated page renderer, redaction/synthesis, cancellation checks and encrypted immutable results as the other methods. There is no browser download/export path. Plain text still bypasses OCR.
 - `docling`: an optional adapter requiring a separate image with Docling and predownloaded local artifacts at `DOCLING_ARTIFACTS_PATH`. It is not installed in the initial constrained CPU image. It fails instead of downloading models at runtime. Its block geometry is not reported as tight-word pixel coverage.
 
 Every run includes rules, OpenMed, and combined PII spans; the combined text is the default summary input. A deterministic policy calculates age only from a single unambiguous ISO DOB and a supplied encounter date; ambiguous slash dates, conflicts, missing anchors, or impossible ages cause omission. A final detector/known-identifier scan withholds a summary on failure. Clinical quantitative extraction separately uses private original text through local inference, preserving source dates; each accepted candidate must quote source evidence containing its fields. These are experimental extractions, not verified clinical facts.
+
+### Unlimited OCR private backend
+
+The [official model](https://huggingface.co/baidu/Unlimited-OCR) is MIT licensed, approximately 6.7 GB in BF16, and has a finite 32K context. Its authors report strong document parsing benchmarks; that does not establish accuracy on our uploads. The official Transformers example targets NVIDIA/CUDA. Native AMD ROCm PyTorch also ran the initial synthetic numeric/checksum acceptance on this Windows machine (RX 9070, approximately 43 seconds and 8.25 GiB peak allocated VRAM). This small test is not clinical validation. Recheck the service after driver or runtime upgrades.
+
+Run the GPU backend on the local inference machine, separately from the CPU/Iggy worker. Install Python 3.12 and the GPU vendor's compatible Torch/torchvision wheels in a dedicated environment. For AMD Windows, use the [official AMD installation instructions](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/windows/install-pytorch.html); the tested pair is Torch 2.9.1+rocm7.2.1 / torchvision 0.24.1+rocm7.2.1. Do not install CUDA wheels on an AMD host. Then, from the repository root using that environment's Python:
+
+```powershell
+python -m pip install -r services/extraction/requirements-unlimited-ocr.txt
+python services/extraction/prepare_unlimited_ocr.py services/extraction/models/unlimited-ocr
+```
+
+Preparation acquires official revision `8249d20b2822a7d8a4c22c8d8c9069b5ac36bda3`, hashes the model/configuration/tokenizer files, and applies two narrow custom-code changes: accept PIL images directly in memory and replace Python `eval` of model output with literal parsing. It is idempotent and fails if prepared hashes have changed. Startup verifies all recorded files, loads only local safetensors/custom code, and disables library downloads/telemetry. The runtime blocks Python outbound socket connections after loading. Run it behind the existing private-network firewall as well; this is not a claim of OS-level sandbox isolation.
+
+Create a dedicated random credential file on the GPU host without printing its contents. Keep it outside tracked files. The same value belongs only in the gateway's protected environment; the worker and web app never receive it. Start the service with:
+
+```powershell
+$env:UNLIMITED_OCR_MODEL_DIR = 'C:\absolute\path\to\models\unlimited-ocr'
+$env:UNLIMITED_OCR_TOKEN_FILE = 'C:\absolute\private\path\ocr-token'
+$env:UNLIMITED_OCR_HOST = '127.0.0.1' # use this machine's private/Tailscale IP for the VPS gateway
+$env:UNLIMITED_OCR_PORT = '8091'
+$env:UNLIMITED_OCR_DEVICE = '0' # one explicit GPU; no changes to other inference services
+python -B services/extraction/unlimited_ocr_server.py
+```
+
+The bind address must be an explicit private IP (wildcard/public binds are rejected); restrict network access to the extraction gateway. Prefer a Tailscale address for cross-host traffic so the HTTP connection travels inside its encrypted tunnel. Do not publish this port publicly. `GET /ready` requires the credential and returns only model/runtime identity; `POST /ocr` accepts one bounded PNG raster plus the expected runtime fingerprint. Pixels and output remain in RAM, no document temp files are created, and stdout/stderr/access/error logs are suppressed. One GPU call runs at a time; a concurrent request returns 503. Generation has an 8,192-output-token limit and a 120-second soft budget (an in-flight model step can exceed it); reaching either limit fails instead of saving truncated text. Cancellation/revocation is checked by the gateway before and after each OCR call, so in-flight compute can continue but its late output cannot be accepted. HTML table rows/cells are retained without expanding merged-cell spans; predicted block coordinates are not reported as tight word boxes, confidence, or visual coverage.
+
+Add these settings only to the extraction gateway's protected `.env.gateway` (not web/client or coordinator settings):
+
+```dotenv
+EXTRACTION_UNLIMITED_OCR_URL=http://<gpu-host-private-or-tailscale-ip>:8091
+EXTRACTION_UNLIMITED_OCR_KEY=<dedicated-random-credential-at-least-32-characters>
+```
+
+These settings are optional: existing methods do not depend on this service. A selected Unlimited OCR job retries service outages under the existing queue policy; it never silently falls back to another parser. Its encrypted manifest includes the model revision and a fingerprint covering prepared assets, runtime code, versions, GPU and generation policy. A backend change mid-run fails the request rather than mixing environments.
+
+Roll out the web schema validator/UI first, then the updated gateway/worker while the extraction coordinator is idle, then validate the private service. Finally append `unlimitedocr` to the web deployment's existing `EXTRACTION_METHODS`. Keep the option disabled until that entire path is ready: older workers do not understand this method. No database migration or new required web environment variable is needed. Queue experiments through the workbench's **Unlimited OCR (experimental)** checkbox; the native/Tesseract bulk-backfill policy is unchanged. `stage_vps.py` is initial provisioning and rewrites gateway settings, so preserve/reapply these optional entries if that script is reused.
+
+Synthetic integration checks: `python -m unittest discover -s services/extraction -p 'test_*.py'`; the web suite additionally checks queue enablement, ownership, scoped cancellation, method identity and encrypted result custody for this method.
+
+The actual parser → scoped gateway → authenticated GPU service path also passed the synthetic four-number/checksum probe on the RX 9070 XT in approximately 17.7 seconds. The HTTP runtime explicitly selects the configured GPU on each request thread. No uploaded documents were used for either acceptance check; source-document quality remains unmeasured.
 
 The worker handles up to 100 pages / 25 MB, bounds page pixels, and rejects oversized outputs rather than silently truncating them. Version 3 replaces the old 60,000-character inference cutoff with up to eight 20,000-character chunks per task, 400-character overlap within long pages, and source page labels. Redacted summary and private original-text measurement tasks remain separate and are interleaved. Exact duplicate measurement candidates are deduplicated; every accepted field still requires a source quote. A final local synthesis combines validated partial summaries and passes its own privacy gate. Empty text never generates findings.
 

@@ -99,7 +99,7 @@ export function Workbench({ files, initialFileId }: { files: WildcardFile[]; ini
     <fieldset><legend>Experiment</legend>
       {!available && <p role="status">Workers are not configured for this deployment. You can inspect stored results and label references.</p>}
       <label>Documents to process<select multiple value={selected} onChange={e => setSelected([...e.target.selectedOptions].map(o => o.value))}>{files.map(f => <option key={f.id} value={f.id}>{f.relativePath ?? f.name}</option>)}</select></label>
-      <div className="workbench-methods">{METHODS.map(m => <label key={m}><input type="checkbox" disabled={!enabledMethods.includes(m)} checked={methods.includes(m)} onChange={e => setMethods(rows => e.target.checked ? [...rows, m] : rows.filter(v => v !== m))} />{m}{!enabledMethods.includes(m) ? " (not configured)" : ""}</label>)}</div>
+      <div className="workbench-methods">{METHODS.map(m => <label key={m}><input type="checkbox" disabled={!enabledMethods.includes(m)} checked={methods.includes(m)} onChange={e => setMethods(rows => e.target.checked ? [...rows, m] : rows.filter(v => v !== m))} />{m === "unlimitedocr" ? "Unlimited OCR (experimental)" : m}{!enabledMethods.includes(m) ? " (not configured)" : ""}</label>)}</div>
       <label>Encounter date for age calculation (optional)<input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
       <p>Without an encounter date, birthdate is removed and age is omitted. All methods include rules/OpenMed/combined redaction comparisons.</p>
       <button disabled={busy || !available || !selected.length || !methods.length} onClick={() => void mutate("POST", { fileIds: selected, methods, ...(date ? { encounterDate: date } : {}) })}>Run comparison</button>

@@ -36,6 +36,8 @@ def main():
         return checked_request(client, method, path, **kwargs)
     def check_active(): request("GET", "/config")
     def infer(mode, content):
+        if mode == "unlimitedocr":
+            content = {"image": content, "fingerprint": config["unlimitedOcrManifest"]["fingerprint"]}
         return request("POST", "/infer", json={"mode": mode, "content": content}).json()["text"]
     started = time.monotonic()
     stage = "source"
@@ -83,6 +85,8 @@ def main():
             if config["method"] == "rapidocr":
                 from rapid_adapter import HASHES
                 manifest.update({"rapidocr":importlib.metadata.version("rapidocr"),"onnxruntime":importlib.metadata.version("onnxruntime"),"rapidocr_assets":json.dumps(HASHES,sort_keys=True)})
+            if config["method"] == "unlimitedocr" and not mime.startswith("text/"):
+                manifest.update({"unlimited_ocr_" + key: value for key, value in config["unlimitedOcrManifest"].items()})
             manifest.update({"worker": "document-extraction/v3", "worker_image": config.get("workerImage", "unrecorded"), "privacy_policy": "no-names-dob-to-age/v1", "pii_model": Path("/models/pii/REVISION").read_text().strip(), "summary_model": config["summaryModel"], "vision_model": config.get("visionModel", "disabled"),
                              "summary_model_revision": config.get("summaryModelRevision", "unknown-alias-only"), "vision_model_revision": config.get("visionModelRevision", "unknown-alias-only"), "source_mime": mime,
                              "parser_configuration": json.dumps({"render_scale_max":2.5,"max_pixels":20_000_000,"tesseract_psm":3,"foreground_threshold":220,"diagnostic_grid":20},sort_keys=True,separators=(',',':'))})

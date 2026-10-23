@@ -3,6 +3,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -25,6 +26,23 @@ def private_url(value):
 WEB = os.environ.get("EXTRACTION_WEB_URL", "").rstrip("/")
 SUMMARY_MODEL = os.environ.get("EXTRACTION_SUMMARY_MODEL", "")
 VISION_MODEL = os.environ.get("EXTRACTION_VISION_MODEL", "")
+
+def unlimited_ocr(client, operation, content=None):
+    endpoint = private_url(os.environ["EXTRACTION_UNLIMITED_OCR_URL"])
+    credential = os.environ["EXTRACTION_UNLIMITED_OCR_KEY"]
+    if len(credential) < 32: raise ValueError("invalid_ocr_credential")
+    with client.stream("GET" if operation == "ready" else "POST", endpoint + "/" + operation,
+                       headers={"Authorization": "Bearer " + credential}, json=content) as response:
+        response.raise_for_status()
+        return json.loads(bounded(response, 500_000))
+
+def ocr_manifest(value):
+    keys = {"model", "revision", "fingerprint", "torch", "transformers", "device", "policy"}
+    if not isinstance(value, dict) or set(value) != keys or any(not isinstance(v, str) or not 0 < len(v) <= 200 for v in value.values()):
+        raise ValueError("invalid_ocr_manifest")
+    if value["model"] != "baidu/Unlimited-OCR" or not re.fullmatch(r"[a-f0-9]{40}", value["revision"]) or not re.fullmatch(r"[a-f0-9]{64}", value["fingerprint"]):
+        raise ValueError("invalid_ocr_identity")
+    return value
 
 def bounded(response, limit):
     result = bytearray()
@@ -65,10 +83,21 @@ class Handler(BaseHTTPRequestHandler):
             content = self.rfile.read(size) if size else None
             if path == "infer":
                 if self.command != "POST": raise ValueError("method")
-                web("GET", "config", token)  # Only an active run may use inference.
+                config, _ = web("GET", "config", token)  # Only an active run may use inference.
                 payload = json.loads(content)
                 mode = payload["mode"]
-                if mode not in {"summary", "vision"} or set(payload) != {"mode", "content"}: raise ValueError("invalid_inference")
+                if mode not in {"summary", "vision", "unlimitedocr"} or set(payload) != {"mode", "content"}: raise ValueError("invalid_inference")
+                if mode == "unlimitedocr":
+                    if json.loads(config).get("method") != "unlimitedocr": raise ValueError("wrong_ocr_method")
+                    item = payload["content"]
+                    if not isinstance(item, dict) or set(item) != {"image", "fingerprint"} or not isinstance(item["image"], str) or not item["image"].startswith("data:image/png;base64,") or not isinstance(item["fingerprint"], str) or not re.fullmatch(r"[a-f0-9]{64}", item["fingerprint"]):
+                        raise ValueError("invalid_ocr_input")
+                    with httpx.Client(trust_env=False, follow_redirects=False, timeout=150) as client:
+                        output = unlimited_ocr(client, "ocr", item)
+                    if set(output) != {"text", "fingerprint"} or output["fingerprint"] != item["fingerprint"] or not isinstance(output["text"], str) or len(output["text"]) > 100_000:
+                        raise ValueError("invalid_ocr_output")
+                    web("GET", "config", token)  # Discard output after cancellation/revocation.
+                    return self.respond(200, json.dumps({"text": output["text"]}).encode())
                 model = SUMMARY_MODEL if mode == "summary" else VISION_MODEL
                 if not model: raise ValueError("model_unavailable")
                 if mode == "summary" and (not isinstance(payload["content"], str) or len(payload["content"]) > 70_000): raise ValueError("invalid_input")
@@ -88,6 +117,9 @@ class Handler(BaseHTTPRequestHandler):
             output, mime = web(self.command, path, token, content)
             if path == "config":
                 config = json.loads(output); config.update({"summaryModel": SUMMARY_MODEL, "visionModel": VISION_MODEL, "workerImage": os.environ.get("EXTRACTION_WORKER_IMAGE", "unrecorded"), "summaryModelRevision":os.environ.get("EXTRACTION_SUMMARY_MODEL_REVISION","unknown-alias-only"), "visionModelRevision":os.environ.get("EXTRACTION_VISION_MODEL_REVISION","unknown-alias-only")})
+                if config.get("method") == "unlimitedocr":
+                    with httpx.Client(trust_env=False, follow_redirects=False, timeout=5) as client:
+                        config["unlimitedOcrManifest"] = ocr_manifest(unlimited_ocr(client, "ready")["manifest"])
                 output = json.dumps(config).encode()
             self.respond(200, output, mime)
         except (httpx.TransportError, httpx.HTTPStatusError) as error:
