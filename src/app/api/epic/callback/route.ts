@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { auth } from "@/lib/auth";
+import { applicationSession } from "@/lib/application-session";
+import { isDemoUser } from "@/lib/demo/access";
 import { db } from "@/lib/db";
 import { asUser } from "@/lib/db/rls";
 import { completeAuthorization } from "@/lib/epic/callback";
@@ -13,8 +14,9 @@ import { completeOnboarding, getProfile } from "@/lib/profile";
 import { requestSyncFor } from "@/lib/sync/server";
 
 export async function GET(request: NextRequest) {
-  const session = await auth.api.getSession({ headers: request.headers });
+  const session = await applicationSession(request.headers);
   if (!session) return NextResponse.redirect(new URL("/sign-in", request.url));
+  if (isDemoUser(session.user.id)) return NextResponse.json({ error: "Live health-system connections are unavailable in demo mode." }, { status: 403 });
 
   const userId = session.user.id;
   const key = tokenKey();

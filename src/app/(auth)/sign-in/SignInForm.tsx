@@ -5,7 +5,11 @@ import { useState, type FormEvent } from "react";
 import { authClient } from "@/lib/auth-client";
 import { authErrorMessage } from "@/lib/auth-errors";
 
-export function SignInForm({ notice }: { notice?: string }) {
+export function SignInForm({ notice, destination = "/app", submitLabel = "Sign in" }: {
+  notice?: string;
+  destination?: "/app" | "/demo";
+  submitLabel?: string;
+}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -25,7 +29,7 @@ export function SignInForm({ notice }: { notice?: string }) {
       setError(authErrorMessage(error));
       return;
     }
-    router.push("/app");
+    router.push(destination);
     router.refresh();
   }
 
@@ -46,7 +50,7 @@ export function SignInForm({ notice }: { notice?: string }) {
         </p>
       ) : null}
       <button className="btn btn-lg" type="submit" disabled={pending}>
-        {pending ? "Signing in" : "Sign in"}
+        {pending ? "Signing in" : submitLabel}
       </button>
     </form>
   );

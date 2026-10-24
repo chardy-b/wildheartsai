@@ -134,6 +134,13 @@
       "when": 1792473471001,
       "tag": "0018_background_schedule_history",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792647613278,
+      "tag": "0019_demo_parent_sessions",
+      "breakpoints": true
     }
   ]
 }

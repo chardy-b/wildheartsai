@@ -1,7 +1,8 @@
 import "server-only";
 import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { applicationSession } from "@/lib/application-session";
+import { isDemoIdentity } from "@/lib/demo/identity";
 import { appUrl } from "@/lib/env";
 import { asUser } from "@/lib/db/rls";
 import { chatRun } from "@/lib/db/schema";
@@ -20,8 +21,16 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
   return guarded(async () => {
     if (!["GET", "POST", "DELETE"].includes(request.method)) throw new ChatRequestError(405, "method_not_allowed");
     if (request.method !== "GET" && (request.headers.get("origin") !== new URL(appUrl()).origin || request.headers.get("sec-fetch-site") === "cross-site")) throw new ChatRequestError(403, "forbidden");
-    const identity = await auth.api.getSession({ headers: request.headers });
+    const identity = await applicationSession(request.headers);
     if (!identity || !identity.user.emailVerified) throw new ChatRequestError(401, "unauthorized");
+    // Pin chat history and writes to the workspace shown when this tab rendered.
+    // ID-bound source reads remain protected by the existing owner checks below.
+    const expectedWorkspace = request.headers.get("x-wildhearts-workspace");
+    const contextRead = path.length === 1 && ["conversations", "summaries"].includes(path[0]);
+    if (expectedWorkspace !== null || request.method !== "GET" || contextRead) {
+      const actualWorkspace = isDemoIdentity(identity.user.id) ? "demo" : "personal";
+      if ((expectedWorkspace ?? "personal") !== actualWorkspace) throw new ChatRequestError(409, "workspace_changed");
+    }
     // Read bounded input before opening a database transaction or taking auth locks.
     const submittedInput = request.method === "POST" && path.length === 3 && path[0] === "conversations" && path[2] === "runs"
       ? { idempotencyKey: id.parse(request.headers.get("idempotency-key")), ...question.parse(await body(request)) }
@@ -33,7 +42,7 @@ export function browserRequest(request: Request, path: string[]): Promise<Respon
       await reaping;
     }
     return asUser(dataDb, identity.user.id, async (tx) => {
-      const locked = await tx.execute(sql`select public.chat_lock_session(${identity.session.id}, ${identity.user.id}) at time zone 'UTC' as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
+      const locked = await tx.execute(sql`select public.chat_lock_session_v2(${identity.session.id}, ${identity.user.id}) at time zone 'UTC' as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
       if (!locked.rows[0]?.expires_at || !Number.isFinite(new Date(locked.rows[0].expires_at).getTime()) || new Date(locked.rows[0].expires_at).getTime() <= Date.now()) throw new ChatRequestError(401, "unauthorized");
       const sessionExpiresAt = new Date(locked.rows[0].expires_at).getTime();
       const response = await (async () => {

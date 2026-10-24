@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { auth } from "@/lib/auth";
+import { applicationSession } from "@/lib/application-session";
+import { isDemoUser } from "@/lib/demo/access";
 import { buildAuthorizeUrl, requestedScopes } from "@/lib/epic/authorize";
 import { db } from "@/lib/db";
 import { findConnectable } from "@/lib/epic/directory-store";
@@ -10,8 +11,9 @@ import { discoverSmartConfiguration } from "@/lib/epic/smart";
 import { enabledEpicEnvironment, env } from "@/lib/env";
 
 export async function GET(request: NextRequest) {
-  const session = await auth.api.getSession({ headers: request.headers });
+  const session = await applicationSession(request.headers);
   if (!session) return NextResponse.redirect(new URL("/sign-in", request.url));
+  if (isDemoUser(session.user.id)) return NextResponse.json({ error: "Use the fictional clinic feeds in demo mode. Return to your account to connect a health system." }, { status: 403 });
 
   const config = env();
   const { EPIC_REDIRECT_URI } = config;
