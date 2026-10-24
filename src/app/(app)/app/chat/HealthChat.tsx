@@ -20,20 +20,24 @@ type RunEvent = ActivityEvent;
 type ConversationPage = { conversations: Conversation[]; hasMore: boolean; nextCursor: string | null };
 type SummaryPage = { summaries: Summary[]; hasMore: boolean; nextCursor: string | null };
 
-async function chatRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (init?.body) headers.set("Content-Type", "application/json");
-  const response = await fetch(`${CHAT_API}${path}`, {
-    ...init,
-    headers,
-    cache: "no-store",
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    throw new Error(response.status === 401 ? "Please sign in again." : "That request could not be completed. Try again.");
+function createChatRequest(workspace: "personal" | "demo") {
+  return async function chatRequest<T>(path: string, init?: RequestInit): Promise<T> {
+    const headers = new Headers(init?.headers);
+    headers.set("X-Wildhearts-Workspace", workspace);
+    if (init?.body) headers.set("Content-Type", "application/json");
+    const response = await fetch(`${CHAT_API}${path}`, {
+      ...init,
+      headers,
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      if (response.status === 409 && (await response.json().catch(() => null))?.error === "workspace_changed") throw new Error("Your workspace changed in another tab. Reload this page before continuing.");
+      throw new Error(response.status === 401 ? "Please sign in again." : "That request could not be completed. Try again.");
+    }
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
 }
 
 function waitForVisibility(signal: AbortSignal): Promise<void> {
@@ -63,7 +67,9 @@ function wait(delay: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export function HealthChat() {
+export function HealthChat({ initialDraft = "", workspace = "personal" }: { initialDraft?: string; workspace?: "personal" | "demo" }) {
+  // The page key resets this client when the server selects another workspace.
+  const requestRef = useRef(createChatRequest(workspace));
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsHasMore, setConversationsHasMore] = useState(false);
   const [conversationCursor, setConversationCursor] = useState<string | null>(null);
@@ -75,7 +81,7 @@ export function HealthChat() {
   const [summaryCursor, setSummaryCursor] = useState<string | null>(null);
   const [loadingMoreSummaries, setLoadingMoreSummaries] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft);
   const [busy, setBusy] = useState(false);
   const [loadingChats, setLoadingChats] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -107,7 +113,7 @@ export function HealthChat() {
     const request = ++conversationRequestSequence.current;
     latestConversationRequest.current = request;
     const path = options?.before ? `/conversations?before=${encodeURIComponent(options.before)}` : "/conversations";
-    const result = await chatRequest<ConversationPage>(path);
+    const result = await requestRef.current<ConversationPage>(path);
     if (request !== latestConversationRequest.current || options?.signal?.aborted || (options?.selection && !detailGuard.isSelected(options.selection))) return null;
     setConversations(previous => options?.append ? mergeUniqueById(previous, result.conversations) : result.conversations);
     setConversationsHasMore(result.hasMore);
@@ -142,7 +148,7 @@ export function HealthChat() {
     const token = detailGuard.begin(conversationId);
     try {
       const path = `/conversations/${encodeURIComponent(conversationId)}${before === undefined ? "" : `?before=${before}`}`;
-      const result = await chatRequest<Detail>(path);
+      const result = await requestRef.current<Detail>(path);
       return { token, result };
     } catch (error) {
       return { token, error };
@@ -167,7 +173,7 @@ export function HealthChat() {
     let live = true;
     const request = ++conversationRequestSequence.current;
     latestConversationRequest.current = request;
-    void chatRequest<ConversationPage>("/conversations").then(result => {
+    void requestRef.current<ConversationPage>("/conversations").then(result => {
       if (!live || request !== latestConversationRequest.current) return;
       setConversations(result.conversations);
       setConversationsHasMore(result.hasMore);
@@ -229,7 +235,7 @@ export function HealthChat() {
     const id = activeRun.id;
     setStopping(id);
     try {
-      await chatRequest(`/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await requestRef.current(`/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
       setDetail(current => current ? { ...current, runs: current.runs.map(run => run.id === id && isActive(run) ? { ...run, status: "cancelling" } : run) } : current);
     } catch { setError("Could not stop the response. Try again."); }
     finally { setStopping(null); }
@@ -248,7 +254,7 @@ export function HealthChat() {
         if (controller.signal.aborted || !detailGuard.isSelected(selection)) return;
         try {
           const after = activitiesRef.current.get(runId)?.cursor ?? 0;
-          const result = await chatRequest<{ events: RunEvent[]; status: string; nextSequence: number }>(
+          const result = await requestRef.current<{ events: RunEvent[]; status: string; nextSequence: number }>(
             `/runs/${encodeURIComponent(runId)}/events?after=${after}`,
             { signal: controller.signal },
           );
@@ -313,7 +319,7 @@ export function HealthChat() {
     try {
       let conversationId = selected;
       if (!conversationId) {
-        const created = await chatRequest<{ conversation: Conversation }>("/conversations", { method: "POST", body: "{}" });
+        const created = await requestRef.current<{ conversation: Conversation }>("/conversations", { method: "POST", body: "{}" });
         conversationId = created.conversation.id;
         detailGuard.select(conversationId);
         setSelected(conversationId);
@@ -322,7 +328,7 @@ export function HealthChat() {
       if (!pending.current || pending.current.conversationId !== conversationId || pending.current.text !== text) {
         pending.current = { conversationId, text, key: crypto.randomUUID() };
       }
-      const submitted = await chatRequest<{ runId: string }>(`/conversations/${encodeURIComponent(conversationId)}/runs`, {
+      const submitted = await requestRef.current<{ runId: string }>(`/conversations/${encodeURIComponent(conversationId)}/runs`, {
         method: "POST",
         headers: { "Idempotency-Key": pending.current.key },
         body: JSON.stringify({ message: pending.current.text }),
@@ -347,7 +353,7 @@ export function HealthChat() {
   const loadSummaries = async () => {
     const request = summaryRequestLifecycle.begin();
     try {
-      const result = await chatRequest<SummaryPage>("/summaries");
+      const result = await requestRef.current<SummaryPage>("/summaries");
       if (!summaryRequestLifecycle.isCurrent(request)) return;
       setSummaries(result.summaries);
       setSummariesHasMore(result.hasMore);
@@ -361,7 +367,7 @@ export function HealthChat() {
     if (!summariesHasMore || !summaryCursor || summaryRequestLifecycle.isLoading()) return;
     const request = summaryRequestLifecycle.begin();
     try {
-      const result = await chatRequest<SummaryPage>(`/summaries?before=${encodeURIComponent(summaryCursor)}`);
+      const result = await requestRef.current<SummaryPage>(`/summaries?before=${encodeURIComponent(summaryCursor)}`);
       if (!summaryRequestLifecycle.isCurrent(request)) return;
       setSummaries(previous => mergeUniqueById(previous, result.summaries));
       setSummariesHasMore(result.hasMore);
@@ -383,7 +389,7 @@ export function HealthChat() {
     loadingOlderMessagesRef.current = true;
     setLoadingOlderMessages(true);
     try {
-      const page = await chatRequest<Detail>(`/conversations/${encodeURIComponent(conversationId)}?before=${before}`);
+      const page = await requestRef.current<Detail>(`/conversations/${encodeURIComponent(conversationId)}?before=${before}`);
       if (request !== latestOlderDetailRequest.current || !detailGuard.isSelected(selection)) return;
       setDetail(current => {
         if (!current || current.conversation.id !== conversationId) return current;
@@ -427,7 +433,7 @@ export function HealthChat() {
         <p>Helpful context saved for future chats. Remove a summary any time.</p>
         {loadingMoreSummaries && <p role="status">Loading summaries…</p>}
         {!loadingMoreSummaries && !summaries.length && <p>No saved summaries yet.</p>}
-        {summaries.map(summary => <article key={summary.id}><p>{summary.text ?? summary.content?.text ?? "Saved health summary"}</p><button type="button" onClick={() => { void chatRequest(`/summaries/${encodeURIComponent(summary.id)}`, { method: "DELETE" }).then(loadSummaries).catch(() => setError("Could not delete this summary.")); }}>Delete summary</button></article>)}
+        {summaries.map(summary => <article key={summary.id}><p>{summary.text ?? summary.content?.text ?? "Saved health summary"}</p><button type="button" onClick={() => { void requestRef.current(`/summaries/${encodeURIComponent(summary.id)}`, { method: "DELETE" }).then(loadSummaries).catch(() => setError("Could not delete this summary.")); }}>Delete summary</button></article>)}
         {summariesHasMore && <button type="button" disabled={loadingMoreSummaries} onClick={() => { void loadMoreSummaries(); }}>More summaries</button>}
       </details>
     </aside>

@@ -1,8 +1,9 @@
--- Reviewed, operator-run upgrade for already provisioned roles after migration 0009.
+-- Reviewed, operator-run upgrade for already provisioned roles after migration 0019.
 -- Uses the operator's authenticated psql connection; contains no credentials and
 -- never recreates roles, changes passwords, or broadens authentication-table writes.
 BEGIN;
 GRANT EXECUTE ON FUNCTION public.chat_lock_session(text, text) TO wildhearts_chat_data, wildhearts_chat_queue;
+GRANT EXECUTE ON FUNCTION public.chat_lock_session_v2(text, text) TO wildhearts_chat_data, wildhearts_chat_queue;
 GRANT SELECT ON chat_coordinator TO wildhearts_chat_data, wildhearts_chat_queue;
 GRANT UPDATE (disabled_at) ON chat_coordinator TO wildhearts_chat_data;
 GRANT UPDATE (disabled_at, claim_window_at, claim_count) ON chat_coordinator TO wildhearts_chat_queue;

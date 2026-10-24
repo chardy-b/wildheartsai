@@ -11,6 +11,7 @@ import { createConversation, listMessages, requestRunCancellation, submitQuestio
 import { ChatAuthority, credentialHash } from "./authority";
 import { assertChatDatabaseRoles } from "./role-preflight";
 import { CHAT_DEADLINE_MS, type ClaimReply } from "./protocol";
+import { ensureDemoWorkspace, selectedDemoSession } from "@/lib/demo/workspace";
 
 async function fixture() {
   const db = await createTestDb();
@@ -54,6 +55,23 @@ async function fixture() {
 const completion = (sequence = 1) => ({ eventId: randomUUID(), sequence, type: "completed" as const, data: { answer: "Synthetic complete answer" } });
 
 describe("web-owned chat authority with constrained PostgreSQL roles", () => {
+  it("runs demo tools against the isolated chart and revokes worker access when the real login ends", async () => {
+    const f = await fixture();
+    const parent = { user: { id: f.alice, emailVerified: true }, session: { id: `session-${f.alice}`, expiresAt: new Date(f.time().getTime() + 3600_000) } };
+    await f.record(f.alice);
+    await ensureDemoWorkspace(f.db, Buffer.from(process.env.RECORDS_ENCRYPTION_KEY!, "base64"), parent);
+    const selected = (await selectedDemoSession(f.db, parent))!;
+    const scope = { userId: selected.user.id, conversationId: (await createConversation(f.dataDb, { userId: selected.user.id })).id };
+    await submitQuestionAndRun(f.dataDb, scope, { message: "Summarize the fictional biopsy history", idempotencyKey: randomUUID(), initiatingSessionId: selected.session.id, now: f.time() });
+    const claim = await f.claim();
+    const records = await f.authority.tool(claim.executionGrant, { toolCallId: "demo-biopsy", tool: "find_records", input: { query: "Esophageal biopsy peak eosinophils", limit: 20 } });
+    expect(records.output).toMatchObject({ records: [expect.any(Object), expect.any(Object)] });
+    const personal = await f.authority.tool(claim.executionGrant, { toolCallId: "personal-lab", tool: "find_records", input: { query: "Synthetic lab", limit: 20 } });
+    expect(personal.output).toMatchObject({ records: [] });
+    await f.db.delete(session).where(eq(session.id, parent.session.id));
+    await expect(f.authority.context(claim.executionGrant)).rejects.toMatchObject({ code: "run_not_active" });
+  });
+
   it("passes role preflight, resolves an opaque grant through metadata role and stores only hashes", async () => {
     const f = await fixture();
     const client = (f.db as unknown as { $client: PGlite }).$client;

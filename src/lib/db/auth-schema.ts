@@ -7,6 +7,7 @@ import {
   boolean,
   integer,
   index,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
@@ -37,8 +38,10 @@ export const session = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // Internal demo work is fenced by the person's real login, including logout.
+    parentSessionId: text("parent_session_id").references((): AnyPgColumn => session.id, { onDelete: "cascade" }),
   },
-  (table) => [index("session_userId_idx").on(table.userId)],
+  (table) => [index("session_userId_idx").on(table.userId), index("session_parent_idx").on(table.parentSessionId)],
 );
 
 export const account = pgTable(

@@ -71,10 +71,36 @@ async function inspect(client: SqlClient, kind: "data" | "queue"): Promise<strin
   const sessionLock = (await client.query(`select p.prosecdef, p.proconfig, p.prosrc as body, pg_get_userbyid(p.proowner) as owner,
     has_function_privilege(current_user,p.oid,'EXECUTE') as allowed,
     exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where a.grantee=0 and a.privilege_type='EXECUTE') as public_execute
-    from pg_proc p where p.oid='public.chat_lock_session(text,text)'::regprocedure`)).rows[0];
-  const expectedBody = `SELECT s.expires_at FROM public.session s JOIN public."user" u ON u.id=s.user_id
-    WHERE s.id=p_session_id AND s.user_id=p_user_id AND s.expires_at > clock_timestamp()
-      AND u.email_verified=true FOR SHARE OF s, u`;
+    from pg_proc p where p.oid='public.chat_lock_session_v2(text,text)'::regprocedure`)).rows[0];
+  const expectedBody = `DECLARE
+  parent_id text;
+  parent_expires timestamp;
+  child_expires timestamp;
+BEGIN
+  SELECT s.parent_session_id INTO parent_id FROM public.session s
+    WHERE s.id = p_session_id AND s.user_id = p_user_id;
+  IF parent_id IS NOT NULL THEN
+    SELECT s.expires_at INTO parent_expires
+      FROM public.session s JOIN public."user" u ON u.id = s.user_id
+      WHERE s.id = parent_id AND s.parent_session_id IS NULL
+        AND s.expires_at > (clock_timestamp() AT TIME ZONE 'UTC') AND u.email_verified = true
+      FOR SHARE OF s, u;
+    IF parent_expires IS NULL THEN RETURN NULL; END IF;
+  ELSIF p_user_id ~ '^wildhearts_demo_workspace_[a-f0-9]{64}$' THEN
+    RETURN NULL;
+  END IF;
+  SELECT s.expires_at INTO child_expires
+    FROM public.session s JOIN public."user" u ON u.id = s.user_id
+    WHERE s.id = p_session_id AND s.user_id = p_user_id
+      AND s.parent_session_id IS NOT DISTINCT FROM parent_id
+      AND s.expires_at > (clock_timestamp() AT TIME ZONE 'UTC') AND u.email_verified = true
+    FOR SHARE OF s, u;
+  IF parent_id IS NOT NULL THEN
+    IF child_expires IS NULL THEN RETURN NULL; END IF;
+    RETURN least(child_expires, parent_expires);
+  END IF;
+  RETURN child_expires;
+END`;
   const normalize = (value: string) => value.replace(/\s+/g, "").toLowerCase();
   if (!sessionLock?.prosecdef || sessionLock.owner === role.name || !sessionLock.allowed || sessionLock.public_execute || !Array.isArray(sessionLock.proconfig) || !sessionLock.proconfig.includes("search_path=pg_catalog, public") || typeof sessionLock.body !== "string" || normalize(sessionLock.body) !== normalize(expectedBody)) throw new Error("chat_session_lock_not_restricted");
   return String(role.name);

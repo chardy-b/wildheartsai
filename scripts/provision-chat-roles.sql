@@ -25,6 +25,7 @@ CREATE ROLE wildhearts_chat_queue LOGIN PASSWORD :'chat_queue_password'
 
 GRANT USAGE ON SCHEMA public TO wildhearts_chat_data, wildhearts_chat_queue;
 GRANT EXECUTE ON FUNCTION public.chat_lock_session(text, text) TO wildhearts_chat_data, wildhearts_chat_queue;
+GRANT EXECUTE ON FUNCTION public.chat_lock_session_v2(text, text) TO wildhearts_chat_data, wildhearts_chat_queue;
 GRANT SELECT ON chat_coordinator TO wildhearts_chat_data, wildhearts_chat_queue;
 GRANT UPDATE (disabled_at) ON chat_coordinator TO wildhearts_chat_data;
 GRANT UPDATE (disabled_at, claim_window_at, claim_count) ON chat_coordinator TO wildhearts_chat_queue;

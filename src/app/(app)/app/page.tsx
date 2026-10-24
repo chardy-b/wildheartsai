@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
+import { isDemoUser } from "@/lib/demo/access";
 import { FaceMark } from "@/components/landing/marks";
 import { SyncWatcher } from "@/components/app/SyncWatcher";
 import { ProblemNotices } from "@/components/records/ProblemNotices";
@@ -54,6 +56,7 @@ async function HomeRecords({ userId, params }: { userId: string; params: Params 
 
 export default async function AppHome({ searchParams }: PageProps<"/app">) {
   const { session, profile } = await requireOnboarded();
+  if (isDemoUser(session.user.id) && Object.keys(await searchParams).length === 0) redirect("/app/demo");
   const sources = await loadSourcesFor(session.user.id);
 
   if (sources.length === 0) {

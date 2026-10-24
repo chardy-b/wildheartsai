@@ -43,7 +43,7 @@ function terminal(status: string): boolean { return ["completed", "failed", "can
 
 /** Internal metadata lock; no authentication tokens or auth-table write grants are used. */
 export async function lockInitiatingSession(tx: Db, sessionId: string, userId: string, at = new Date()): Promise<void> {
-  const result = await tx.execute(sql`select public.chat_lock_session(${sessionId}, ${userId}) at time zone 'UTC' as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
+  const result = await tx.execute(sql`select public.chat_lock_session_v2(${sessionId}, ${userId}) at time zone 'UTC' as expires_at`) as unknown as { rows: { expires_at: Date | string | null }[] };
   const expires = result.rows[0]?.expires_at;
   if (!expires || !Number.isFinite(new Date(expires).getTime()) || new Date(expires) <= at) throw new ChatAuthorityError("run_not_active");
 }

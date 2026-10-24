@@ -13,6 +13,7 @@ vi.mock("./runtime", () => ({ webChatRuntime: mocks.runtime, ChatUnavailableErro
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: mocks.getSession } } }));
 vi.mock("@/lib/env", () => ({ appUrl: () => "https://wildhearts.example" }));
 import { browserRequest } from "./browser-http";
+import { demoUserId } from "@/lib/demo/identity";
 
 async function fixture() {
   const db = await createTestDb();
@@ -45,6 +46,18 @@ async function fixture() {
 beforeEach(() => vi.clearAllMocks());
 
 describe("same-origin browser chat against the restricted data role", () => {
+  it("rejects stale personal and demo tabs before reading history or initializing model work", async () => {
+    for (const [userId, expected] of [[demoUserId("tab-owner"), "personal"], ["tab-owner", "demo"]] as const) {
+      mocks.getSession.mockResolvedValue({ user: { id: userId, emailVerified: true }, session: { id: "synthetic-tab-session" } });
+      for (const method of ["GET", "POST"]) {
+        const response = await browserRequest(new Request("https://wildhearts.example/api/chat/v1/conversations", { method, headers: { origin: "https://wildhearts.example", "x-wildhearts-workspace": expected } }), ["conversations"]);
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: "workspace_changed" });
+      }
+    }
+    expect(mocks.runtime).not.toHaveBeenCalled();
+  });
+
   it("persists one turn across duplicate submissions and binds work to the authenticated session", async () => {
     const f = await fixture(); const key = randomUUID(); const path = ["conversations", f.aliceConversation.id, "runs"];
     const first = await f.call("POST", path, { message: "Synthetic question" }, key);
