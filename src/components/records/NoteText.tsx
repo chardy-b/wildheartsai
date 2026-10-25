@@ -6,7 +6,7 @@ import type { NoteResult } from "@/lib/records-notes";
 
 const MESSAGES: Record<Exclude<NoteResult, { ok: true }>["reason"], string> = {
   not_found: "We couldn't find this note.",
-  unsupported: "This document isn't text we can show here. You can open it in MyChart.",
+  unsupported: "Full text isn't available for this document.",
   reconnect: "This health system needs you to sign in again before we can load the note.",
   unavailable: "We couldn't load this note just now. Try again in a moment.",
 };
