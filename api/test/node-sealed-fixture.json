@@ -1,0 +1,21 @@
+{
+  "note": "Sealed by the Node implementation (src/lib/crypto) with made-up keys; opened in workerd by api/test/crypto.test.ts.",
+  "kek": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+  "tokenKey": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
+  "userId": "fixture-user",
+  "sealedDek": "v2.mg6IyS3HueDEmMWs.y570GKXt5kiZYR1T1-1vLo4Ddp7GVPCfHWlUmpm21dkBYYl4QyZkzSQFEUs.zBnFbmt9p-TON0iBVVXCqw",
+  "sealedToken": "v1._sZul9gWLNcMpdlG.XwFGhnZKRrEns1inWZTerOHg6sA.rqkvHX4dmC988TgktTIU-g",
+  "location": {
+    "table": "fhir_resource",
+    "field": "sealed_summary",
+    "rowId": "row-1"
+  },
+  "sealedField": "v2.aGvydg1lcZKMBRQh.Wb7kB1NTIeUHQ6XsfN6HARvZCA.cgYpQUeAWnsdpQ-0Qm3K3w",
+  "hmac": "XK44i7HOqGupthr7IFSPzxvzxPiMWZ3O-LR7vccJVRg",
+  "binaryLocation": {
+    "table": "wildcard_file",
+    "field": "object",
+    "rowId": "file-1"
+  },
+  "sealedBinary": "AeEjAyZubovA4r2Q+LUgmenq+5in9sTXf/prTSQ0qAcwelOlqZYbFffaTU2yLEg="
+}

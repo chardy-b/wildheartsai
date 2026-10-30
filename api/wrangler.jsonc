@@ -1,0 +1,43 @@
+// The API Worker. Reachable only through the web Worker's service binding (no public URL).
+// Plan: docs/superpowers/plans/2026-10-30-cloudflare-migration.md
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wildhearts-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+
+  // Local development (`wrangler dev`, tests). Secrets go in .dev.vars (git-ignored).
+  "vars": { "APP_ENV": "development" },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "wildhearts-local", "database_id": "local-main", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-local" }],
+
+  "env": {
+    // Shared by every pull request's preview (one preview database, by decision).
+    "preview": {
+      "name": "wildhearts-api-preview",
+      "vars": { "APP_ENV": "preview" },
+      "d1_databases": [
+        // database_id: set after `wrangler d1 create wildhearts-preview` (Phase 0).
+        { "binding": "DB", "database_name": "wildhearts-preview", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+      ],
+      // The existing preview bucket's name (today's R2_BUCKET_NAME in Vercel's Preview scope).
+      "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-preview" }]
+    },
+    "production": {
+      "name": "wildhearts-api-production",
+      "vars": { "APP_ENV": "production" },
+      "d1_databases": [
+        // database_id: set after `wrangler d1 create wildhearts-prod` (Phase 0).
+        { "binding": "DB", "database_name": "wildhearts-prod", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+      ],
+      // The existing production bucket's name (today's R2_BUCKET_NAME in Vercel's Production scope).
+      "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-production" }]
+    }
+  }
+}

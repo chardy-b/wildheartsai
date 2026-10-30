@@ -1,0 +1,33 @@
+// The chat Worker. Its database holds only chat tables; it reads records through a narrow RPC
+// on the API Worker (Phase 6). See docs/superpowers/specs/2026-10-30-d1-transaction-audit.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wildhearts-chat",
+  "main": "src/chat/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+
+  "d1_databases": [
+    { "binding": "CHAT_DB", "database_name": "wildhearts-chat-local", "database_id": "local-chat", "migrations_dir": "chat-migrations" }
+  ],
+
+  "env": {
+    "preview": {
+      "name": "wildhearts-chat-preview",
+      "d1_databases": [
+        // database_id: set after `wrangler d1 create wildhearts-chat-preview` (Phase 0).
+        { "binding": "CHAT_DB", "database_name": "wildhearts-chat-preview", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "chat-migrations" }
+      ]
+    },
+    "production": {
+      "name": "wildhearts-chat-production",
+      "d1_databases": [
+        // database_id: set after `wrangler d1 create wildhearts-chat-prod` (Phase 0).
+        { "binding": "CHAT_DB", "database_name": "wildhearts-chat-prod", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "chat-migrations" }
+      ]
+    }
+  }
+}

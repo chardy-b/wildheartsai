@@ -23,3 +23,62 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # The Cloudflare API Worker (api/): its own install, typecheck and tests in workerd.
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            api/package-lock.json
+      # The schema parity test reads the Next app's Postgres schema, which needs the root install.
+      - run: npm ci --no-audit --no-fund
+        working-directory: .
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+
+  # Deploys api/ to the shared preview environment. Off until the repository variable
+  # CLOUDFLARE_PREVIEW_DEPLOY is "true" and the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+  # secrets exist (Phase 0 of docs/superpowers/plans/2026-10-30-cloudflare-migration.md).
+  # Secrets aren't available to pull requests from forks, so those skip it.
+  api-preview:
+    needs: api
+    if: vars.CLOUDFLARE_PREVIEW_DEPLOY == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: cloudflare-preview
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: api
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      # Migrations first, as the Vercel build does today: a failed migration stops the deploy.
+      - run: npx wrangler d1 migrations apply DB --env preview --remote
+      - run: npx wrangler d1 migrations apply CHAT_DB --env preview --remote --config wrangler.chat.jsonc
+      - run: npx wrangler deploy --env preview
+      - run: npx wrangler deploy --env preview --config wrangler.chat.jsonc
