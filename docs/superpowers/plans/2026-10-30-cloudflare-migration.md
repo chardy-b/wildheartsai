@@ -7,6 +7,9 @@
 **Decisions (2026-10-30):**
 
 - Database: **D1**. Not Neon behind Hyperdrive: the owner chose a single platform over keeping Postgres. The cost of that choice is losing Postgres row-level security (see "Replacing row-level security").
+- Cutover: **build and verify the whole Cloudflare stack on a staging hostname while Vercel keeps serving production, then swap DNS.** Some downtime is acceptable, but both stacks should run side by side for as long as possible (see "Cutover").
+- Previews: **one shared preview D1 database** (and preview R2 bucket, preview chat D1), not one per PR.
+- Inngest run history is not kept.
 - Backend: **Hono on Workers**, a new Worker that owns every API route, the database, R2, jobs and secrets.
 - Frontend: **Next.js on Workers via `@opennextjs/cloudflare`**. It renders pages and calls the API. It has no database binding and holds no record, token or Epic secrets.
 
@@ -24,16 +27,19 @@ Everything in the roadmap's Security rules and in `AGENTS.md` still applies. Thi
 ## Target architecture
 
 ```
-                       www.wildheartsai.com (Cloudflare zone)
+            staging hostname now, www.wildheartsai.com after the DNS swap
                                     │
-             ┌──────────────────────┴───────────────────────┐
-     route: /api/*                                     route: everything else
-             │                                               │
-   ┌─────────▼──────────┐   service binding (API)   ┌────────▼──────────┐
-   │  wildhearts-api    │◄──────────────────────────│  wildhearts-web   │
-   │  Hono on Workers   │   cookie forwarded,       │  Next.js (OpenNext)│
-   │                    │   no public hop           │  pages, CSP nonce │
-   └─┬──────┬──────┬────┘                           └───────────────────┘
+                         ┌──────────▼───────────┐
+                         │   wildhearts-web     │  /api/*  → forwarded to API
+                         │   Next.js (OpenNext) │  else    → Next renders
+                         │   pages, CSP nonce   │
+                         └──────────┬───────────┘
+                                    │ service binding (API): no public hop,
+                                    │ cookie forwarded
+                         ┌──────────▼───────────┐
+                         │   wildhearts-api     │
+                         │   Hono on Workers    │
+                         └─┬──────┬──────┬──────┘
      │      │      │
     D1     R2   Workflows / Queues / Cron / Durable Objects
  (records, (Wildcards (sync-source, nightly refresh,
@@ -44,7 +50,7 @@ Everything in the roadmap's Security rules and in `AGENTS.md` still applies. Thi
   VPS: services/chat (coordinator, gateway, Iggy), services/extraction
 ```
 
-- **One origin.** Workers routes on the zone send `www.wildheartsai.com/api/*` to the API Worker and everything else to the web Worker. Session cookies stay first-party: no CORS, and `EPIC_REDIRECT_URI`, both JWKS URLs and the VPS `CHAT_WEB_API_URL` keep their current values.
+- **One origin, routed by the web Worker.** The web Worker is the only public entry point. Its entry (a small wrapper around OpenNext's worker) sends `/api/*` to the API Worker over the service binding, request streamed as is, and everything else to Next. This works the same on a staging hostname and on `www.wildheartsai.com`, and doesn't depend on zone routes. Session cookies stay first-party with no CORS, and after the DNS swap `EPIC_REDIRECT_URI`, both JWKS URLs and the VPS `CHAT_WEB_API_URL` keep their current values. The API Worker has no public URL (`workers_dev: false`): it is reachable only through the binding, so the VPS also comes in through the web Worker at the same paths.
 - **Next → API over a service binding.** Server components and server actions call `env.API.fetch(...)` (`getCloudflareContext()` from OpenNext), forwarding the incoming `Cookie` header. The browser keeps calling `/api/*` directly (uploads, chat streams, PDF viewing).
 - **The VPS contract doesn't change.** `services/chat` and `services/extraction` already talk to the web backend only over HTTPS, with scoped grants (no database or R2 credentials), so they just reach Hono at the same paths. GPU inference and OCR stay on the VPS: Workers can't run them. Cloudflare Containers or Workers AI could be evaluated later, separately.
 
@@ -77,11 +83,11 @@ After cutover, a cleanup PR moves Next into `web/` and deletes `drizzle/`, `verc
 | Inngest `refresh-epic-directory` (cron 08:41 UTC, or on event) | Cron Trigger `41 8 * * *`, plus an admin-only endpoint → Workflow `RefreshEpicDirectory` (streamed import, see D1 notes) |
 | Inngest `reap-chat-runs` (every minute) | Cron Trigger `* * * * *` on the chat Worker |
 | `@aws-sdk/client-s3` → R2 | R2 binding (`env.FILES`), the same opaque keys and ciphertext format, so no object rewrite |
-| nodemailer → Gmail SMTP | An HTTP email API called from the API Worker: Cloudflare Email Service if it's generally available for transactional mail at build time, otherwise a transactional provider. Open question 1 |
+| nodemailer → Gmail SMTP | An HTTP email API called from the API Worker (provider to be chosen by the owner; open question 1). Until then the API keeps the current development behaviour on preview (print the link) and production cutover is blocked on it |
 | `@vercel/analytics` (with `beforeSend` scrubbing) | Cloudflare Web Analytics (cookieless). Check the beacon against the CSP; keep URL scrubbing |
 | `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL` | `BETTER_AUTH_URL` / `APP_URL` set per environment in `wrangler.jsonc` vars |
 | Vercel env vars | Worker secrets (`wrangler secret put`), per environment; non-secret flags as `vars` |
-| Vercel preview per branch, Neon branch per PR | Workers preview versions per PR, against a shared `wildhearts-preview` D1 and R2 bucket (D1 has no branching) |
+| Vercel preview per branch, Neon branch per PR | Workers preview versions per PR (preview URLs), all against one shared `wildhearts-preview` D1 and R2 bucket. Migrations stay additive, so PRs on different schemas can share it |
 | `vercel-build` runs `drizzle-kit migrate` | CI runs `wrangler d1 migrations apply --remote` before `wrangler deploy` |
 | `npx vercel logs` | `wrangler tail`, Workers Logs (log fields stay IDs and codes only) |
 
@@ -169,9 +175,32 @@ Wildcards objects are already in R2, so only rows move.
 2. Import with `wrangler d1 execute --remote --file`, chunked.
 3. Verify: row counts per table, a checksum of the sealed columns per table, and an in-Worker check that, for a sample of users, each data key unwraps and one record per user opens. Log pass/fail counts only.
 4. Rehearse at least twice against the preview environment with a production-shaped copy (or the seeded local data) before the real run.
-5. **Cutover window:** put the app in read-only maintenance (a flag in the Vercel deployment), run the final export and import, verify, switch DNS (or routes, if the zone is already on Cloudflare), and run the production checks from `.agents/skills/pr-delivery/SKILL.md`. Keep Neon read-only and Vercel deployable for 30 days for rollback.
+5. The final copy happens during the cutover window below.
 
 The export writes health data in sealed form to a temporary file on an operator machine. Delete it right after import, and never commit it.
+
+## Cutover
+
+The owner swaps DNS from Vercel to the new site once everything works there. Until then both stacks run, but **only Vercel and Neon take production writes**: D1 and Neon are not kept in sync in both directions. Two writable copies of health data would drift and could lose amendments or deletions.
+
+**Before the swap (both running, weeks):**
+
+- The Cloudflare stack runs at a staging hostname (`wildhearts-web.<account>.workers.dev`, or a custom domain such as `next.wildheartsai.com` once the zone is on Cloudflare), against production-shaped data from rehearsal imports.
+- Register the staging callback (`https://<staging>/api/epic/callback`) as an extra redirect URI on the **sandbox** Epic client only, so Epic sign-in can be tested end to end with sample patients. The production Epic client keeps only the `www` URI.
+- The VPS services keep pointing at Vercel. A second coordinator/gateway pair, or a config switch, can point at staging for acceptance tests.
+- Rehearse the data copy and the full checklist below at least twice. Time it, since the read-only window is about as long as the copy.
+
+**DNS preparation (any time before the swap, no downtime):** if the zone isn't on Cloudflare yet, move its nameservers there first, with the existing records pointing at Vercel unchanged and DNS-only (not proxied). Vercel keeps serving as before. The swap is then one record change in the Cloudflare dashboard, and so is a rollback. Lower the TTL a day ahead.
+
+**The swap (minutes of read-only, no full outage):**
+
+1. Turn on read-only mode on Vercel: a `MAINTENANCE_READ_ONLY` flag that pauses sign-up, Connect, Refresh, uploads and chat with a notice, and pauses the Inngest crons. Viewing still works.
+2. Run the final Neon → D1 copy and its verification (counts, checksums, sample decrypts).
+3. Point `www` (and the apex redirect) at the web Worker as a Workers custom domain. Requests still on Vercel during propagation see read-only mode, not stale writes.
+4. Run the production checks: `/api/health`, sign-in, a records page, a Wildcards download, the sandbox Connect, the nightly crons registered, the VPS reaching `CHAT_WEB_API_URL`, and no errors in Workers Logs.
+5. Switch the VPS to the new stack (same URL; it just resolves to Cloudflare now).
+
+**Rollback:** within the first hours, if nothing has been written on Cloudflare, point DNS back at Vercel and turn read-only off. After real writes land in D1, rolling back needs a reverse copy, so fix forward unless something is unsafe. Keep Neon read-only and the Vercel project deployable for 30 days, then delete the Neon database and the Vercel project as part of Phase 8.
 
 ## Secrets and configuration
 
@@ -194,7 +223,7 @@ Every variable in `src/lib/env.ts` and `.env.example` maps to a Worker secret or
 | 4 | Jobs | Sync Workflow and Queue, nightly refresh, directory import Workflow, sandbox replay green |
 | 5 | Next on Workers | OpenNext build, service binding, pages and server actions on the API client, pdf.js as assets, Web Analytics |
 | 6 | Wildcards, extraction, chat, demo | R2 binding routes, extraction worker API, `wildhearts-chat` Worker with its D1 and Durable Object, demo |
-| 7 | Data migration and cutover | Rehearsals, the production move, DNS, verification |
+| 7 | Data migration and cutover | Read-only flag on Vercel, rehearsals on staging, the production copy, the owner's DNS swap, verification |
 | 8 | Cleanup | Remove Vercel, Neon, Inngest, `pg`, `@aws-sdk`, nodemailer; move Next to `web/`; rewrite `AGENTS.md` and the delivery skill for Cloudflare |
 
 Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to Cloudflare preview.
@@ -205,10 +234,11 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [ ] Measure Neon: size per table, largest `fhir_attachment` and `fhir_resource` rows, row counts. Decide the R2 threshold for large attachments
 - [ ] List every transaction (`db.transaction`, `asUser`) and classify it: read-only, batchable, or needs a guard/Durable Object
 - [x] Check the sealing associated data: `table:field:userId:rowId`, so names and IDs are preserved verbatim (see schema conversion)
-- [ ] Cloudflare: move the `wildheartsai.com` zone (or confirm it's there), create the D1 databases (`wildhearts-prod`, `wildhearts-preview`, `wildhearts-chat-prod`, `wildhearts-chat-preview`), and confirm the R2 buckets
+- [ ] Cloudflare: create the D1 databases (`wildhearts-prod`, `wildhearts-preview`, `wildhearts-chat-prod`, `wildhearts-chat-preview`), and confirm the R2 buckets
 - [ ] Workers paid plan; confirm the current D1, Workflows and Workers limits used in this plan
 - [ ] CI secret: a scoped Cloudflare API token for `wrangler deploy` and D1 migrations (GitHub Actions secret, never committed)
-- [ ] Answer the open questions
+- [x] Answer the open questions (2026-10-30), except email
+- [ ] Before Phase 7: move the zone's nameservers to Cloudflare with records still pointing at Vercel (owner)
 
 ### Phase 1: API skeleton
 
@@ -239,8 +269,11 @@ Outlined in the table; each gets task-level steps when it starts, as in the reco
 
 ## Open questions
 
-1. **Email:** Cloudflare Email Service (if generally available for transactional sending), or a provider with an HTTP API? Either way, Gmail SMTP from a Worker is out.
-2. **Zone:** is `wildheartsai.com` DNS already on Cloudflare? Moving it is a prerequisite for Workers routes on the apex/www.
-3. **Preview isolation:** is one shared preview D1 enough, or should CI create a D1 per PR and delete it on close?
-4. **Maintenance window:** what downtime is acceptable for the final copy (read-only, likely minutes at current size)?
-5. **Inngest history:** does anything need the Inngest run history kept after cutover?
+1. **Email provider** (owner will decide later). Gmail SMTP can't be used from a Worker. Needed before cutover, not before Phase 2 work on preview.
+
+Answered 2026-10-30:
+
+- DNS: the owner swaps it from Vercel to the new site once it works there (see "Cutover").
+- Downtime: some is fine; both stacks run side by side until the swap, with a short read-only window for the final copy.
+- Inngest history: not needed.
+- Previews: one shared preview database.
