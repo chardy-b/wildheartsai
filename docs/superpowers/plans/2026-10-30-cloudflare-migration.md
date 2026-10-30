@@ -252,7 +252,17 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [x] Crypto ported (`api/src/crypto/`) and proven against values sealed by the Node code (`crypto.test.ts`)
 - [x] GitHub Actions: `api` job (typecheck and tests) on every PR; `api-preview` job (migrate, then deploy to the shared preview) once Phase 0's Cloudflare setup is done. Production deploys come with the cutover
 
-### Phases 2–8
+### Phase 2: auth
+
+- [x] Better Auth 1.7.5 (the app's version) on D1 through the Drizzle adapter, configured as in `src/lib/auth.ts`: email and password, verified email, 12-character minimum, invite gate, 90-day sessions renewed daily, the same rate-limit rules (`api/src/auth/`)
+- [x] Served at `/api/auth/*`; `/api/session` returns the signed-in person to the web Worker without the session token (demo workspace selection joins it in Phase 6)
+- [x] Rate limiting keys on `cf-connecting-ip` (Cloudflare sets it; `X-Forwarded-For` can be forged) and is on outside development explicitly, since Better Auth's default follows `NODE_ENV`. The web Worker must forward `cf-connecting-ip` unchanged (Phase 5)
+- [x] Proven on workerd: password hashes made by the Node app verify, the remembered-browser renewal over 100 days, invite codes, closed sign-up, the IP rate limit (checked by switching it back to `X-Forwarded-For` and watching the test fail), and a `wrangler dev` run of sign-up → verify → sign-in → `/api/session`
+- [x] Email: development prints links; preview prints them only with `EMAIL_LOG_LINKS=true` (set in `api/wrangler.jsonc`'s preview vars); production never sends or prints until a provider is chosen. Better Auth logs a failed email and still answers 200 (as on Vercel today), so the account stays unverified
+- [ ] Email provider (owner decision; blocks the cutover, not preview)
+- [ ] At cutover, give the Workers the same `BETTER_AUTH_SECRET` as Vercel production, so copied sessions and cookies stay valid
+
+### Phases 3–8
 
 Outlined in the table; each gets task-level steps when it starts, as in the records storage plan.
 

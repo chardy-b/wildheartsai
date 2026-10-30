@@ -21,6 +21,8 @@ const secretsSchema = z
     // The public origin. Required: Workers have no per-deployment URL fallback like VERCEL_URL.
     BETTER_AUTH_URL: z.url(),
     EMAIL_FROM: z.string().min(3),
+    // Preview only: print verification and reset links to the Worker's logs (see src/auth/email.ts).
+    EMAIL_LOG_LINKS: flag,
     // When set, sign-up also needs this early-access invite code.
     SIGNUP_INVITE_CODE: z.string().min(1).optional(),
     SIGNUPS_ENABLED: flag,

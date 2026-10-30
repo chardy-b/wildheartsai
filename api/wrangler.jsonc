@@ -21,7 +21,9 @@
     // Shared by every pull request's preview (one preview database, by decision).
     "preview": {
       "name": "wildhearts-api-preview",
-      "vars": { "APP_ENV": "preview" },
+      // EMAIL_LOG_LINKS: print sign-up and reset links to the logs until an email provider is
+      // chosen. Preview data is made up; production never does this (src/auth/email.ts).
+      "vars": { "APP_ENV": "preview", "EMAIL_LOG_LINKS": "true" },
       "d1_databases": [
         // database_id: set after `wrangler d1 create wildhearts-preview` (Phase 0).
         { "binding": "DB", "database_name": "wildhearts-preview", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
