@@ -1,7 +1,5 @@
 import "server-only";
-import { REFERENCED_TYPES } from "@/lib/fhir/references";
 import type { Resource } from "@/lib/fhir/types";
-import { SYNC_QUERIES } from "@/lib/sync/plan";
 import type { SyncDeps, SyncSource } from "@/lib/sync/run";
 import { MetriportError, queryState, type FhirBundle, type MetriportClient } from "./client";
 import type { MetriportConnectionSecrets } from "./connections";
@@ -11,10 +9,8 @@ import { readFromBundle, searchBundle } from "./search";
 // patient's consolidated bundle. The bundle is fetched once and shared by the job's steps that
 // run close together; each step is otherwise independent and refetches.
 
-// Metriport's records carry no per-resource permissions, so the connection "grants" every type the
-// sync reads. Not Binary: Metriport serves documents as files, not FHIR Binary resources, so note
-// text isn't imported.
-export const METRIPORT_SCOPE = [...new Set([...SYNC_QUERIES.map((q) => q.resourceType), ...REFERENCED_TYPES])].map((type) => `patient/${type}.rs`).join(" ");
+import { METRIPORT_SCOPE } from "./scope";
+export { METRIPORT_SCOPE };
 
 const BUNDLE_TTL_MS = 60_000;
 const MAX_CACHED_BUNDLES = 5;

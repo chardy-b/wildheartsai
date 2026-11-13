@@ -14,8 +14,12 @@ export const epicDirectoryEntry = sqliteTable(
     partOf: text("part_of"),
     location: text("location"),
     searchText: text("search_text").notNull(),
+    // D1 only (not in Postgres): which import wrote the row. Searches read only the generation the
+    // latest import activated, so an import is written in parts and switched to at once.
+    // Rows copied from Neon are generation 0. See src/data/directory.ts.
+    generation: integer("generation").notNull().default(0),
   },
-  (table) => [index("epic_directory_entry_url_idx").on(table.fhirBaseUrl)],
+  (table) => [index("epic_directory_entry_url_idx").on(table.fhirBaseUrl), index("epic_directory_entry_generation_idx").on(table.generation, table.fhirBaseUrl)],
 );
 
 // One row per import attempt that got as far as building the directory.
@@ -27,4 +31,6 @@ export const epicDirectoryImport = sqliteTable("epic_directory_import", {
   organizations: integer("organizations").notNull(),
   facilities: integer("facilities").notNull(),
   addresses: integer("addresses").notNull(),
+  // D1 only: the generation this import activated; null when the list hadn't changed.
+  generation: integer("generation"),
 });

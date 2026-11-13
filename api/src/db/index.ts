@@ -1,7 +1,7 @@
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "./schema";
 
-export type Db = DrizzleD1Database<typeof schema>;
+export type Db = DrizzleD1Database<typeof schema> & { $client: D1Database };
 
 // The main database. Code serving a signed-in person reaches it only through
 // `forUser` (src/data/scope.ts); jobs use `system`.

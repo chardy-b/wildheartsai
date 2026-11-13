@@ -1,5 +1,5 @@
-import { and, eq, inArray, type SQL } from "drizzle-orm";
-import type { SelectedFields, SQLiteColumn, SQLiteInsertValue, SQLiteSelect, SQLiteTable } from "drizzle-orm/sqlite-core";
+import { and, eq, getTableColumns, getTableName, inArray, sql, type SQL } from "drizzle-orm";
+import type { AnySQLiteColumn, SelectedFields, SQLiteColumn, SQLiteInsertValue, SQLiteSelect, SQLiteTable } from "drizzle-orm/sqlite-core";
 import type { Db } from "../db";
 import * as schema from "../db/schema";
 
@@ -51,6 +51,12 @@ type Owned = SQLiteTable & { userId: SQLiteColumn };
 type SourceScoped = typeof schema.syncCursor;
 
 export class ScopeError extends Error {}
+
+// A statement for `batch`: a drizzle builder, or one made by `bulkInsert`.
+export type Statement = { toSQL(): { sql: string; params: unknown[] } };
+
+// D1 caps a value (and a row) at about 2 MB; bulk statements stay well under it.
+const BULK_BYTES = 800_000;
 
 export type UserScope = ReturnType<typeof forUser>;
 
@@ -114,10 +120,83 @@ export function forUser(db: Db, userId: string) {
       return db.insert(table).select(query as never);
     },
 
+    // Where a source's incremental sync resumes from. sync_cursor has no user_id: the row is
+    // written only if the source is this person's (INSERT … SELECT from their health_source row).
+    upsertCursor(sourceId: string, queryKey: string, patch: Partial<Pick<typeof schema.syncCursor.$inferInsert, "lastSuccessAt" | "lastFullAt" | "supportsLastUpdated">>) {
+      const c = schema.syncCursor;
+      const value = (column: SQLiteColumn, v: unknown, alias: string) => sql`${v === undefined || v === null ? null : column.mapToDriverValue(v)}`.as(alias);
+      const row = db
+        .select({
+          sourceId: schema.healthSource.id,
+          queryKey: sql<string>`${queryKey}`.as("query_key"),
+          lastSuccessAt: value(c.lastSuccessAt, patch.lastSuccessAt, "last_success_at"),
+          lastFullAt: value(c.lastFullAt, patch.lastFullAt, "last_full_at"),
+          supportsLastUpdated: value(c.supportsLastUpdated, patch.supportsLastUpdated, "supports_last_updated"),
+        })
+        .from(schema.healthSource)
+        .where(and(eq(schema.healthSource.id, sourceId), eq(schema.healthSource.userId, userId)));
+      return db
+        .insert(c)
+        .select(row as never)
+        .onConflictDoUpdate({ target: [c.sourceId, c.queryKey], set: patch as never });
+    },
+
+    // Many rows in few statements: each statement inserts a chunk of rows passed as one JSON
+    // parameter (`json_each`), so neither D1's 100-parameter limit nor its per-invocation query
+    // limit is reached by a 10,000-record search. Rows must belong to this scope's user, and all
+    // carry the same columns. Returns statements for `batch`.
+    bulkInsert<T extends UserTable>(table: T, rows: T["$inferInsert"][], options: { onConflictDoNothing?: boolean } = {}): Statement[] {
+      assertOwnRows(rows as { userId?: unknown }[]);
+      if (rows.length === 0) return [];
+      const columns = Object.entries(getTableColumns(table)) as [string, AnySQLiteColumn][];
+      const driverRows = rows.map((row) => {
+        const out: Record<string, unknown> = {};
+        for (const [key, column] of columns) {
+          const value = (row as Record<string, unknown>)[key] !== undefined ? (row as Record<string, unknown>)[key] : column.defaultFn?.();
+          if (value !== undefined) out[column.name] = value === null ? null : column.mapToDriverValue(value);
+        }
+        return out;
+      });
+      const names = Object.keys(driverRows[0]);
+      if (driverRows.some((row) => Object.keys(row).length !== names.length || names.some((name) => !(name in row)))) {
+        throw new ScopeError("bulkInsert rows must carry the same columns");
+      }
+      const text = `insert into "${getTableName(table)}" (${names.map((n) => `"${n}"`).join(", ")}) select ${names
+        .map((n) => `json_extract(value, '$."${n}"')`)
+        .join(", ")} from json_each(?)${options.onConflictDoNothing ? " where true on conflict do nothing" : ""}`;
+      const statements: Statement[] = [];
+      let chunk: string[] = [];
+      let bytes = 0;
+      const flush = () => {
+        const json = `[${chunk.join(",")}]`;
+        statements.push({ toSQL: () => ({ sql: text, params: [json] }) });
+        chunk = [];
+        bytes = 0;
+      };
+      for (const row of driverRows) {
+        const json = JSON.stringify(row);
+        if (chunk.length && bytes + json.length > BULK_BYTES) flush();
+        chunk.push(json);
+        bytes += json.length;
+      }
+      flush();
+      return statements;
+    },
+
     // Runs statements built by this scope as one atomic unit (D1 has no interactive
-    // transactions; see docs/superpowers/specs/2026-10-30-d1-transaction-audit.md).
-    batch<B extends Parameters<Db["batch"]>[0]>(statements: B) {
-      return db.batch(statements);
+    // transactions; see docs/superpowers/specs/2026-10-30-d1-transaction-audit.md). Runs on D1
+    // directly, so bulk statements and builders share the batch (drizzle's own batch can't take
+    // raw statements). Returns each statement's rows as D1 gives them: column names, raw values.
+    async batch(statements: Statement[]): Promise<Record<string, unknown>[][]> {
+      if (statements.length === 0) return [];
+      const client = db.$client;
+      const results = await client.batch(
+        statements.map((statement) => {
+          const query = statement.toSQL();
+          return client.prepare(query.sql).bind(...query.params);
+        }),
+      );
+      return results.map((result) => (result.results ?? []) as Record<string, unknown>[]);
     },
   };
 }
@@ -136,4 +215,10 @@ export async function inSlices<V, R>(values: readonly V[], query: (slice: V[]) =
   const results: R[] = [];
   for (let i = 0; i < values.length; i += PARAMETER_SLICE) results.push(...(await query(values.slice(i, i + PARAMETER_SLICE))));
   return results;
+}
+
+// `column in (values)` with the values as one JSON parameter, for id lists of any length (in a
+// scope's update or delete, which adds the owner condition).
+export function inJson(column: SQLiteColumn, values: readonly unknown[]): SQL {
+  return sql`${column} in (select value from json_each(${JSON.stringify(values)}))`;
 }

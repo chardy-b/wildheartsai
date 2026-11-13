@@ -26,7 +26,7 @@ export default defineConfig(async () => {
   const [mainMigrations, chatMigrations] = await Promise.all([readD1Migrations("migrations"), readD1Migrations("chat-migrations")]);
   // Pure modules shared with the Next app (src/lib) are imported through "@/", as in tsconfig.json.
   // Wrangler's bundler reads the tsconfig paths itself.
-  const resolve = { alias: { "@": join(import.meta.dirname, "../src") } };
+  const resolve = { alias: { "@": join(import.meta.dirname, "../src"), "server-only": join(import.meta.dirname, "src/server-only.ts") } };
   return {
     resolve,
     test: {

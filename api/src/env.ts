@@ -12,8 +12,10 @@ export type Bindings = {
   FILES: R2Bucket;
   // One per Epic connection: serializes token refreshes (src/epic/token-refresher.ts).
   TOKEN_REFRESHER: DurableObjectNamespace<TokenRefresher>;
-  // Sync requests for the sync Workflow (its consumer arrives in Phase 4). Ids only, never PHI.
-  SYNC_QUEUE: Queue<SyncRequest>;
+  // Background jobs (src/jobs/workflows.ts). Parameters are ids only, never PHI.
+  SYNC_WORKFLOW: Workflow<SyncRequest>;
+  REFRESH_WORKFLOW: Workflow;
+  DIRECTORY_WORKFLOW: Workflow;
   APP_ENV: "development" | "preview" | "production";
 } & Partial<Record<keyof z.input<typeof secretsSchema>, string>>;
 

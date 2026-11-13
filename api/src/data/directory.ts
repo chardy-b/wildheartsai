@@ -30,6 +30,10 @@ const GENERIC_WORDS = new Set([
   "systems", "the",
 ]);
 
+// The generation searches read: the one the latest changed import activated, or 0 (rows copied
+// from Neon, or none) before any import here.
+export const activeGeneration = sql`coalesce((select ${epicDirectoryImport.generation} from ${epicDirectoryImport} where ${epicDirectoryImport.generation} is not null order by ${epicDirectoryImport.importedAt} desc limit 1), 0)`;
+
 export async function directoryLoaded(db: Db): Promise<boolean> {
   const rows = await db.select({ id: epicDirectoryImport.id }).from(epicDirectoryImport).limit(1);
   return rows.length > 0;
@@ -56,7 +60,7 @@ async function searchWords(db: Db, words: string[], exclude: string[], limit: nu
           case when kind = 'organization' then 0 else 1 end as kind_rank,
           length(name) as name_length
         from ${epicDirectoryEntry}
-        where ${matchesAll(words, sql`search_text`)}${excluded}
+        where generation = ${activeGeneration} and ${matchesAll(words, sql`search_text`)}${excluded}
       )
     )
     where best = 1
@@ -69,7 +73,7 @@ async function searchWords(db: Db, words: string[], exclude: string[], limit: nu
   const names = await db
     .select({ name: t.name, fhirBaseUrl: t.fhirBaseUrl })
     .from(t)
-    .where(and(eq(t.kind, "organization"), inArray(t.fhirBaseUrl, rows.map((r) => r.fhir_base_url))))
+    .where(and(eq(t.generation, activeGeneration), eq(t.kind, "organization"), inArray(t.fhirBaseUrl, rows.map((r) => r.fhir_base_url))))
     .orderBy(asc(sql`length(${t.name})`), asc(t.name));
   return rows.map((row) => {
     if (row.kind === "facility" && row.part_of) {
@@ -115,7 +119,7 @@ export async function findDirectoryOrganization(db: Db, fhirBaseUrl: string, nam
   const rows = await db
     .select({ name: epicDirectoryEntry.name })
     .from(epicDirectoryEntry)
-    .where(and(eq(epicDirectoryEntry.kind, "organization"), eq(epicDirectoryEntry.fhirBaseUrl, wanted)))
+    .where(and(eq(epicDirectoryEntry.generation, activeGeneration), eq(epicDirectoryEntry.kind, "organization"), eq(epicDirectoryEntry.fhirBaseUrl, wanted)))
     .orderBy(asc(sql`length(${epicDirectoryEntry.name})`), asc(epicDirectoryEntry.name));
   if (!rows.length) return undefined;
   const chosen = rows.find((row) => row.name === name) ?? rows[0];

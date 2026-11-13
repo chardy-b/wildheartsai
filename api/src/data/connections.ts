@@ -79,7 +79,7 @@ export async function saveConnection(
       .onConflictDoUpdate({ target: [epicConnection.userId, epicConnection.fhirBaseUrl], set: secrets }),
     auditStatement(scope, { sourceId: sourceIdAt(scope.userId, input.fhirBaseUrl), action: existing ? "reconnect" : "connect" }, now),
   ]);
-  return { sourceId: source.id };
+  return { sourceId: source.id as string };
 }
 
 export async function getConnectionForSource(scope: UserScope, key: Buffer, sourceId: string): Promise<ConnectionSecrets | undefined> {

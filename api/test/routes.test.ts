@@ -115,10 +115,12 @@ describe("records, connections and onboarding routes", () => {
 
     expect(await (await send("POST", `/api/sources/${sourceId}/refresh`, b.cookie)).json()).toEqual({ outcome: "not_connected" });
     expect(await (await send("POST", `/api/sources/${sourceId}/refresh`, a.cookie)).json()).toEqual({ outcome: "queued" });
-    expect(await (await send("POST", "/api/sources/refresh", a.cookie)).json()).toEqual({ outcome: "already_running" });
+    // The run's Workflow starts at once (and, with no tokens stored here, ends the run).
+    expect(["queued", "already_running"]).toContain(((await (await send("POST", "/api/sources/refresh", a.cookie)).json()) as { outcome: string }).outcome);
+    expect(new Set((await db.select().from(s.syncRun)).map((r) => r.userId))).toEqual(new Set([a.userId]));
 
-    const records = (await (await get("/api/records", a.cookie)).json()) as { sources: { id: string; syncing: boolean }[]; items: unknown[]; next: string | null };
-    expect(records.sources).toEqual([expect.objectContaining({ id: sourceId, syncing: true })]);
+    const records = (await (await get("/api/records", a.cookie)).json()) as { sources: { id: string }[]; items: unknown[]; next: string | null };
+    expect(records.sources).toEqual([expect.objectContaining({ id: sourceId })]);
     expect(records.items).toEqual([]);
     expect(((await (await get("/api/records", b.cookie)).json()) as { sources: unknown[] }).sources).toEqual([]);
 
@@ -130,7 +132,9 @@ describe("records, connections and onboarding routes", () => {
     expect(await (await send("DELETE", `/api/sources/${sourceId}`, b.cookie)).json()).toEqual({ deleted: false });
     expect(await (await send("DELETE", `/api/sources/${sourceId}`, a.cookie)).json()).toEqual({ deleted: true });
     const actions = (await db.select().from(s.auditEvent)).map((e) => `${e.userId === a.userId ? "a" : "b"}:${e.action}`).sort();
-    expect(actions).toEqual(["a:delete_source", "a:export"]);
+    // The runs' own "sync" rows come from their Workflows; b has none of anything.
+    expect(actions.filter((x) => !x.endsWith(":sync"))).toEqual(["a:delete_source", "a:export"]);
+    expect(actions.filter((x) => x.startsWith("b:"))).toEqual([]);
   });
 
   it("offers the sandbox to connect in sandbox mode", async () => {

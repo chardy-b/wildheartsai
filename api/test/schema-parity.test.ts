@@ -33,7 +33,12 @@ describe("D1 schema parity with Postgres", () => {
     expect(Object.keys(pg)).toHaveLength(30);
   });
 
-  it("keeps every column name", () => {
-    expect(d1).toEqual(pg);
+  // Columns D1 has that Postgres doesn't, each with a default so the Neon copy fills them.
+  const D1_ONLY: Record<string, string[]> = { epic_directory_entry: ["generation"], epic_directory_import: ["generation"] };
+
+  it("keeps every column name, adding only the listed D1 columns", () => {
+    const withoutAdditions = Object.fromEntries(Object.entries(d1).map(([table, columns]) => [table, columns.filter((c) => !D1_ONLY[table]?.includes(c))]));
+    expect(withoutAdditions).toEqual(pg);
+    for (const [table, columns] of Object.entries(D1_ONLY)) for (const column of columns) expect(d1[table]).toContain(column);
   });
 });

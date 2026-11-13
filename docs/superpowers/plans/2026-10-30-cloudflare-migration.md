@@ -78,9 +78,9 @@ After cutover, a cleanup PR moves Next into `web/` and deletes `drizzle/`, `verc
 | Postgres RLS (`asUser`, migration 0006) | User-scoped data layer, plus cross-user isolation tests (below) |
 | Restricted chat roles (`CHAT_DATABASE_URL`, `CHAT_QUEUE_DATABASE_URL`) | A separate `wildhearts-chat` Worker with its own narrow D1 bindings (below) |
 | `chat_lock_session_v2` (Postgres function) | Durable Object per browser session (`ChatSessionLock`) |
-| Inngest `sync-source` (per-source concurrency 1, global 5) | Workflow `SyncSource`. Per-source exclusivity comes from a deterministic instance ID (`sync-<sourceId>-<runId>`) plus the existing `sync_run` "one active run per source" check. The global limit of 5 comes from a Queue consumer with `max_concurrency` that creates the Workflow instances |
-| Inngest `refresh-sources` (cron 10:17 UTC) | Cron Trigger `17 10 * * *` → Workflow `RefreshSources` (same chunked steps, schedule history unchanged) |
-| Inngest `refresh-epic-directory` (cron 08:41 UTC, or on event) | Cron Trigger `41 8 * * *`, plus an admin-only endpoint → Workflow `RefreshEpicDirectory` (streamed import, see D1 notes) |
+| Inngest `sync-source` (per-source concurrency 1, global 5) | Workflow `SyncSourceWorkflow`, one instance per run (instance id = run id), started directly when a run is queued. Per-source exclusivity comes from the `sync_run` "one active run per source" index. Workflows have no global cap, so the nightly refresh paces itself instead (below). No Queue: the Workflow already gives durable, retried steps |
+| Inngest `refresh-sources` (cron 10:17 UTC) | Cron Trigger `17 10 * * *` → Workflow `RefreshSourcesWorkflow` (same steps and schedule history; queues in groups of 25 a minute apart, standing in for Inngest's global limit of 5) |
+| Inngest `refresh-epic-directory` (cron 08:41 UTC, or on event) | Cron Trigger `41 8 * * *` → Workflow `DirectoryImportWorkflow` (streamed import, see D1 notes). On request: `npx wrangler workflows trigger wildhearts-directory-<env>`, rather than an endpoint |
 | Inngest `reap-chat-runs` (every minute) | Cron Trigger `* * * * *` on the chat Worker |
 | `@aws-sdk/client-s3` → R2 | R2 binding (`env.FILES`), the same opaque keys and ciphertext format, so no object rewrite |
 | nodemailer → Gmail SMTP | An HTTP email API called from the API Worker (provider to be chosen by the owner; open question 1). Until then the API keeps the current development behaviour on preview (print the link) and production cutover is blocked on it |
@@ -99,7 +99,7 @@ Every handler moves to Hono under the same path, so the browser, Epic and the VP
 | --- | --- |
 | `/api/health` | Plain `c.json({ ok: true })`, no bindings |
 | `/api/auth/*` | Better Auth `auth.handler(c.req.raw)`; Drizzle adapter with `provider: "sqlite"`; schema regenerated for SQLite |
-| `/api/epic/authorize`, `/api/epic/callback` | PKCE and state unchanged; `node:crypto` under `nodejs_compat`. Callback enqueues the sync through the Queue |
+| `/api/epic/authorize`, `/api/epic/callback` | PKCE and state unchanged; `node:crypto` under `nodejs_compat`. Callback starts the sync Workflow |
 | `/api/epic/jwks`, `/api/epic/jwks/production` | Unchanged logic |
 | `/api/wildcards`, `/api/wildcards/[id]`, `/[id]/fhir`, `/uploads`, `/uploads/[id]/[part]`, `/uploads/[id]/complete` | R2 binding. Uploads already use 3 MB parts, well under the Workers request-body limit. Streaming download of chunked files uses `ReadableStream` |
 | `/api/wildcards/pdfjs/[...asset]` | Drop the route: serve the pdf.js worker, cmaps and fonts as static assets of the web Worker (copied at build). Removes `outputFileTracingIncludes` |
@@ -163,7 +163,7 @@ Today the chat backend connects with two restricted roles (`docs/superpowers/spe
 ## Testing
 
 - **API:** Vitest with `@cloudflare/vitest-plugin`. Tests run inside `workerd` with real D1, R2, Durable Object and Workflow bindings from Miniflare, replacing PGlite. Port the existing suites module by module alongside the code.
-- **Epic sandbox replay** (`src/lib/sync/sandbox-replay.test.ts`, the fixtures, `src/test/epic-replay.ts`) must pass against the Workflow-based sync before Phase 4 merges. It's the main proof the port didn't change sync behaviour.
+- **Epic sandbox replay** (`src/lib/sync/sandbox-replay.test.ts`, the fixtures, `src/test/epic-replay.ts`) runs against the D1 sync too (`api/test/sandbox-replay.test.ts`, same fixtures and assertions). It's the main proof the port didn't change sync behaviour.
 - **Web:** existing component and proxy tests, plus a test API stub behind the service binding.
 - **Local dev:** `wrangler dev` for the API with local D1 (`wrangler d1 migrations apply --local`), and `next dev` with OpenNext's `initOpenNextCloudflareForDev()` so the `API` binding works. The seed scripts are rewritten against D1 and still refuse non-local databases.
 
@@ -220,7 +220,7 @@ Every variable in `src/lib/env.ts` and `.env.example` maps to a Worker secret or
 | 1 | API skeleton | `api/` Worker with Hono, `/api/health`, the D1 schema and migration, the data layer and isolation tests, CI deploy to a preview |
 | 2 | Auth | Better Auth on D1, email sending, session reads for Next |
 | 3 | Epic and records | Epic authorize/callback/JWKS, directory search and import, records and timeline reads, export |
-| 4 | Jobs | Sync Workflow and Queue, nightly refresh, directory import Workflow, sandbox replay green |
+| 4 | Jobs | Sync Workflow, nightly refresh, directory import Workflow, Metriport, sandbox replay green |
 | 5 | Next on Workers | OpenNext build, service binding, pages and server actions on the API client, pdf.js as assets, Web Analytics |
 | 6 | Wildcards, extraction, chat, demo | R2 binding routes, extraction worker API, `wildhearts-chat` Worker with its D1 and Durable Object, demo |
 | 7 | Data migration and cutover | Read-only flag on Vercel, rehearsals on staging, the production copy, the owner's DNS swap, verification |
@@ -270,12 +270,21 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [x] D1's 100-parameter limit: `inSlices` for lists that can grow (the timeline's history and linked-record lookups); tested by raising the slice size and watching D1 refuse
 - [x] Directory search rewritten for SQLite (window function instead of `DISTINCT ON`, `instr` instead of `split_part`), held to the root tests' fixtures and expectations
 - [x] Shared code: pure modules (`epic/*` flow, PKCE, SMART, tokens, errors, directory; `fhir/*`; `timeline-filters`; `export`; `source-display`; `onboarding`) are imported from `src/lib` through `@/`. Two small root refactors made that possible: `timeline-filters.ts` split out of `timeline.ts`, and `NORMALIZER_VERSION` moved to `sync/plan.ts`. Nothing importing Postgres or `server-only` is bundled (checked in the source map)
-- [x] Sync requests go to the `SYNC_QUEUE` producer (ids only); the consumer and Workflow are Phase 4
-- [ ] Moved to Phase 4: the Metriport sandbox connect (it only makes sense with its import), the directory import Workflow
+- [x] Sync requests are handed on with ids only (a queue producer at first; Phase 4 starts the Workflow directly)
+- [x] Moved to Phase 4 and done there: the Metriport sandbox connect, the directory import Workflow
 - [ ] Moved to Phase 6: blocking demo identities in connect routes (nothing on Cloudflare can select one until demo selection is ported)
-- [ ] Owner (Phase 0): create the `wildhearts-sync-preview` and `wildhearts-sync-production` queues
 
-### Phases 4–8
+### Phase 4: jobs
+
+- [x] Sync engine ported (`api/src/jobs/sync/`): the same steps (`job.ts`), searches, references and note text, every query in the source owner's scope
+- [x] Writing a search's results without one big transaction: rows go in by `json_each` bulk statements (one JSON parameter each, sized by bytes), so neither the 100-parameter nor the per-invocation query limit is hit by a 10,000-record search; each chunk is an atomic batch, and a replaced version is retired, succeeded and linked in the same batch. A retried step re-reads and re-diffs, so nothing is stored twice. Tested with 3,000 records and 120 replacements
+- [x] `SyncSourceWorkflow` (instance per run; a step's retries exhausted ends the run as before), `RefreshSourcesWorkflow` (nightly, paced), `DirectoryImportWorkflow`; Cron Triggers start each once per day. The Phase 3 queue is gone
+- [x] Recorded Epic sandbox replay passes on D1 (both fixtures, all five checks, including "a re-sync changes nothing")
+- [x] Directory import: the ~95 MB Brands bundle is parsed as a stream (one entry in memory at a time) and trimmed to what `buildDirectory` reads; the merged list is staged in R2; slices are written as a new generation (`generation` columns, migration `0001`, D1-only and checked by the parity test) with deterministic ids so a retried slice adds nothing; one insert activates it; old generations and staged files are deleted after. A failure before activation leaves the stored directory unchanged. Tested end to end as a Workflow with 520 made-up systems
+- [x] Metriport: connect (`POST /api/connections/metriport`) and its import through the same job (start the pull, wait with patient retries, one consolidated-bundle fetch per run)
+- [x] Two more small root refactors for sharing: `METRIPORT_SCOPE` in `src/lib/metriport/scope.ts`; `server-only` aliased to an empty module in the Worker (all of it is server code)
+
+### Phases 5–8
 
 Outlined in the table; each gets task-level steps when it starts, as in the records storage plan.
 

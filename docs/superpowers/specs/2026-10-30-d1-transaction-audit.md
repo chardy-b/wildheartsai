@@ -24,6 +24,8 @@ Phase 0 of `docs/superpowers/plans/2026-10-30-cloudflare-migration.md`. Every pl
 | **N** | Row lock held across a network call | **Durable Object per resource**. The lock covers an outbound request, so no statement or batch can stand in |
 | **X** | One big transaction replacing a whole dataset | Generation swap: write a new generation in chunks, flip a pointer in one statement, delete the old generation afterwards |
 
+One more D1 detail: an `INSERT … SELECT` followed by `ON CONFLICT` needs a `WHERE` in the `SELECT` (`WHERE true` will do), or SQLite can't parse it.
+
 ## Call sites
 
 ### Records, sources and connections (Phases 3–4)
@@ -35,12 +37,12 @@ Phase 0 of `docs/superpowers/plans/2026-10-30-cloudflare-migration.md`. Every pl
 | `epic/connections.ts` `deleteConnection`, `metriport/connections.ts` `deleteMetriportConnection` | Delete connection returning `source_id`, mark source disconnected, audit | **G** |
 | `sources.ts` `deleteSource` | Delete source (cascades), audit | **G**: insert the audit row only if the source exists, then delete |
 | `epic/server.ts` `accessTokenFor` + `getConnectionSecretForUpdate` | Locks the connection row **while refreshing the token at Epic**, so two requests don't both spend a rotating refresh token | **N**: a `TokenRefresher` Durable Object keyed by connection ID does read, refresh at Epic, then persist, one at a time. Highest-risk item: a lost race here forces the person to reconnect |
-| `sync/store.ts` `applyDiff` | One query's inserts, supersedes, touches, restores and removes in one transaction | **B**, chunked. D1's limits on bound parameters per statement and statements per invocation mean a large diff can't be one batch. Each chunk must be idempotent so a retried Workflow step can re-run it. Supersede uses precomputed IDs: insert new (ID known), mark old `superseded_at` and `superseded_by` in one statement. Detailed design in Phase 4 |
+| `sync/store.ts` `applyDiff` | One query's inserts, supersedes, touches, restores and removes in one transaction | **B**, chunked (`api/src/jobs/sync/store.ts`): rows inserted by `json_each` bulk statements, each chunk an atomic batch; a replaced version is retired, its successor inserted and the two linked in one batch (the successor's id is precomputed). Not atomic across chunks, but repeatable: a retried step re-reads and re-diffs, so it only writes what's missing |
 | `sync/run.ts` `finishRun` | Read stats, set status, audit, update source | Read, then a **G** batch guarded on `status = 'running'` |
 | `sync/run.ts` `failRun` | Update run returning (only if queued or running), audit, update source | **G** |
 | `records-server.ts` (4 sites), `connections/actions.ts` list | Scoped reads | **R** (the `userKeysFor` first-key insert is `INSERT … ON CONFLICT DO NOTHING` then select: two idempotent statements) |
 | `connections/actions.ts` refresh, delete; `export/route.ts`; `extraction/fhir-http.ts` audit; `epic/callback` save | Single writes, or the helpers above | **R**/**B** or the helper's pattern |
-| `epic/directory-store.ts` `replaceDirectory` | Replaces ~93,000 directory rows in one transaction | **X** (also needed for the 128 MB memory limit; see the plan) |
+| `epic/directory-store.ts` `replaceDirectory` | Replaces ~93,000 directory rows in one transaction | **X**, as a `generation` column: slices written with deterministic ids, activated by one insert, old generations deleted after (`api/src/jobs/directory/import.ts`) |
 
 ### Wildcards (Phase 6)
 

@@ -9,6 +9,8 @@
   "workers_dev": false,
   "preview_urls": false,
   "observability": { "enabled": true },
+  // Modules shared with the Next app mark themselves server-only; everything here is server code.
+  "alias": { "server-only": "./src/server-only.ts" },
 
   // Local development (`wrangler dev`, tests). Secrets go in .dev.vars (git-ignored).
   "vars": { "APP_ENV": "development" },
@@ -17,8 +19,14 @@
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-local" }],
   "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }] },
-  "queues": { "producers": [{ "binding": "SYNC_QUEUE", "queue": "wildhearts-sync-local" }] },
+  "workflows": [
+    { "name": "wildhearts-sync-local", "binding": "SYNC_WORKFLOW", "class_name": "SyncSourceWorkflow" },
+    { "name": "wildhearts-refresh-local", "binding": "REFRESH_WORKFLOW", "class_name": "RefreshSourcesWorkflow" },
+    { "name": "wildhearts-directory-local", "binding": "DIRECTORY_WORKFLOW", "class_name": "DirectoryImportWorkflow" }
+  ],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TokenRefresher"] }],
+  // Nightly refresh and directory import (src/index.ts, CRONS). `wrangler dev --test-scheduled` runs them locally.
+  "triggers": { "crons": ["17 10 * * *", "41 8 * * *"] },
 
   "env": {
     // Shared by every pull request's preview (one preview database, by decision).
@@ -34,8 +42,13 @@
       // The existing preview bucket's name (today's R2_BUCKET_NAME in Vercel's Preview scope).
       "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-preview" }],
       "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }] },
-      // Create with `wrangler queues create wildhearts-sync-preview` (Phase 0).
-      "queues": { "producers": [{ "binding": "SYNC_QUEUE", "queue": "wildhearts-sync-preview" }] }
+      "workflows": [
+        { "name": "wildhearts-sync-preview", "binding": "SYNC_WORKFLOW", "class_name": "SyncSourceWorkflow" },
+        { "name": "wildhearts-refresh-preview", "binding": "REFRESH_WORKFLOW", "class_name": "RefreshSourcesWorkflow" },
+        { "name": "wildhearts-directory-preview", "binding": "DIRECTORY_WORKFLOW", "class_name": "DirectoryImportWorkflow" }
+      ],
+      // Nightly refresh and directory import (src/index.ts, CRONS).
+      "triggers": { "crons": ["17 10 * * *", "41 8 * * *"] }
     },
     "production": {
       "name": "wildhearts-api-production",
@@ -47,8 +60,13 @@
       // The existing production bucket's name (today's R2_BUCKET_NAME in Vercel's Production scope).
       "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-production" }],
       "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }] },
-      // Create with `wrangler queues create wildhearts-sync-production` (Phase 0).
-      "queues": { "producers": [{ "binding": "SYNC_QUEUE", "queue": "wildhearts-sync-production" }] }
+      "workflows": [
+        { "name": "wildhearts-sync-production", "binding": "SYNC_WORKFLOW", "class_name": "SyncSourceWorkflow" },
+        { "name": "wildhearts-refresh-production", "binding": "REFRESH_WORKFLOW", "class_name": "RefreshSourcesWorkflow" },
+        { "name": "wildhearts-directory-production", "binding": "DIRECTORY_WORKFLOW", "class_name": "DirectoryImportWorkflow" }
+      ],
+      // Nightly refresh and directory import (src/index.ts, CRONS).
+      "triggers": { "crons": ["17 10 * * *", "41 8 * * *"] }
     }
   }
 }

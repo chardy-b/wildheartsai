@@ -9,7 +9,8 @@
     "types": [
       "@cloudflare/workers-types",
       "@cloudflare/vitest-plugin/types",
-      "node"
+      "node",
+      "vite/client"
     ],
     "strict": true,
     "noEmit": true,
