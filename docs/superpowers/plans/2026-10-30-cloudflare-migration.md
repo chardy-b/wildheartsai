@@ -262,7 +262,20 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [ ] Email provider (owner decision; blocks the cutover, not preview)
 - [ ] At cutover, give the Workers the same `BETTER_AUTH_SECRET` as Vercel production, so copied sessions and cookies stay valid
 
-### Phases 3–8
+### Phase 3: Epic and records
+
+- [x] Routes, at the Next app's paths: `/api/epic/authorize`, `/api/epic/callback`, `/api/epic/jwks`, `/api/epic/jwks/production`, `/api/export`; new JSON endpoints for what pages and server actions did directly: `/api/sources`, `/api/records` (one timeline page, same query string as `/app`), `/api/records/note`, `/api/connections/choices`, `/api/connections/:id/disconnect`, `/api/sources/refresh`, `/api/sources/:id/refresh`, `DELETE /api/sources/:id`, `/api/profile` (+ `name`, `acknowledge`, `complete`)
+- [x] Data layer on D1 (`api/src/data/`): connections, sources, sync runs, timeline and stored notes, directory search, profile, audit. Every transaction rewritten per the audit (pattern U for saving a connection, G for disconnect, delete and failed runs). The guard in G is an `INSERT … SELECT` built by the scope, so no raw SQL reaches a batch
+- [x] `TokenRefresher` Durable Object per connection (audit pattern N): one refresh at a time, shared by concurrent callers, re-reading the connection first; errors cross RPC as data and are rebuilt into the same error classes. Tested by removing the single-flight join and watching five requests reach Epic
+- [x] D1's 100-parameter limit: `inSlices` for lists that can grow (the timeline's history and linked-record lookups); tested by raising the slice size and watching D1 refuse
+- [x] Directory search rewritten for SQLite (window function instead of `DISTINCT ON`, `instr` instead of `split_part`), held to the root tests' fixtures and expectations
+- [x] Shared code: pure modules (`epic/*` flow, PKCE, SMART, tokens, errors, directory; `fhir/*`; `timeline-filters`; `export`; `source-display`; `onboarding`) are imported from `src/lib` through `@/`. Two small root refactors made that possible: `timeline-filters.ts` split out of `timeline.ts`, and `NORMALIZER_VERSION` moved to `sync/plan.ts`. Nothing importing Postgres or `server-only` is bundled (checked in the source map)
+- [x] Sync requests go to the `SYNC_QUEUE` producer (ids only); the consumer and Workflow are Phase 4
+- [ ] Moved to Phase 4: the Metriport sandbox connect (it only makes sense with its import), the directory import Workflow
+- [ ] Moved to Phase 6: blocking demo identities in connect routes (nothing on Cloudflare can select one until demo selection is ported)
+- [ ] Owner (Phase 0): create the `wildhearts-sync-preview` and `wildhearts-sync-production` queues
+
+### Phases 4–8
 
 Outlined in the table; each gets task-level steps when it starts, as in the records storage plan.
 

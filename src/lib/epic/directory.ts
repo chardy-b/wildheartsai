@@ -86,10 +86,9 @@ export async function loadDirectory(
   fetchImpl: typeof fetch = fetch,
 ): Promise<Organization[]> {
   if (environment === "sandbox") return [EPIC_SANDBOX];
-  const response = await fetchImpl(EPIC_ENDPOINTS_URL, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 60 * 60 * 24 },
-  });
+  // `next` is Next's fetch cache (a day); other runtimes ignore it and pass their own caching fetch.
+  const init: RequestInit & { next?: { revalidate: number } } = { headers: { Accept: "application/json" }, next: { revalidate: 60 * 60 * 24 } };
+  const response = await fetchImpl(EPIC_ENDPOINTS_URL, init);
   if (!response.ok) throw new Error(`Epic endpoint list responded ${response.status}`);
   return parseEndpoints(await response.json());
 }

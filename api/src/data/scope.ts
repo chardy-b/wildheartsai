@@ -1,5 +1,5 @@
 import { and, eq, inArray, type SQL } from "drizzle-orm";
-import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
+import type { SelectedFields, SQLiteColumn, SQLiteInsertValue, SQLiteSelect, SQLiteTable } from "drizzle-orm/sqlite-core";
 import type { Db } from "../db";
 import * as schema from "../db/schema";
 
@@ -83,7 +83,13 @@ export function forUser(db: Db, userId: string) {
       return db.select().from(table).where(and(owns(table), where));
     },
 
-    insert<T extends UserTable>(table: T, rows: T["$inferInsert"] | T["$inferInsert"][]) {
+    // Chosen columns or expressions (aggregates, for instance), still only the person's rows.
+    selectFields<F extends SelectedFields, T extends Owned | SourceScoped>(table: T, fields: F, where?: SQL) {
+      return db.select(fields).from(table as SQLiteTable).where(and(owns(table), where));
+    },
+
+    // Values may be SQL (a subquery for an id written in the same batch); user_id never is.
+    insert<T extends UserTable>(table: T, rows: SQLiteInsertValue<T> | SQLiteInsertValue<T>[]) {
       const list = Array.isArray(rows) ? rows : [rows];
       assertOwnRows(list as { userId?: unknown }[]);
       return db.insert(table).values(list as never);
@@ -99,6 +105,20 @@ export function forUser(db: Db, userId: string) {
     delete<T extends Owned | SourceScoped>(table: T, where?: SQL) {
       return db.delete(table as SQLiteTable).where(and(owns(table), where));
     },
+
+    // INSERT … SELECT over this person's rows: the select comes from this scope (so carries the
+    // owner condition) and inserts nothing when it matches nothing, which makes it the guard in
+    // the audit's "guarded batch" pattern. The select must set user_id to this scope's user;
+    // only src/data builds these (see auditFrom).
+    insertSelect<T extends UserTable>(table: T, query: SQLiteSelect) {
+      return db.insert(table).select(query as never);
+    },
+
+    // Runs statements built by this scope as one atomic unit (D1 has no interactive
+    // transactions; see docs/superpowers/specs/2026-10-30-d1-transaction-audit.md).
+    batch<B extends Parameters<Db["batch"]>[0]>(statements: B) {
+      return db.batch(statements);
+    },
   };
 }
 
@@ -106,4 +126,14 @@ export function forUser(db: Db, userId: string) {
 // directory import, queue claims). Named so every unscoped use is easy to find and review.
 export function system(db: Db): Db {
   return db;
+}
+
+// D1 allows at most 100 bound parameters per statement. Runs `query` over slices of `values`
+// small enough to leave room for the statement's other parameters, and joins the results.
+export const PARAMETER_SLICE = 80;
+
+export async function inSlices<V, R>(values: readonly V[], query: (slice: V[]) => Promise<R[]>): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < values.length; i += PARAMETER_SLICE) results.push(...(await query(values.slice(i, i + PARAMETER_SLICE))));
+  return results;
 }

@@ -80,3 +80,8 @@ export function interpretProbe(fullCount: number, probe: { count: number } | { e
   if (fullCount === 0) return null;
   return probe.count === 0;
 }
+
+// Bump when normalize.ts changes what it produces: rows stored under an older version have
+// their summary recomputed from the stored resource when read (openForDisplay).
+// 2: readable units ("37.2 °C"), and no-allergy placeholders ("No allergies on file").
+export const NORMALIZER_VERSION = 2;

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { TokenRefresher } from "./epic/token-refresher";
+import type { SyncRequest } from "./data/sync-runs";
 
 // The API Worker's configuration: bindings from wrangler.jsonc, secrets from `wrangler secret put`
 // (per environment), and non-secret flags as vars. Ported from src/lib/env.ts in the Next app,
@@ -8,6 +10,10 @@ import { z } from "zod";
 export type Bindings = {
   DB: D1Database;
   FILES: R2Bucket;
+  // One per Epic connection: serializes token refreshes (src/epic/token-refresher.ts).
+  TOKEN_REFRESHER: DurableObjectNamespace<TokenRefresher>;
+  // Sync requests for the sync Workflow (its consumer arrives in Phase 4). Ids only, never PHI.
+  SYNC_QUEUE: Queue<SyncRequest>;
   APP_ENV: "development" | "preview" | "production";
 } & Partial<Record<keyof z.input<typeof secretsSchema>, string>>;
 

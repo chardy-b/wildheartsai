@@ -8,12 +8,9 @@ import { withNames } from "@/lib/fhir/references";
 import type { Resource } from "@/lib/fhir/types";
 import { effectiveDate } from "./dates";
 import { isEnteredInError, withoutMeta, type Diff, type Fetched, type Stored } from "./diff";
-import { SYNC_QUERIES, type Cursor, type SyncQuery } from "./plan";
+import { NORMALIZER_VERSION, SYNC_QUERIES, type Cursor, type SyncQuery } from "./plan";
 
-// Bump when normalize.ts changes what it produces: rows stored under an older version have
-// their summary recomputed from the stored resource when read (openForDisplay).
-// 2: readable units ("37.2 °C"), and no-allergy placeholders ("No allergies on file").
-export const NORMALIZER_VERSION = 2;
+export { NORMALIZER_VERSION } from "./plan";
 
 const BATCH = 100;
 

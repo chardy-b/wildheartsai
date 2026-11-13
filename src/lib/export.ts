@@ -1,6 +1,6 @@
 import type { RecordItem } from "@/lib/fhir/normalize";
 import type { SourceSummary } from "@/lib/sources";
-import { hasFilters, type TimelineFilters } from "@/lib/timeline";
+import { hasFilters, type TimelineFilters } from "@/lib/timeline-filters";
 
 // The records a person has selected with the timeline filters, as a FHIR R4 collection Bundle.
 // Resources go out exactly as their health system sent them; earlier versions are left out.

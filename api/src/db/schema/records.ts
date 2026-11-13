@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { type AnySQLiteColumn, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { bool, json, now, time, uuidPk } from "../columns";
+import type { FailureDiagnostic } from "@/lib/epic/errors";
 import { user } from "./auth";
 
 // Stored health records. Design: docs/superpowers/specs/2026-09-26-record-storage-and-sync-design.md
@@ -108,9 +109,8 @@ export type SyncQueryStats = {
   unchanged: number;
   removed: number;
   errorCode?: string;
-  // Narrowed to FailureDiagnostic when src/lib/epic/errors.ts is ported (Phase 3).
-  failureStage?: string;
-  failureCode?: string;
+  failureStage?: FailureDiagnostic["failureStage"];
+  failureCode?: FailureDiagnostic["failureCode"];
   httpStatus?: number;
   // A search not every organization supports: a failure isn't reported to the person.
   optional?: boolean;
