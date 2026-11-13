@@ -139,6 +139,9 @@ describe("records, connections and onboarding routes", () => {
 
   it("offers the sandbox to connect in sandbox mode", async () => {
     const { cookie } = await signedIn("choices@example.test");
-    expect(await (await get("/api/connections/choices?q=", cookie)).json()).toEqual({ choices: { results: [EPIC_SANDBOX], sample: null } });
+    expect(await (await get("/api/connections/choices?q=", cookie)).json()).toEqual({
+      choices: { results: [EPIC_SANDBOX], sample: null },
+      settings: { environment: "sandbox", expandedScopes: false, metriportEnabled: false },
+    });
   });
 });

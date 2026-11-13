@@ -50,3 +50,10 @@ next-env.d.ts
 /services/extraction/__pycache__/
 /services/extraction/.pytest_cache/
 /.extraction-private/
+
+# pdf.js assets, copied from node_modules by scripts/copy-pdfjs.mjs
+/public/pdfjs
+
+# Cloudflare (OpenNext build output and local Wrangler state)
+/.open-next
+.wrangler

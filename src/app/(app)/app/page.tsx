@@ -11,7 +11,7 @@ import { Timeline } from "@/components/records/Timeline";
 import { ExportLink, TimelineFilterForm, TimelinePager } from "@/components/records/TimelineControls";
 import { CATEGORIES } from "@/lib/fhir/categories";
 import { requireOnboarded } from "@/lib/onboarding-guard";
-import { loadSourcesFor, loadTimelineFor } from "@/lib/records-server";
+import { backend } from "@/lib/backend";
 import { countsFor, hasFilters, parseCursor, parseFilters, sourceTones } from "@/lib/timeline";
 import "@/components/records/records.css";
 
@@ -20,10 +20,11 @@ export const metadata: Metadata = { title: "Your record | Wild Hearts Health" };
 type Params = Record<string, string | string[] | undefined>;
 
 async function HomeRecords({ userId, params }: { userId: string; params: Params }) {
-  const allSources = await loadSourcesFor(userId);
+  const data = await backend();
+  const allSources = await data.sources(userId);
   const filters = parseFilters(params, allSources);
   const cursor = parseCursor(params.before);
-  const { sources, items, related, next, problems } = await loadTimelineFor(userId, filters, cursor);
+  const { sources, items, related, next, problems } = await data.timeline(userId, filters, cursor);
   const counts = countsFor(sources, filters);
   const tones = sourceTones(sources);
   return (
@@ -57,7 +58,7 @@ async function HomeRecords({ userId, params }: { userId: string; params: Params 
 export default async function AppHome({ searchParams }: PageProps<"/app">) {
   const { session, profile } = await requireOnboarded();
   if (isDemoUser(session.user.id) && Object.keys(await searchParams).length === 0) redirect("/app/demo");
-  const sources = await loadSourcesFor(session.user.id);
+  const sources = await (await backend()).sources(session.user.id);
 
   if (sources.length === 0) {
     return (

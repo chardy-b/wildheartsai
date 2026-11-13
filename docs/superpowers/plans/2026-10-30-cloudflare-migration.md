@@ -84,7 +84,7 @@ After cutover, a cleanup PR moves Next into `web/` and deletes `drizzle/`, `verc
 | Inngest `reap-chat-runs` (every minute) | Cron Trigger `* * * * *` on the chat Worker |
 | `@aws-sdk/client-s3` → R2 | R2 binding (`env.FILES`), the same opaque keys and ciphertext format, so no object rewrite |
 | nodemailer → Gmail SMTP | An HTTP email API called from the API Worker (provider to be chosen by the owner; open question 1). Until then the API keeps the current development behaviour on preview (print the link) and production cutover is blocked on it |
-| `@vercel/analytics` (with `beforeSend` scrubbing) | Cloudflare Web Analytics (cookieless). Check the beacon against the CSP; keep URL scrubbing |
+| `@vercel/analytics` (with `beforeSend` scrubbing) | No browser analytics on Cloudflare: Cloudflare's beacon can't drop query strings (which can carry reset tokens), so traffic is read from Workers analytics instead. Vercel keeps its component until cutover |
 | `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL` | `BETTER_AUTH_URL` / `APP_URL` set per environment in `wrangler.jsonc` vars |
 | Vercel env vars | Worker secrets (`wrangler secret put`), per environment; non-secret flags as `vars` |
 | Vercel preview per branch, Neon branch per PR | Workers preview versions per PR (preview URLs), all against one shared `wildhearts-preview` D1 and R2 bucket. Migrations stay additive, so PRs on different schemas can share it |
@@ -221,7 +221,7 @@ Every variable in `src/lib/env.ts` and `.env.example` maps to a Worker secret or
 | 2 | Auth | Better Auth on D1, email sending, session reads for Next |
 | 3 | Epic and records | Epic authorize/callback/JWKS, directory search and import, records and timeline reads, export |
 | 4 | Jobs | Sync Workflow, nightly refresh, directory import Workflow, Metriport, sandbox replay green |
-| 5 | Next on Workers | OpenNext build, service binding, pages and server actions on the API client, pdf.js as assets, Web Analytics |
+| 5 | Next on Workers | OpenNext build, the web Worker routing `/api/*` to the API, pages and server actions through a backend adapter, pdf.js as assets |
 | 6 | Wildcards, extraction, chat, demo | R2 binding routes, extraction worker API, `wildhearts-chat` Worker with its D1 and Durable Object, demo |
 | 7 | Data migration and cutover | Read-only flag on Vercel, rehearsals on staging, the production copy, the owner's DNS swap, verification |
 | 8 | Cleanup | Remove Vercel, Neon, Inngest, `pg`, `@aws-sdk`, nodemailer; move Next to `web/`; rewrite `AGENTS.md` and the delivery skill for Cloudflare |
@@ -284,7 +284,19 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [x] Metriport: connect (`POST /api/connections/metriport`) and its import through the same job (start the pull, wait with patient retries, one consolidated-bundle fetch per run)
 - [x] Two more small root refactors for sharing: `METRIPORT_SCOPE` in `src/lib/metriport/scope.ts`; `server-only` aliased to an empty module in the Worker (all of it is server code)
 
-### Phases 5–8
+### Phase 5: Next on Workers
+
+- [x] OpenNext `@opennextjs/cloudflare` 1.20.7, the newest that supports Next 16.3.6 (later ones need Next 16.4.x, which would also change the Vercel build: a separate change). No incremental cache: every page renders per request for its CSP nonce
+- [x] Web Worker (`wrangler.jsonc`, `cloudflare/worker.ts`): the only public entry point; `/api/*` goes to the API Worker over the `API` service binding, the rest to Next. No secrets, no database
+- [x] Backend adapter (`src/lib/backend/`): pages, the layout, server actions and the export route call `backend()`. `direct.ts` is today's Postgres code (Vercel, unchanged behaviour); `api.ts` calls the API with the browser's cookie and Cloudflare's client IP. `WILDHEARTS_BACKEND=api`, set only in the web Worker's config, picks it, so `main` keeps deploying a working Vercel app until cutover. The sign-up page's two settings and the connect screens' settings come from the API (`/api/signup-settings`, `/api/connections/choices`), since the web Worker holds no configuration
+- [x] pdf.js served as static files (`public/pdfjs`, copied on install) on both platforms; the route that read `node_modules` per request is gone
+- [x] Build fixes for workerd, in the Cloudflare build only (`scripts/cloudflare-trace-fix.mjs`, run by `open-next.config.ts`): Next's file traces miss `@opentelemetry/api`'s ESM build (the proxy) and `pg-cloudflare` (pg on workerd), so they're added to the traces and the standalone output before OpenNext copies them
+- [x] Proven end to end in a browser on the local Cloudflare stack (`scripts/qa-cloudflare-walkthrough.mjs`): sign-up, the email link, every onboarding step, dashboard and records pages, refresh (starting a sync Workflow), delete, export; no console errors or CSP violations
+- [x] CI: `web-cloudflare` builds the Workers bundle on every PR; `web-preview` deploys it after `api-preview`, under the same switch
+- [ ] Lockfile note: installing OpenNext and Wrangler at the root moved `sharp` to 0.35.5 (Sept 27) and some AWS SDK packages forward a patch (published Nov 10), shared with the Vercel app's R2 client. Root tests and build pass on them; they reach production only when this branch merges
+- [ ] Phase 6: Documents, chat, extraction and demo pages still use their Next API routes, which on Cloudflare are now the API Worker's paths (not ported yet, so 404 there)
+
+### Phases 6–8
 
 Outlined in the table; each gets task-level steps when it starts, as in the records storage plan.
 

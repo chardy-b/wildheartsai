@@ -129,6 +129,11 @@ describe("Better Auth on D1", () => {
 });
 
 describe("routes", () => {
+  it("tells the sign-up page whether sign-ups are open, never the invite code", async () => {
+    const response = await SELF.fetch(`${origin}/api/signup-settings`);
+    expect(await response.json()).toEqual({ signupsEnabled: true, inviteRequired: false });
+  });
+
   it("serves Better Auth under /api/auth", async () => {
     const response = await SELF.fetch(`${origin}/api/auth/get-session`);
     expect(response.status).toBe(200);

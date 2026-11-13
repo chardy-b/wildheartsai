@@ -10,7 +10,7 @@ import { ExportLink, TimelineFilterForm, TimelinePager } from "@/components/reco
 import { categoryForSlug, labelFor } from "@/lib/fhir/categories";
 import type { RecordCategory } from "@/lib/fhir/normalize";
 import { requireOnboarded } from "@/lib/onboarding-guard";
-import { loadSourcesFor, loadTimelineFor } from "@/lib/records-server";
+import { backend } from "@/lib/backend";
 import { hasFilters, parseCursor, parseFilters, sourceTones } from "@/lib/timeline";
 import "@/components/records/records.css";
 
@@ -20,11 +20,12 @@ export async function generateMetadata({ params }: PageProps<"/app/records/[cate
 }
 
 async function CategoryRecords({ userId, category, slug, params }: { userId: string; category: RecordCategory; slug: string; params: Record<string, string | string[] | undefined> }) {
-  const allSources = await loadSourcesFor(userId);
+  const data = await backend();
+  const allSources = await data.sources(userId);
   // The category comes from the path; the form and links carry only the other filters.
   const filters = { ...parseFilters(params, allSources), categories: [] };
   const cursor = parseCursor(params.before);
-  const { sources, items, related, next, problems } = await loadTimelineFor(userId, { ...filters, categories: [category] }, cursor);
+  const { sources, items, related, next, problems } = await data.timeline(userId, { ...filters, categories: [category] }, cursor);
   const tones = sourceTones(sources);
   const path = `/app/records/${slug}`;
   return (

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { CONTACT_HREF } from "@/components/landing/contact";
-import { env } from "@/lib/env";
+import { backend } from "@/lib/backend";
 import { SignUpForm } from "./SignUpForm";
 
 export const metadata: Metadata = { title: "Create an account | Wild Hearts Health" };
@@ -10,8 +10,9 @@ export const metadata: Metadata = { title: "Create an account | Wild Hearts Heal
 // SIGNUPS_ENABLED is read per request so flipping it in Vercel takes effect without a rebuild.
 export const dynamic = "force-dynamic";
 
-export default function SignUpPage() {
-  if (!env().SIGNUPS_ENABLED) {
+export default async function SignUpPage() {
+  const { signupsEnabled, inviteRequired } = await (await backend()).signUpSettings();
+  if (!signupsEnabled) {
     return (
       <AuthCard
         title="Early access is by invitation."
@@ -27,7 +28,6 @@ export default function SignUpPage() {
     );
   }
 
-  const inviteRequired = Boolean(env().SIGNUP_INVITE_CODE);
   return (
     <AuthCard
       title="Create your account."

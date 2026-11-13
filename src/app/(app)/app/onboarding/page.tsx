@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
-import { db } from "@/lib/db";
 import { connectErrorMessage } from "@/lib/epic/messages";
 import { onboardingStep, type OnboardingStep } from "@/lib/onboarding";
-import { getProfile } from "@/lib/profile";
+import { backend } from "@/lib/backend";
 import { requireSession } from "@/lib/session";
 import { AcknowledgeStep } from "./AcknowledgeStep";
 import { ConnectStep } from "./ConnectStep";
@@ -18,7 +17,7 @@ const ORDER: OnboardingStep[] = ["name", "acknowledge", "connect"];
 
 export default async function OnboardingPage({ searchParams }: PageProps<"/app/onboarding">) {
   const session = await requireSession();
-  const step = onboardingStep(await getProfile(db, session.user.id));
+  const step = onboardingStep(await (await backend()).profile(session.user.id));
   if (step === "done") redirect("/app");
   const current = ORDER.indexOf(step);
   const { q, error } = await searchParams;

@@ -1,11 +1,18 @@
 import { Hono } from "hono";
 import { authFor } from "../auth";
-import type { Bindings } from "../env";
+import { secrets, type Bindings } from "../env";
 
 export const authRoutes = new Hono<{ Bindings: Bindings }>();
 
 // Better Auth's own endpoints: sign-up, sign-in, sign-out, verification, reset, get-session.
 authRoutes.on(["GET", "POST"], "/auth/*", (c) => authFor(c.env).handler(c.req.raw));
+
+// What the sign-up page shows: whether sign-ups are open, and whether they need an invite code
+// (never the code). Public, like the page.
+authRoutes.get("/signup-settings", (c) => {
+  const config = secrets(c.env);
+  return c.json({ signupsEnabled: config.SIGNUPS_ENABLED, inviteRequired: Boolean(config.SIGNUP_INVITE_CODE) }, 200, { "Cache-Control": "no-store" });
+});
 
 // The signed-in person, for the web Worker's server components and actions (they forward the
 // browser's cookie). Doesn't renew the session: page renders can't set cookies, so the browser's

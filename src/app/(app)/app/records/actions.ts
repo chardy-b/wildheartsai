@@ -1,6 +1,6 @@
 "use server";
 
-import { loadNoteFor } from "@/lib/records-server";
+import { backend } from "@/lib/backend";
 import type { NoteResult } from "@/lib/records-notes";
 import { requireSession } from "@/lib/session";
 
@@ -13,5 +13,5 @@ export async function showNoteAction(sourceId: string, attachmentUrl: string): P
   if (typeof sourceId !== "string" || !uuid.test(sourceId) || typeof attachmentUrl !== "string" || attachmentUrl.length > 2048) {
     return { ok: false, reason: "not_found" };
   }
-  return loadNoteFor(session.user.id, sourceId, attachmentUrl);
+  return (await backend()).note(session.user.id, sourceId, attachmentUrl);
 }

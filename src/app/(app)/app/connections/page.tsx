@@ -2,15 +2,11 @@ import type { Metadata } from "next";
 import { OrgSearch } from "@/components/app/OrgSearch";
 import { SyncWatcher } from "@/components/app/SyncWatcher";
 import { missingScopes, scopeLabels } from "@/lib/epic/authorize";
-import { db } from "@/lib/db";
 import { isSampleData } from "@/lib/epic/directory";
-import { connectChoices } from "@/lib/epic/directory-store";
 import { connectErrorMessage } from "@/lib/epic/messages";
-import { enabledEpicEnvironment, env } from "@/lib/env";
-import { metriportEnabled } from "@/lib/metriport/server";
 import { isMetriportSource, PERSONAS } from "@/lib/metriport/personas";
 import { requireOnboarded } from "@/lib/onboarding-guard";
-import { loadSourcesFor } from "@/lib/records-server";
+import { backend } from "@/lib/backend";
 import { labelFor } from "@/lib/fhir/categories";
 import type { RecordCategory } from "@/lib/fhir/normalize";
 import { ago, categoryCounts, lastRunIssues, listOf } from "@/lib/source-display";
@@ -70,14 +66,13 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
   const { session } = await requireOnboarded();
   const { q, connected, error, refresh, deleted } = await searchParams;
   const query = typeof q === "string" ? q : "";
-  const environment = enabledEpicEnvironment(env());
-  const expanded = env().EPIC_EXPANDED_SCOPES;
-
-  const sources = await loadSourcesFor(session.user.id);
+  const data = await backend();
+  const sources = await data.sources(session.user.id);
   const now = new Date();
   const connectedUrls = new Set(sources.filter((s) => s.status !== "disconnected").map((s) => s.fhirBaseUrl));
   // Existing systems stay searchable; OrgSearch shows their status and the appropriate action.
-  const choices = await connectChoices(db, environment, query, new Set()).catch(() => null);
+  const { settings, choices } = await data.connectChoices(query);
+  const { environment, expandedScopes: expanded, metriportEnabled } = settings;
   const { results, sample } = choices ?? { results: [], sample: null };
   const refreshMessage = typeof refresh === "string" ? REFRESH_MESSAGES[refresh] : undefined;
   const errorMessage = connectErrorMessage(error) ?? (choices ? undefined : connectErrorMessage("unavailable"));
@@ -116,7 +111,7 @@ export default async function ConnectionsPage({ searchParams }: PageProps<"/app/
         />
       </div>
 
-      {metriportEnabled() ? (
+      {metriportEnabled ? (
         <div className="panel-light">
           <h2>Try the Metriport sandbox</h2>
           <p className="lede">

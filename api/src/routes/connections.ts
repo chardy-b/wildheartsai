@@ -20,9 +20,16 @@ connectionRoutes.use("/connections/*", requireUser("json"));
 connectionRoutes.use("/sources/*", requireUser("json"));
 
 // Health systems to connect to: the stored directory, or Epic's R4 list before the first import.
+// Also the settings the connect screens show (the web Worker holds no configuration of its own).
 connectionRoutes.get("/connections/choices", async (c) => {
-  const choices = await connectChoices(database(c.env.DB), enabledEpicEnvironment(secrets(c.env)), c.req.query("q") ?? "", new Set()).catch(() => null);
-  return c.json({ choices }, 200, { "Cache-Control": "no-store" });
+  const config = secrets(c.env);
+  const environment = enabledEpicEnvironment(config);
+  const choices = await connectChoices(database(c.env.DB), environment, c.req.query("q") ?? "", new Set()).catch(() => null);
+  return c.json(
+    { choices, settings: { environment, expandedScopes: config.EPIC_EXPANDED_SCOPES, metriportEnabled: Boolean(config.METRIPORT_API_KEY) } },
+    200,
+    { "Cache-Control": "no-store" },
+  );
 });
 
 // Connects one of Metriport's sample patients (no sign-in), then queues its import: the import

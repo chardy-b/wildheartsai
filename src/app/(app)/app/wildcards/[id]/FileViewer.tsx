@@ -44,10 +44,10 @@ export function FileViewer({ file, onPageChange, overlays, pageNumber, activeOve
         if (file.type === "application/pdf") {
           const library = await import("pdfjs-dist");
           if (!active) return;
-          library.GlobalWorkerOptions.workerSrc = "/api/wildcards/pdfjs/build/pdf.worker.min.mjs";
+          library.GlobalWorkerOptions.workerSrc = "/pdfjs/build/pdf.worker.min.mjs";
           task = library.getDocument({ url, withCredentials: true, useWasm: false, enableXfa: false,
-            cMapUrl: "/api/wildcards/pdfjs/cmaps/", cMapPacked: true,
-            standardFontDataUrl: "/api/wildcards/pdfjs/standard_fonts/" });
+            cMapUrl: "/pdfjs/cmaps/", cMapPacked: true,
+            standardFontDataUrl: "/pdfjs/standard_fonts/" });
           const document = await task.promise;
           if (active) setPdf(document);
         } else if (file.type.startsWith("text/")) {

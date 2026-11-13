@@ -16,6 +16,10 @@ const eslintConfig = defineConfig([
     ".extraction-private/**",
     "next-env.d.ts",
     "api/.wrangler/**",
+    ".open-next/**",
+    // Copied from pdfjs-dist by scripts/copy-pdfjs.mjs.
+    "public/pdfjs/**",
+    ".wrangler/**",
   ]),
   {
     // The API Worker has no row-level security: only the data layer (forUser, system) and jobs

@@ -42,7 +42,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" className={rounded.variable}>
       <body>
         {children}
-        <Analytics />
+        {/* Vercel Analytics on Vercel only. On Cloudflare traffic shows in Workers analytics: its
+            browser beacon can't drop query strings, which can carry reset tokens. */}
+        {process.env.WILDHEARTS_BACKEND === "api" ? null : <Analytics />}
       </body>
     </html>
   );

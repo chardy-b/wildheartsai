@@ -24,6 +24,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Pages only: not API routes, build assets or generated images.
-  matcher: ["/((?!api/|_next/static|_next/image|favicon.ico|icon.svg|opengraph-image).*)"],
+  // Pages only: not API routes, build assets, the PDF viewer's files (public/pdfjs) or generated images.
+  matcher: ["/((?!api/|_next/static|_next/image|pdfjs/|favicon.ico|icon.svg|opengraph-image).*)"],
 };

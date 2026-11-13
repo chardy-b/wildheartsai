@@ -37,3 +37,15 @@ npm test     # Vitest inside workerd with real D1 bindings; no network or Cloudf
 ```
 
 Lint runs from the repository root (`npm run lint`).
+
+## The whole stack on Cloudflare, locally
+
+The web Worker (the Next app through OpenNext, `wrangler.jsonc` at the repository root) and this API Worker run together, the web Worker forwarding `/api/*` over its service binding as in production. From the repository root:
+
+```bash
+npm run cf:build           # the Next app for Workers (OpenNext)
+npm run cf:migrate:local   # the API's D1 schema, in the shared local state
+npm run cf:preview         # both Workers on http://localhost:8787
+```
+
+Put local secrets in `api/.dev.vars` (from `.dev.vars.example`), with `BETTER_AUTH_URL` and `EPIC_REDIRECT_URI` on `http://localhost:8787`. `node scripts/qa-cloudflare-walkthrough.mjs <log>` then walks through sign-up, onboarding, records, refresh, delete and export in a browser; see the script's header.

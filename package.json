@@ -21,12 +21,17 @@
     "demo:seed": "tsx --conditions=react-server scripts/seed-demo.ts",
     "directory:import": "tsx --conditions=react-server scripts/import-directory.ts",
     "qa:capture": "tsx --conditions=react-server scripts/capture-sandbox.ts",
-    "chat:coordinator": "node scripts/provision-chat-coordinator.mjs"
+    "chat:coordinator": "node scripts/provision-chat-coordinator.mjs",
+    "postinstall": "node scripts/copy-pdfjs.mjs",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "wrangler dev -c wrangler.jsonc -c api/wrangler.jsonc --port 8787",
+    "cf:migrate:local": "wrangler d1 migrations apply DB --local -c api/wrangler.jsonc --persist-to .wrangler/state"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1150.0",
     "@better-auth/drizzle-adapter": "^1.7.5",
     "@noble/hashes": "^2.4.0",
+    "@opennextjs/cloudflare": "1.20.7",
     "@vercel/analytics": "^2.0.1",
     "better-auth": "^1.7.5",
     "drizzle-orm": "^0.45.3",
@@ -59,6 +64,7 @@
     "tsx": "^4.23.15",
     "typescript": "^5",
     "vite": "^8.3.0",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "wrangler": "4.151.1"
   }
 }
