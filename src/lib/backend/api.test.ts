@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The Cloudflare backend (src/lib/backend/api.ts) against a fake API service binding: what it
 // forwards, and how it reads the answers back into the shapes pages use.
-const state = vi.hoisted(() => ({ requests: [] as Request[], respond: (_request: Request): Response => new Response(null, { status: 500 }) }));
+const state = vi.hoisted(() => ({ requests: [] as Request[], respond: (() => new Response(null, { status: 500 })) as (request: Request) => Response }));
 vi.mock("@opennextjs/cloudflare", () => ({
   getCloudflareContext: () => ({ env: { API: { fetch: async (request: Request) => (state.requests.push(request), state.respond(request)) } } }),
 }));
