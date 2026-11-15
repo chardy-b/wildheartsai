@@ -10,13 +10,14 @@ import type { Bindings } from "./env";
 // until then nothing on Cloudflare selects a demo identity.
 export type AppEnv = { Bindings: Bindings; Variables: { userId: string; scope: UserScope } };
 
-export function requireUser(whenSignedOut: "json" | "redirect"): MiddlewareHandler<AppEnv> {
+// `whenSignedOut`: redirect to sign-in (browser navigations), answer 401, or answer 401 with a
+// message the page shows (Documents' upload client displays it).
+export function requireUser(whenSignedOut: "json" | "redirect" | { message: string }): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const found = await authFor(c.env).api.getSession({ headers: c.req.raw.headers, query: { disableRefresh: true } });
     if (!found) {
-      return whenSignedOut === "redirect"
-        ? c.redirect(new URL("/sign-in", c.req.url).toString())
-        : c.json({ error: "unauthenticated" }, 401, { "Cache-Control": "no-store" });
+      if (whenSignedOut === "redirect") return c.redirect(new URL("/sign-in", c.req.url).toString());
+      return c.json({ error: whenSignedOut === "json" ? "unauthenticated" : whenSignedOut.message }, 401, { "Cache-Control": "no-store" });
     }
     c.set("userId", found.user.id);
     c.set("scope", forUser(database(c.env.DB), found.user.id));

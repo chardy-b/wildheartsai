@@ -5,6 +5,7 @@ import type { RecordProblem } from "@/lib/records";
 import type { NoteResult } from "@/lib/records-notes";
 import type { SourceSummary } from "@/lib/sources";
 import type { TimelineCursor, TimelineFilters } from "@/lib/timeline-filters";
+import type { WildcardFile } from "@/lib/wildcards";
 
 // What pages, layouts and server actions need from the backend. Two implementations while
 // production still runs on Vercel (docs/superpowers/plans/2026-10-30-cloudflare-migration.md):
@@ -50,4 +51,10 @@ export type Backend = {
   deleteSource(userId: string, sourceId: string): Promise<void>;
   // Where to send the person afterwards.
   connectMetriport(userId: string, personaId: string): Promise<string>;
+
+  // Documents: whether file storage is set up, a page of the listing (the requested page, kept
+  // within the pages there are) with usage, and one file.
+  documentsAvailable(): boolean;
+  documents(userId: string, requestedPage: number): Promise<{ files: WildcardFile[]; usage: { count: number; bytes: number }; page: number }>;
+  document(userId: string, id: string): Promise<WildcardFile | null>;
 };

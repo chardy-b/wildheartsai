@@ -10,9 +10,7 @@ export function sameOrigin(request: Request): boolean {
   return request.headers.get("origin") === new URL(request.url).origin &&
     !["cross-site", "same-site"].includes(request.headers.get("sec-fetch-site") ?? "");
 }
-export function validFileId(id: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-}
+export { validFileId } from "./wildcards";
 
 // Read a bounded raw body rather than buffering arbitrary multipart requests.
 // Each item in a multi-file selection is sent in its own request.

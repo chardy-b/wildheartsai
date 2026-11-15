@@ -17,6 +17,10 @@ import { loadExportFor, loadNoteFor, loadSourcesFor, loadTimelineFor } from "@/l
 import { deleteSource, listSources } from "@/lib/sources";
 import { requestSyncFor } from "@/lib/sync/server";
 import { parseFilters } from "@/lib/timeline";
+import { recordsKey } from "@/lib/records-keys";
+import { fileMetadata, fileUsage, listFiles } from "@/lib/wildcards-store";
+import { r2Configured } from "@/lib/wildcards-r2";
+import { documentsPage } from "@/lib/wildcards";
 import type { Backend } from "./types";
 
 // The backend as on Vercel today: Postgres through the app's own modules. Logic moved here from
@@ -97,4 +101,12 @@ export const directBackend: Backend = {
     const outcome = await requestSyncFor(userId, sourceId, "connect").catch(failedToQueue);
     return outcome === "queued" ? "/app/connections?connected=1" : `/app/connections?refresh=${outcome}`;
   },
+
+  documentsAvailable: () => r2Configured(),
+  async documents(userId, requested) {
+    const usage = await fileUsage(db, userId);
+    const page = documentsPage(requested, usage.count);
+    return { files: await listFiles(db, recordsKey(), userId, page), usage, page };
+  },
+  document: (userId, id) => fileMetadata(db, recordsKey(), userId, id),
 };

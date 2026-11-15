@@ -18,6 +18,15 @@ export type WildcardFile = {
   status: "pending" | "finalizing" | "ready" | "deleting";
 };
 
+export function validFileId(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+// The listing shows 50 files a page: the requested page, kept within the pages there are.
+export function documentsPage(requested: number, count: number): number {
+  return Number.isSafeInteger(requested) && requested > 0 ? Math.min(requested, Math.max(1, Math.ceil(count / 50))) : 1;
+}
+
 export function fileSize(bytes: number): string {
   return bytes >= 1024 * 1024 * 1024 ? `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

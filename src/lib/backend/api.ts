@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import type { Profile } from "@/lib/profile";
 import type { SourceSummary } from "@/lib/sources";
 import { filterQuery, parseCursor } from "@/lib/timeline-filters";
+import type { WildcardFile } from "@/lib/wildcards";
 import type { AppSession, Backend, TimelineView } from "./types";
 
 // The backend on Cloudflare: the Hono API Worker (api/), reached over the web Worker's `API`
@@ -107,5 +108,15 @@ export const apiBackend: Backend = {
     const result = ((await response.json().catch(() => ({}))) as { outcome?: string }).outcome;
     if (!response.ok || !result || result === "unavailable") return "/app/connections?error=unavailable";
     return result === "queued" ? "/app/connections?connected=1" : `/app/connections?refresh=${result}`;
+  },
+
+  // R2 is always bound to the API Worker.
+  documentsAvailable: () => true,
+  documents: (_userId, requested) => json(`/api/wildcards?${new URLSearchParams({ page: String(requested) })}`),
+  async document(_userId, id) {
+    const response = await call(`/api/wildcards/${encodeURIComponent(id)}/info`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new ApiError(response.status);
+    return ((await response.json()) as { file: WildcardFile }).file;
   },
 };

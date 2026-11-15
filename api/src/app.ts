@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Bindings } from "./env";
 import { authRoutes } from "./routes/auth";
 import { connectionRoutes } from "./routes/connections";
+import { documentRoutes } from "./routes/documents";
 import { epicRoutes } from "./routes/epic";
 import { profileRoutes } from "./routes/profile";
 import { recordsRoutes } from "./routes/records";
@@ -18,6 +19,7 @@ app.route("/", epicRoutes);
 app.route("/", recordsRoutes);
 app.route("/", connectionRoutes);
 app.route("/", profileRoutes);
+app.route("/", documentRoutes);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 
