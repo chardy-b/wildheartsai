@@ -4,6 +4,8 @@ Date: October 7, 2026
 
 Status: Implemented on `codex/web-owned-chat` with independent Sol review. Production rollout remains pending; follow the October 8 rollout guide. This supersedes the direct-Neon VPS topology in the October 4 plan and the existing chat deployment instructions.
 
+Update, November 16, 2026: **"Cloudflare topology"** below restates items 6 and 7 and the deployment changes for the move to Cloudflare Workers and D1 (`docs/superpowers/plans/2026-10-30-cloudflare-migration.md`). It's a proposal awaiting owner review; the chat port starts only once it's accepted. Everything else here stands unchanged.
+
 ## Decision
 
 Wild Hearts' web backend owns all database access, record decryption, identity resolution, and persistent chat state. It currently runs on Vercel; the APIs and domain code must remain portable to another Node host. The VPS runs Iggy, isolated Pi workers, and the restricted inference relay. It receives no Neon credentials, record encryption key, user data keys, Epic credentials, browser-ticket signing key, or authority to mint user/run grants.
@@ -42,6 +44,45 @@ The current browser endpoints recheck the active session, but runner grants and 
 Test a valid run for user A against user B's record, note, conversation, summary, and evidence identifiers; tool identity injection; missing/expired/tampered/revoked grants; cancelled, completed, and expired-lease runs; stale attempts and wrong workers; revoked initiating sessions; unauthorized queue creation/selection/renewal; terminal replay; encrypted persistence; and background completion after closing the tab.
 
 Inspect built worker/service images and Compose configuration to verify absence of database, encryption, and grant-minting secrets. Repeat Iggy's real Docker isolation acceptance. Review failure responses and logs for credential or health-data disclosure. Run the repository's required delivery checks and a synthetic end-to-end account test against the web API boundary before enabling production.
+
+## Cloudflare topology (proposed, November 16, 2026)
+
+The VPS contract doesn't change: same paths (`/api/chat/ticket`, `/api/chat/v1/*`, `/api/chat/worker/v1/*`), same grants, same coordinator credential, reached through the web Worker at the same origin. What changes is how the web side is split and what replaces Postgres's roles, RLS and session lock.
+
+### Workers and bindings
+
+- **`wildhearts-chat` Worker** serves the three chat path groups and the reaper (Cron Trigger every minute, replacing Inngest `reap-chat-runs`; status reads keep the opportunistic reap). The web Worker routes `/api/chat/*` to it over a second service binding (`CHAT`); like the API Worker it has no public URL.
+- **`CHAT_DB`** (its own D1 database: `wildhearts-chat-prod`, `-preview`, local `local-chat`) holds only the chat tables: conversations, messages, runs, coordinators, tool calls, events, summaries and evidence. The chat Worker has no binding to the main D1 and no R2.
+- **Records through a narrow RPC.** The API Worker exports a `ChatRecords` `WorkerEntrypoint`; the chat Worker binds it (`RECORDS`). Its methods are the reads chat makes today, by purpose, each taking a `userId` and running through `forUser` on the API side:
+  - `sessionFence(sessionId, userId)`: the `chat_lock_session_v2` rules (verified owner, unexpired session; for a demo workspace, its parent login too; a workspace identity without a parent is refused), answering the effective expiry or null.
+  - `dataKey(userId)`: the person's sealed data key row, created if missing (today's `INSERT` grant on `user_data_key`). Sealed, as stored.
+  - Record reads for the tools: data coverage (category counts and sources), candidates for `find_records` (current rows by category, date range and limit), rows by id for `read_records` and `calculate_lab_trend`, one attachment for `read_stored_note`, and the existence checks behind summary evidence (records, notes, sources by id). Rows come back sealed; the chat Worker opens them with the person's data key, as today.
+
+  Not exposed: anything else in the main database (`session.token`, accounts, verification, Epic connections and tokens, profiles, documents, extraction), any write except creating a data key, generic SQL or a generic table read. This is the D1 equivalent of today's column grants, enforced by what the methods do rather than by the database. `role-preflight.ts` is replaced by a test over the entrypoint's method list (a new method fails CI until it's listed and reviewed) and by the bindings themselves.
+
+- **Secrets.** The chat Worker holds `RECORDS_ENCRYPTION_KEY` (as the chat roles' process does today, to open records and seal chat content), `CHAT_GRANT_DERIVATION_KEY`, `CHAT_RESEARCH_GATEWAY_TOKEN_HASH` and the coordinator credential hash. `CHAT_DATABASE_URL` and `CHAT_QUEUE_DATABASE_URL` go away. The VPS's configuration is unchanged.
+
+### Item 6 on D1: separate stores instead of restricted roles
+
+Today the two restricted Neon roles keep a chat bug from reading tokens, accounts or profiles. On Cloudflare the same guarantee comes from bindings: the chat Worker can't name the main database, and the only way into it is the RPC above. Within `CHAT_DB`, rows are scoped by an explicit owner condition on every query (the `forUser` pattern from the API, applied to the chat tables), with per-user encryption as the second layer. The queue role's narrower column set (claims and leases only) becomes a separate module of the chat Worker that touches only `chat_run` and `chat_coordinator`, checked by the same kind of method-list test.
+
+### Item 7 and the session lock: fence, read, fence again
+
+`chat_lock_session_v2` today takes `FOR SHARE` on the initiating session (and the demo parent) inside the request's transaction, so a sign-out waits until in-flight chat operations finish, and nothing reads records after a sign-out commits. D1 has no cross-request locks, and here the session lives in another database.
+
+Proposal: every operation that reads records or chat content calls `sessionFence` **before** its reads and **again after its reads, before it answers**, and fails closed (`run_not_active` or 401) if either check fails. An answer is therefore only sent if the session was live after the data was read: the operation is ordered before any sign-out that the second check didn't see, which is the same ordering the shared lock gives. Writes into `CHAT_DB` go in one batch guarded on the run's grant and lease (compare-and-set, audit pattern C), with the session checked first. A write can land in the moments between a sign-out and the next check. It stays in the person's own chat history and gives the VPS nothing.
+
+This replaces the `ChatSessionLock` Durable Object the migration plan sketched. A Durable Object can't stop Better Auth deleting the session row, because sign-out doesn't pass through it, so it would add a hop without adding the guarantee. If review prefers a lock anyway, sign-out would have to go through it too (a Better Auth hook calling the object), which is a larger change to auth.
+
+Other Postgres locks in chat map to D1 as the transaction audit records: sequence allocation by `UPDATE … RETURNING` then insert in one batch (C); claims and reaping by guarded single statements (Q, C); the per-user advisory lock around starting a run by a `UserLock` queue keyed `chat:<user>` (L).
+
+### Verification on Cloudflare
+
+Everything under "Verification required before rollout" is repeated against the chat Worker on workerd (the Phase 1 test pool, with both D1 databases), plus:
+
+- The fence: sign out during a long tool read (a test hook between the reads and the second check) and see the read refused; a demo workspace whose parent login ends, the same.
+- The RPC: a test that lists `ChatRecords`' methods and fails on any unreviewed one; each method called with user A's id never returns user B's rows; no method returns `session.token` or any column of `account`, `verification`, `epic_connection` or `profile`.
+- The chat Worker's bundle and bindings contain no main-database binding (checked from `wrangler.chat.jsonc` in CI).
 
 ## Remaining exposure
 

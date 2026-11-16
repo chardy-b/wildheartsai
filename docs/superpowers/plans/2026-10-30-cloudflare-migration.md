@@ -157,8 +157,8 @@ Today the chat backend connects with two restricted roles (`docs/superpowers/spe
 - A separate **`wildhearts-chat` Worker** serves `/api/chat/*` and the reaper cron. It is bound to a **`wildhearts-chat` D1 database** holding the chat tables (conversations, messages, runs, tool calls, events, summaries).
 - It doesn't bind the main D1. It reaches the records it may read (session validity, data keys, health sources, FHIR resources) through a narrow, read-only RPC on the API Worker (`WorkerEntrypoint` service binding). That RPC exposes exactly what today's column grants allow, and nothing about `session.token`, `account`, `verification`, Epic connections or profiles.
 - The chat database is in its own D1, so a chat bug can't join across to the main database.
-- `chat_lock_session_v2` becomes a `ChatSessionLock` Durable Object keyed by session ID.
-- **Needs security review:** update `docs/superpowers/specs/2026-10-07-web-owned-chat-security-boundary.md` before Phase 6.
+- `chat_lock_session_v2` becomes a session fence checked before and after each read (proposed in place of a `ChatSessionLock` Durable Object; see the spec for why).
+- **Needs security review:** the proposal is in `docs/superpowers/specs/2026-10-07-web-owned-chat-security-boundary.md`, "Cloudflare topology". The chat port starts once it's accepted.
 
 ## Testing
 
@@ -305,7 +305,9 @@ Done in that order, one commit each.
 - [x] Demo (`api/src/data/demo.ts`, `routes/demo.ts`): `/api/demo/*` at the same paths, `POST /api/demo/workspace` for the entry action, and workspace selection in the API's session (`applicationSession` in `api/src/session.ts`): every signed-in route, and `/api/session`, see the workspace when the demo cookie bound to this login is present; `/api/session?real=1` is the login itself. Demo identities are refused by Epic authorize and callback and by Metriport connect, whatever `DEMO_ENABLED` says. The demo pages and entry action use `backend().openDemoWorkspace` and `demoSnapshot`. Tested over HTTP (isolation between two people, idempotent re-entry and sample PDF, reset, sign-out removing the workspace) and in the local browser walkthrough
 - [ ] `DEMO_ENABLED=1` must be set on both Workers wherever the demo should be offered (on in local development only; Vercel's value decides preview and production)
 - [ ] The shared demo login (`scripts/seed-demo.ts`, `src/lib/demo/provision.ts`) isn't ported; its rows move with the data migration if production has one
-- [ ] Chat: security boundary spec updated and reviewed first; then the chat Worker with `CHAT_DB`, a read-only RPC on the API, and a `ChatSessionLock` Durable Object
+- [x] Chat security boundary: proposal written ("Cloudflare topology" in `specs/2026-10-07-web-owned-chat-security-boundary.md`)
+- [ ] Owner review of that proposal, in particular the session fence replacing the `ChatSessionLock` Durable Object
+- [ ] Chat: the `wildhearts-chat` Worker with `CHAT_DB`, the `ChatRecords` RPC on the API, ported store and gateway, and the verification list in the spec
 
 ### Phases 7–8
 
