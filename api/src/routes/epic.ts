@@ -14,7 +14,7 @@ import { requestSync } from "../data/sync-runs";
 import { database } from "../db";
 import { enabledEpicEnvironment, secrets } from "../env";
 import { clientAssertionFor, credentialsForOrganization, jwksResponse, tokenKey } from "../epic/credentials";
-import { requireUser, type AppEnv } from "../session";
+import { notInDemo, requireUser, type AppEnv } from "../session";
 import { sendTo } from "../sync-queue";
 
 // Connecting a health system with SMART on FHIR (src/app/api/epic/* in the Next app): the same
@@ -26,7 +26,7 @@ epicRoutes.get("/epic/jwks", (c) => jwksResponse(secrets(c.env), "sandbox"));
 // Stays a fail-closed 404 until production access is enabled.
 epicRoutes.get("/epic/jwks/production", (c) => jwksResponse(secrets(c.env), "production"));
 
-epicRoutes.get("/epic/authorize", requireUser("redirect"), async (c) => {
+epicRoutes.get("/epic/authorize", requireUser("redirect"), notInDemo((c) => c.json({ error: "Use the fictional clinic feeds in demo mode. Return to your account to connect a health system." }, 403)), async (c) => {
   const config = secrets(c.env);
   const environment = enabledEpicEnvironment(config);
   const iss = c.req.query("iss") ?? "";
@@ -74,7 +74,7 @@ epicRoutes.get("/epic/authorize", requireUser("redirect"), async (c) => {
   );
 });
 
-epicRoutes.get("/epic/callback", requireUser("redirect"), async (c) => {
+epicRoutes.get("/epic/callback", requireUser("redirect"), notInDemo((c) => c.json({ error: "Live health-system connections are unavailable in demo mode." }, 403)), async (c) => {
   const config = secrets(c.env);
   const scope = c.get("scope");
   const key = tokenKey(config);

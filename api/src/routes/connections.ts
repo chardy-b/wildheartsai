@@ -10,7 +10,7 @@ import { deleteSource, listSources } from "../data/sources";
 import { requestSync, type RequestOutcome } from "../data/sync-runs";
 import { database } from "../db";
 import { enabledEpicEnvironment, secrets } from "../env";
-import { requireUser, type AppEnv } from "../session";
+import { notInDemo, requireUser, type AppEnv } from "../session";
 import { sendTo } from "../sync-queue";
 
 // The connections page's reads and actions (src/app/(app)/app/connections in the Next app):
@@ -34,7 +34,7 @@ connectionRoutes.get("/connections/choices", async (c) => {
 
 // Connects one of Metriport's sample patients (no sign-in), then queues its import: the import
 // starts the pull from the networks. Answers like the Next app's server action redirected.
-connectionRoutes.post("/connections/metriport", async (c) => {
+connectionRoutes.post("/connections/metriport", notInDemo((c) => c.json({ outcome: "unavailable" }, 400)), async (c) => {
   const config = secrets(c.env);
   const persona = personaById(String(((await c.req.json().catch(() => ({}))) as { persona?: unknown }).persona ?? ""));
   if (!persona || !config.METRIPORT_API_KEY) return c.json({ outcome: "unavailable" }, 400);

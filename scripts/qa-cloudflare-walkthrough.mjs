@@ -1,6 +1,7 @@
 // Walks through the app on the Cloudflare stack, in a real browser: sign-up, the email link,
 // onboarding (server actions), the dashboard and records pages, refresh and delete (server actions
-// that reach the API and start a sync Workflow), and the export. Made-up account and data only.
+// that reach the API and start a sync Workflow), the export, and the guided demo. Made-up account
+// and data only.
 //
 // Run it against the local stack (see api/README.md, "The whole stack on Cloudflare, locally"):
 //   npm run cf:build && npm run cf:migrate:local
@@ -102,6 +103,37 @@ const step = (name) => console.log(`✓ ${name}`);
   await page.waitForURL(/deleted=1/);
   await page.waitForSelector("text=Deleted. Records from that health system are no longer stored.");
   step("deleted the source (server action -> API)");
+
+  // Documents: one made-up text file through the API, then the pages that list it.
+  const uploaded = await page.request.post(`${BASE}/api/wildcards`, { data: Buffer.from("A made-up note for the walkthrough."), headers: { "Content-Type": "application/octet-stream", "x-file-name": "walkthrough-note.txt", Origin: BASE } });
+  if (uploaded.status() !== 201) throw new Error(`upload answered ${uploaded.status()}`);
+  await page.goto(`${BASE}/app/wildcards`);
+  await page.waitForSelector("text=walkthrough-note.txt");
+  step("documents: uploaded to R2 through the API and listed on the page");
+  await page.goto(`${BASE}/app/wildcards/progress`);
+  await page.waitForSelector("h1:has-text('Document processing')");
+  await page.goto(`${BASE}/app/wildcards/workbench`);
+  await page.waitForSelector("h1:has-text('Extraction workbench')");
+  step("extraction progress and workbench pages rendered");
+
+  // The guided demo (needs DEMO_ENABLED=1 on both Workers; on in local development).
+  await page.goto(`${BASE}/demo`);
+  await page.click("button:has-text('Open guided demo')");
+  await page.waitForURL(`${BASE}/app/demo`);
+  await page.waitForSelector("text=43 stored records");
+  step("opened the guided demo (server action -> API workspace), 43 fictional records");
+  await page.click("button:has-text('Next chapter')");
+  await page.click("button:has-text('Replay sample sync')");
+  await page.waitForSelector("button:has-text('Replay sample sync'):not([disabled])");
+  await page.waitForSelector("text=43 stored records");
+  step("replayed the sample sync from the browser (/api/demo/sync), nothing duplicated");
+  const demoSession = await (await page.request.get(`${BASE}/api/session`)).json();
+  if (demoSession.user.id === body.user.id) throw new Error("the demo cookie didn't select the workspace");
+  await page.click("button:has-text('Return to my account')");
+  await page.waitForURL(`${BASE}/app`);
+  await page.waitForSelector("text=Welcome, Sam.");
+  const back = await (await page.request.get(`${BASE}/api/session`)).json();
+  step(`left the demo: back to the real account (${back.user.id === body.user.id})`);
 
   console.log(problems.length ? `problems:\n${problems.join("\n")}` : "no console or page errors");
   await browser.close();

@@ -3,9 +3,7 @@
 import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getRealSession } from "@/lib/session";
-import { db } from "@/lib/db";
-import { recordsKey } from "@/lib/records-keys";
-import { ensureDemoWorkspace } from "@/lib/demo/workspace";
+import { backend } from "@/lib/backend";
 import { DEMO_MODE_COOKIE, demoModeValue } from "@/lib/demo/identity";
 import { isDemoUser } from "@/lib/demo/access";
 
@@ -14,7 +12,7 @@ export async function enterDemo() {
   const identity = await getRealSession();
   if (!identity?.user.emailVerified) redirect("/demo");
   if (!isDemoUser(identity.user.id)) {
-    try { await ensureDemoWorkspace(db, recordsKey(), identity); }
+    try { await (await backend()).openDemoWorkspace(identity); }
     catch { throw new Error("The demo could not open. Please try again."); }
     (await cookies()).set(DEMO_MODE_COOKIE, demoModeValue(identity.session.id), { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
   }

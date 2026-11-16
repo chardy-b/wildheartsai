@@ -21,6 +21,7 @@ const testSecrets = {
   EPIC_PRIVATE_JWK: testJwk,
   TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
   RECORDS_ENCRYPTION_KEY: Buffer.alloc(32, 2).toString("base64"),
+  DEMO_ENABLED: "1",
 };
 export default defineConfig(async () => {
   const [mainMigrations, chatMigrations] = await Promise.all([readD1Migrations("migrations"), readD1Migrations("chat-migrations")]);

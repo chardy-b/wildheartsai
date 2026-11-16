@@ -13,7 +13,7 @@
   "alias": { "server-only": "./src/server-only.ts" },
 
   // Local development (`wrangler dev`, tests). Secrets go in .dev.vars (git-ignored).
-  "vars": { "APP_ENV": "development" },
+  "vars": { "APP_ENV": "development", "DEMO_ENABLED": "1" },
   "d1_databases": [
     { "binding": "DB", "database_name": "wildhearts-local", "database_id": "local-main", "migrations_dir": "migrations" }
   ],

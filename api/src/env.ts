@@ -53,6 +53,8 @@ const secretsSchema = z
     TOKEN_ENCRYPTION_KEY: key32("TOKEN_ENCRYPTION_KEY"),
     // Key-encryption key for stored health records. Must differ from TOKEN_ENCRYPTION_KEY.
     RECORDS_ENCRYPTION_KEY: key32("RECORDS_ENCRYPTION_KEY"),
+    // The guided demo (fictional records in a workspace of its own per person). Off unless "1".
+    DEMO_ENABLED: z.enum(["0", "1"]).default("0"),
     // Document extraction workers (services/extraction on the VPS). Unavailable unless all are set.
     EXTRACTION_ENABLED: z.enum(["0", "1"]).default("0"),
     EXTRACTION_METHODS: z.string().default("native,tesseract"),

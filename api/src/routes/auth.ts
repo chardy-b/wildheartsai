@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { authFor } from "../auth";
 import { secrets, type Bindings } from "../env";
+import { applicationSession, realSession } from "../session";
 
 export const authRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -17,9 +18,10 @@ authRoutes.get("/signup-settings", (c) => {
 // The signed-in person, for the web Worker's server components and actions (they forward the
 // browser's cookie). Doesn't renew the session: page renders can't set cookies, so the browser's
 // own /api/auth/get-session check renews it. Never returns the session token.
-// Phase 6 adds demo workspace selection here (src/lib/application-session.ts in the Next app).
+// The demo workspace when the browser selected one; `?real=1` for the login itself.
 authRoutes.get("/session", async (c) => {
-  const found = await authFor(c.env).api.getSession({ headers: c.req.raw.headers, query: { disableRefresh: true } });
+  const headers = c.req.raw.headers;
+  const found = c.req.query("real") === "1" ? await realSession(c.env, headers) : await applicationSession(c.env, headers);
   c.header("Cache-Control", "no-store");
   if (!found) return c.json({ error: "unauthenticated" }, 401);
   const { user, session } = found;

@@ -48,4 +48,4 @@ npm run cf:migrate:local   # the API's D1 schema, in the shared local state
 npm run cf:preview         # both Workers on http://localhost:8787
 ```
 
-Put local secrets in `api/.dev.vars` (from `.dev.vars.example`), with `BETTER_AUTH_URL` and `EPIC_REDIRECT_URI` on `http://localhost:8787`. `node scripts/qa-cloudflare-walkthrough.mjs <log>` then walks through sign-up, onboarding, records, refresh, delete and export in a browser; see the script's header.
+Put local secrets in `api/.dev.vars` (from `.dev.vars.example`), with `BETTER_AUTH_URL` and `EPIC_REDIRECT_URI` on `http://localhost:8787`. `node scripts/qa-cloudflare-walkthrough.mjs <log>` then walks through sign-up, onboarding, records, refresh, delete, export, Documents and the guided demo in a browser; see the script's header.

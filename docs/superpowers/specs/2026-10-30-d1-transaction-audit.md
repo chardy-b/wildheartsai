@@ -20,7 +20,7 @@ Phase 0 of `docs/superpowers/plans/2026-10-30-cloudflare-migration.md`. Every pl
 | **C** | `SELECT … FOR UPDATE`, decide in code, `UPDATE` | **Compare-and-set**: read, decide, then `UPDATE … WHERE id = ? AND <the fields the decision read are unchanged>`, and retry or fail if 0 rows changed. Rows changed this way in hot paths get a `revision` integer column (added with their phase, not in the 1:1 schema) |
 | **S** | `FOR SHARE` on a session or file so it can't vanish while a row referencing it is inserted | **Conditional insert**: `INSERT … SELECT … WHERE EXISTS (valid session) AND EXISTS (ready file)`, checking the row count |
 | **Q** | Queue claim with `FOR UPDATE SKIP LOCKED` | One `UPDATE … SET status = 'running', claim_id = ? WHERE id = (SELECT id … ORDER BY … LIMIT 1) RETURNING *`. Atomic, and no two claimers get the same row |
-| **L** | `pg_advisory_xact_lock(user)`, then check-then-insert (quotas, one active job per user) | Prefer one conditional statement (`INSERT … SELECT … WHERE (SELECT count(*) …) < ?`). Where the rule needs code, use a **per-user Durable Object** (`UserSerializer`) that runs the check and write one request at a time |
+| **L** | `pg_advisory_xact_lock(user)`, then check-then-insert (quotas, one active job per user) | Prefer one conditional statement (`INSERT … SELECT … WHERE (SELECT count(*) …) < ?`). Where the rule needs code, use a **per-key Durable Object** (`UserLock`, `api/src/locks.ts`) that runs the check and write one request at a time. The work itself runs in the calling Worker; the object only queues callers by key |
 | **N** | Row lock held across a network call | **Durable Object per resource**. The lock covers an outbound request, so no statement or batch can stand in |
 | **X** | One big transaction replacing a whole dataset | Generation swap: write a new generation in chunks, flip a pointer in one statement, delete the old generation afterwards |
 
@@ -57,11 +57,13 @@ One more D1 detail: an `INSERT … SELECT` followed by `ON CONFLICT` needs a `WH
 
 | Site | Pattern |
 | --- | --- |
-| `extraction/store.ts` enqueue (lines 22–60, 69–90): per-user advisory lock, session `FOR SHARE`, files `FOR SHARE`, existing jobs `FOR UPDATE`, insert runs and jobs | **L** with a `UserSerializer` Durable Object (multi-file, multi-row rules), and **S** for the session and file checks inside it |
+| `extraction/store.ts` enqueue (lines 22–60, 69–90): per-user advisory lock, session `FOR SHARE`, files `FOR SHARE`, existing jobs `FOR UPDATE`, insert runs and jobs | **L** with a `UserLock` Durable Object (multi-file, multi-row rules), and **S** for the session and file checks inside it |
 | `claim` (210–240): global advisory lock, backfill waiting → queued, claim next with `SKIP LOCKED` | **Q**: backfill is one `UPDATE … WHERE id IN (SELECT … LIMIT ?)`, claim is one `UPDATE … RETURNING`. The global lock isn't needed |
 | Attempt completion (262–282): session and file `FOR SHARE`, job `FOR UPDATE`, then update | **C** on `claim_id` and `status`, with **S**-style `EXISTS` checks in the same `UPDATE` |
 | `fhir-store.ts` (file `FOR SHARE`) | **S** |
 | Remaining `asUser` reads and single updates (91–205, 244–253) | **R** / single statement |
+
+Done (`api/src/data/extraction.ts`): enqueue, backfill and rerun run under `UserLock` key `extraction:<user>`. Claims run under one shared key, `extraction-claim`, as well: the backfill admission and the claim read the same queue, and claims are rare enough that one queue costs nothing. Completion is one batch guarded on an unset result and a still-valid grant, file and session.
 
 ### Chat (Phase 6; moves to the `wildhearts-chat` Worker and D1)
 
@@ -70,7 +72,7 @@ One more D1 detail: an `INSERT … SELECT` followed by `ON CONFLICT` needs a `WH
 | `chat/queue.ts` and `chat-web/authority.ts` claim (lines 76–110): coordinator row `FOR UPDATE` (rate window), run `FOR UPDATE SKIP LOCKED` | **Q** for the run. The coordinator's claim window becomes a **C** update (`claim_count < ?` in the `WHERE`) |
 | `authority.ts` reap and disable (291–340): coordinator and run row locks | **C** per run, guarded on `status` and `lease_expires_at` |
 | `authority.ts`, `browser-http.ts` `chat_lock_session_v2` (session lock function) | **N**: the `ChatSessionLock` Durable Object from the plan |
-| `chat/store.ts` per-user advisory lock (line 322) and `browser-http.ts` (line 80) | **L**: `UserSerializer` in the chat Worker, since starting a run checks several rows |
+| `chat/store.ts` per-user advisory lock (line 322) and `browser-http.ts` (line 80) | **L**: `UserLock` in the chat Worker, since starting a run checks several rows |
 | `chat/store.ts` `FOR UPDATE` on conversation or run (sequence allocation at 85, 328, 546, 673, 798, 1052, 1174) | **C**. Sequence allocation becomes `UPDATE chat_conversation SET next_message_sequence = next_message_sequence + 1 WHERE … RETURNING next_message_sequence - 1`, then the insert in the same batch using a subquery. The ~45 other `asUser` sites in `chat/store.ts` and `chat/gateway.ts` are **R** or single statements, reviewed function by function in Phase 6 |
 
 ### Demo (Phase 6)
@@ -79,7 +81,9 @@ One more D1 detail: an `INSERT … SELECT` followed by `ON CONFLICT` needs a `WH
 | --- | --- |
 | `demo/provision.ts` (nested `asUser` in a transaction) | **B** (seeding fixed rows) |
 | `demo/workspace.ts` (parent session `FOR SHARE`, per-user advisory lock, profile upsert) | **S** + **L** (conditional insert keyed on the demo user; idempotent) |
-| `demo/store.ts` per-demo-user advisory lock | **L** via `UserSerializer` |
+| `demo/store.ts` per-demo-user advisory lock | **L** via `UserLock` |
+
+Done (`api/src/data/demo.ts`): the workspace's user, profile and session rows go in one batch under `demo-workspace:<user>`, after the parent-session check; the session row's foreign key to its parent fails the batch if the login ended in between. Imports run under `demo:<user>` and are idempotent (the sync diff), so a retry after a failure only fills in what's missing. `provision.ts` (the single shared demo login, `npm run demo:seed`) isn't ported: per-person workspaces replace it, and its rows come across with the data migration if it exists.
 
 ## Consequences for the schema
 

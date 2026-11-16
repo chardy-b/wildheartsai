@@ -76,6 +76,18 @@ describe("apiBackend", () => {
     expect(await apiBackend.documentFhir("u", "f")).toBeNull();
   });
 
+  it("asks for the real login separately from the selected workspace, and opens the demo through the API", async () => {
+    state.respond = () => json({ error: "unauthenticated" }, 401);
+    await apiBackend.session(new Headers());
+    await apiBackend.realSession(new Headers());
+    expect(state.requests.map((r) => new URL(r.url).pathname + new URL(r.url).search)).toEqual(["/api/session", "/api/session?real=1"]);
+    state.respond = () => json({ ok: true });
+    await apiBackend.openDemoWorkspace({ user: { id: "u", email: "u@example.test", name: "U", emailVerified: true }, session: { id: "s", userId: "u", expiresAt: new Date() } });
+    expect([state.requests.at(-1)!.method, new URL(state.requests.at(-1)!.url).pathname]).toEqual(["POST", "/api/demo/workspace"]);
+    state.respond = () => json({ error: "Return to the demo entry page and open the guided demo again." }, 409);
+    expect(await apiBackend.demoSnapshot("u")).toBeNull();
+  });
+
   it("fails loudly on other API errors", async () => {
     state.respond = () => json({ error: "internal_error" }, 500);
     await expect(apiBackend.sources("u")).rejects.toThrow("API responded 500");

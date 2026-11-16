@@ -22,6 +22,8 @@ import { fileMetadata, fileUsage, listFiles } from "@/lib/wildcards-store";
 import { r2Configured } from "@/lib/wildcards-r2";
 import { documentsPage } from "@/lib/wildcards";
 import { DocumentFhirError, loadDocumentFhir } from "@/lib/extraction/fhir-store";
+import { demoSnapshot } from "@/lib/demo/store";
+import { ensureDemoWorkspace } from "@/lib/demo/workspace";
 import type { Backend } from "./types";
 
 // The backend as on Vercel today: Postgres through the app's own modules. Logic moved here from
@@ -116,6 +118,8 @@ export const directBackend: Backend = {
     for (let page = 1; page <= Math.ceil(usage.count / 50); page++) files.push(...(await listFiles(db, recordsKey(), userId, page)));
     return files.filter((f) => f.status === "ready");
   },
+  openDemoWorkspace: (identity) => ensureDemoWorkspace(db, recordsKey(), identity),
+  demoSnapshot: (userId) => demoSnapshot(db, recordsKey(), userId),
   async documentFhir(userId, id, runId) {
     try {
       const data = await loadDocumentFhir(db, recordsKey(), userId, id, appUrl(), runId);

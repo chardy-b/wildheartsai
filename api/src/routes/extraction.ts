@@ -31,8 +31,7 @@ import { userKeysFor } from "../data/user-keys";
 import { database } from "../db";
 import { secrets } from "../env";
 import { recordsKey } from "../epic/credentials";
-import { authFor } from "../auth";
-import type { AppEnv } from "../session";
+import { applicationSession, type AppEnv } from "../session";
 
 // Document extraction (src/lib/extraction/http.ts and fhir-http.ts in the Next app): the owner's
 // workbench requests, the VPS workers' attempt API, and a document's FHIR view. Same paths,
@@ -56,9 +55,7 @@ async function body(request: Request): Promise<unknown> {
   return JSON.parse(text);
 }
 
-async function signedIn(c: Context<AppEnv>) {
-  return authFor(c.env).api.getSession({ headers: c.req.raw.headers, query: { disableRefresh: true } });
-}
+const signedIn = (c: Context<AppEnv>) => applicationSession(c.env, c.req.raw.headers);
 
 const workbench = async (c: Context<AppEnv>) => {
   const request = c.req.raw;

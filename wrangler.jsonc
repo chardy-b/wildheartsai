@@ -12,7 +12,7 @@
   "observability": { "enabled": true },
 
   // Local development: `npm run cf:preview` runs this Worker and the API Worker together.
-  "vars": { "WILDHEARTS_BACKEND": "api" },
+  "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1" },
   "services": [{ "binding": "API", "service": "wildhearts-api" }],
 
   "env": {

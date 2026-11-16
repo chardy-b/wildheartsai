@@ -5,6 +5,7 @@ import type { Profile } from "@/lib/profile";
 import type { SourceSummary } from "@/lib/sources";
 import { filterQuery, parseCursor } from "@/lib/timeline-filters";
 import type { WildcardFile } from "@/lib/wildcards";
+import type { DemoSnapshot } from "@/lib/demo/store";
 import type { AppSession, Backend, DocumentFhirView, TimelineView } from "./types";
 
 // The backend on Cloudflare: the Hono API Worker (api/), reached over the web Worker's `API`
@@ -46,8 +47,8 @@ function sourcesFrom(sources: SourceSummary[]): SourceSummary[] {
   return sources.map((s) => ({ ...s, lastSyncedAt: date(s.lastSyncedAt) }));
 }
 
-async function sessionFromApi(): Promise<AppSession | null> {
-  const response = await call("/api/session");
+async function sessionFromApi(path: string): Promise<AppSession | null> {
+  const response = await call(path);
   if (response.status === 401) return null;
   if (!response.ok) throw new ApiError(response.status);
   const found = (await response.json()) as AppSession;
@@ -59,9 +60,9 @@ const outcome = async (path: string, method = "POST", body?: unknown) => (await 
 export const apiBackend: Backend = {
   signUpSettings: () => json("/api/signup-settings"),
 
-  // Demo workspace selection joins this in Phase 6; until then the real login is the session.
-  session: () => sessionFromApi(),
-  realSession: () => sessionFromApi(),
+  // The browser's cookies go along, so the API selects the demo workspace as on Vercel.
+  session: () => sessionFromApi("/api/session"),
+  realSession: () => sessionFromApi("/api/session?real=1"),
 
   async profile() {
     const { profile } = await json<{ profile: Profile | null }>("/api/profile");
@@ -127,6 +128,15 @@ export const apiBackend: Backend = {
       if (listing.page !== page || page * 50 >= listing.usage.count) break;
     }
     return files.filter((f) => f.status === "ready");
+  },
+  async openDemoWorkspace() {
+    await json("/api/demo/workspace", { method: "POST" });
+  },
+  async demoSnapshot() {
+    const response = await call("/api/demo/snapshot");
+    if (response.status === 409) return null;
+    if (!response.ok) throw new ApiError(response.status);
+    return (await response.json()) as DemoSnapshot;
   },
   async documentFhir(_userId, id, runId) {
     const query = runId ? `?${new URLSearchParams({ runId })}` : "";

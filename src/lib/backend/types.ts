@@ -7,6 +7,7 @@ import type { SourceSummary } from "@/lib/sources";
 import type { TimelineCursor, TimelineFilters } from "@/lib/timeline-filters";
 import type { WildcardFile } from "@/lib/wildcards";
 import type { loadDocumentFhir } from "@/lib/extraction/fhir-store";
+import type { DemoSnapshot } from "@/lib/demo/store";
 
 // What pages, layouts and server actions need from the backend. Two implementations while
 // production still runs on Vercel (docs/superpowers/plans/2026-10-30-cloudflare-migration.md):
@@ -31,7 +32,7 @@ export type SignUpSettings = { signupsEnabled: boolean; inviteRequired: boolean 
 
 export type Backend = {
   signUpSettings(): Promise<SignUpSettings>;
-  // The signed-in person (with demo workspace selection on Vercel), without renewing the session.
+  // The signed-in person (the demo workspace when the browser selected one), without renewing the session.
   session(requestHeaders: Headers): Promise<AppSession | null>;
   // The real login, never a demo workspace.
   realSession(requestHeaders: Headers): Promise<AppSession | null>;
@@ -62,6 +63,10 @@ export type Backend = {
   document(userId: string, id: string): Promise<WildcardFile | null>;
   // Every ready document, for the extraction workbench and progress pages.
   readyDocuments(userId: string): Promise<WildcardFile[]>;
+
+  // The guided demo: open (or reopen) the real login's workspace, and the workspace's chart.
+  openDemoWorkspace(identity: AppSession): Promise<void>;
+  demoSnapshot(userId: string): Promise<DemoSnapshot | null>;
   // A document as FHIR resources; `error` when its extraction can't be shown, null when missing.
   documentFhir(userId: string, id: string, runId?: string): Promise<{ data: DocumentFhirView } | { error: string } | null>;
 };
