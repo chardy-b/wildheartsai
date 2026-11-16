@@ -1,11 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
-import { db } from "@/lib/db";
-import { recordsKey } from "@/lib/records-keys";
-import { appUrl } from "@/lib/env";
-import { validFileId } from "@/lib/wildcards-http";
-import { DocumentFhirError, loadDocumentFhir } from "@/lib/extraction/fhir-store";
+import { backend } from "@/lib/backend";
+import { validFileId } from "@/lib/wildcards";
 import { warningLabel } from "@/lib/extraction/presentation";
 import { FhirJson } from "./FhirJson";
 import "../../wildcards.css";
@@ -16,14 +13,12 @@ export default async function DocumentFhirPage({ params, searchParams }: PagePro
   const query = await searchParams;
   const runId = query.runId;
   if (!validFileId(id) || (runId !== undefined && (typeof runId !== "string" || !validFileId(runId)))) notFound();
-  let data;
-  try { data = await loadDocumentFhir(db, recordsKey(), session.user.id, id, appUrl(), runId); }
-  catch (error) {
-    if (!(error instanceof DocumentFhirError)) throw error;
-    return <section className="app-page wildcards"><Link href={`/app/wildcards/${id}`}>← Document</Link><h1>FHIR view unavailable</h1><p role="alert">{error.message}</p></section>;
+  const loaded = await (await backend()).documentFhir(session.user.id, id, runId);
+  if (!loaded) notFound();
+  if ("error" in loaded) {
+    return <section className="app-page wildcards"><Link href={`/app/wildcards/${id}`}>← Document</Link><h1>FHIR view unavailable</h1><p role="alert">{loaded.error}</p></section>;
   }
-  if (!data) notFound();
-  const { file, preview, runs, selectedRunId, method } = data;
+  const { file, preview, runs, selectedRunId, method } = loaded.data;
   const selectedRun = runs.find(r => r.id === selectedRunId);
   const api = `/api/wildcards/${id}/fhir${selectedRunId ? `?runId=${selectedRunId}` : ""}`;
   const download = `${api}${selectedRunId ? "&" : "?"}download=1`;

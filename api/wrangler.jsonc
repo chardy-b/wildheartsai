@@ -18,13 +18,13 @@
     { "binding": "DB", "database_name": "wildhearts-local", "database_id": "local-main", "migrations_dir": "migrations" }
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-local" }],
-  "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }] },
+  "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }, { "name": "USER_LOCK", "class_name": "UserLock" }] },
   "workflows": [
     { "name": "wildhearts-sync-local", "binding": "SYNC_WORKFLOW", "class_name": "SyncSourceWorkflow" },
     { "name": "wildhearts-refresh-local", "binding": "REFRESH_WORKFLOW", "class_name": "RefreshSourcesWorkflow" },
     { "name": "wildhearts-directory-local", "binding": "DIRECTORY_WORKFLOW", "class_name": "DirectoryImportWorkflow" }
   ],
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TokenRefresher"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TokenRefresher"] }, { "tag": "v2", "new_sqlite_classes": ["UserLock"] }],
   // Nightly refresh and directory import (src/index.ts, CRONS). `wrangler dev --test-scheduled` runs them locally.
   "triggers": { "crons": ["17 10 * * *", "41 8 * * *"] },
 
@@ -41,7 +41,7 @@
       ],
       // The existing preview bucket's name (today's R2_BUCKET_NAME in Vercel's Preview scope).
       "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-preview" }],
-      "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }] },
+      "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }, { "name": "USER_LOCK", "class_name": "UserLock" }] },
       "workflows": [
         { "name": "wildhearts-sync-preview", "binding": "SYNC_WORKFLOW", "class_name": "SyncSourceWorkflow" },
         { "name": "wildhearts-refresh-preview", "binding": "REFRESH_WORKFLOW", "class_name": "RefreshSourcesWorkflow" },
@@ -59,7 +59,7 @@
       ],
       // The existing production bucket's name (today's R2_BUCKET_NAME in Vercel's Production scope).
       "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-production" }],
-      "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }] },
+      "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }, { "name": "USER_LOCK", "class_name": "UserLock" }] },
       "workflows": [
         { "name": "wildhearts-sync-production", "binding": "SYNC_WORKFLOW", "class_name": "SyncSourceWorkflow" },
         { "name": "wildhearts-refresh-production", "binding": "REFRESH_WORKFLOW", "class_name": "RefreshSourcesWorkflow" },

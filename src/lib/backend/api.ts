@@ -5,7 +5,7 @@ import type { Profile } from "@/lib/profile";
 import type { SourceSummary } from "@/lib/sources";
 import { filterQuery, parseCursor } from "@/lib/timeline-filters";
 import type { WildcardFile } from "@/lib/wildcards";
-import type { AppSession, Backend, TimelineView } from "./types";
+import type { AppSession, Backend, DocumentFhirView, TimelineView } from "./types";
 
 // The backend on Cloudflare: the Hono API Worker (api/), reached over the web Worker's `API`
 // service binding, never the public internet. Each call carries the browser's cookie (the API
@@ -118,5 +118,22 @@ export const apiBackend: Backend = {
     if (response.status === 404) return null;
     if (!response.ok) throw new ApiError(response.status);
     return ((await response.json()) as { file: WildcardFile }).file;
+  },
+  async readyDocuments() {
+    const files: WildcardFile[] = [];
+    for (let page = 1; ; page++) {
+      const listing = (await json(`/api/wildcards?page=${page}`)) as { files: WildcardFile[]; usage: { count: number }; page: number };
+      files.push(...listing.files);
+      if (listing.page !== page || page * 50 >= listing.usage.count) break;
+    }
+    return files.filter((f) => f.status === "ready");
+  },
+  async documentFhir(_userId, id, runId) {
+    const query = runId ? `?${new URLSearchParams({ runId })}` : "";
+    const response = await call(`/api/wildcards/${encodeURIComponent(id)}/fhir-view${query}`);
+    if (response.status === 404) return null;
+    if (response.status === 409) return { error: ((await response.json()) as { error: string }).error };
+    if (!response.ok) throw new ApiError(response.status);
+    return { data: (await response.json()) as DocumentFhirView };
   },
 };

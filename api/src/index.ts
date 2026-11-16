@@ -2,6 +2,7 @@ import { app } from "./app";
 import type { Bindings } from "./env";
 
 export { TokenRefresher } from "./epic/token-refresher";
+export { UserLock } from "./locks";
 export { DirectoryImportWorkflow, RefreshSourcesWorkflow, SyncSourceWorkflow } from "./jobs/workflows";
 
 export const CRONS = { refreshSources: "17 10 * * *", epicDirectory: "41 8 * * *" } as const;

@@ -6,6 +6,7 @@ import type { NoteResult } from "@/lib/records-notes";
 import type { SourceSummary } from "@/lib/sources";
 import type { TimelineCursor, TimelineFilters } from "@/lib/timeline-filters";
 import type { WildcardFile } from "@/lib/wildcards";
+import type { loadDocumentFhir } from "@/lib/extraction/fhir-store";
 
 // What pages, layouts and server actions need from the backend. Two implementations while
 // production still runs on Vercel (docs/superpowers/plans/2026-10-30-cloudflare-migration.md):
@@ -23,6 +24,8 @@ export type TimelineView = { sources: SourceSummary[]; items: RecordItem[]; rela
 
 export type ConnectSettings = { environment: "sandbox" | "production"; expandedScopes: boolean; metriportEnabled: boolean };
 export type ConnectChoices = { results: Organization[]; sample: Organization | null };
+
+export type DocumentFhirView = NonNullable<Awaited<ReturnType<typeof loadDocumentFhir>>>;
 
 export type SignUpSettings = { signupsEnabled: boolean; inviteRequired: boolean };
 
@@ -57,4 +60,8 @@ export type Backend = {
   documentsAvailable(): boolean;
   documents(userId: string, requestedPage: number): Promise<{ files: WildcardFile[]; usage: { count: number; bytes: number }; page: number }>;
   document(userId: string, id: string): Promise<WildcardFile | null>;
+  // Every ready document, for the extraction workbench and progress pages.
+  readyDocuments(userId: string): Promise<WildcardFile[]>;
+  // A document as FHIR resources; `error` when its extraction can't be shown, null when missing.
+  documentFhir(userId: string, id: string, runId?: string): Promise<{ data: DocumentFhirView } | { error: string } | null>;
 };

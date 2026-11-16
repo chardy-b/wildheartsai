@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { TokenRefresher } from "./epic/token-refresher";
+import type { UserLock } from "./locks";
 import type { SyncRequest } from "./data/sync-runs";
 
 // The API Worker's configuration: bindings from wrangler.jsonc, secrets from `wrangler secret put`
@@ -12,6 +13,8 @@ export type Bindings = {
   FILES: R2Bucket;
   // One per Epic connection: serializes token refreshes (src/epic/token-refresher.ts).
   TOKEN_REFRESHER: DurableObjectNamespace<TokenRefresher>;
+  // One per lock key: work that Postgres kept apart with advisory locks (src/locks.ts).
+  USER_LOCK: DurableObjectNamespace<UserLock>;
   // Background jobs (src/jobs/workflows.ts). Parameters are ids only, never PHI.
   SYNC_WORKFLOW: Workflow<SyncRequest>;
   REFRESH_WORKFLOW: Workflow;
@@ -50,6 +53,13 @@ const secretsSchema = z
     TOKEN_ENCRYPTION_KEY: key32("TOKEN_ENCRYPTION_KEY"),
     // Key-encryption key for stored health records. Must differ from TOKEN_ENCRYPTION_KEY.
     RECORDS_ENCRYPTION_KEY: key32("RECORDS_ENCRYPTION_KEY"),
+    // Document extraction workers (services/extraction on the VPS). Unavailable unless all are set.
+    EXTRACTION_ENABLED: z.enum(["0", "1"]).default("0"),
+    EXTRACTION_METHODS: z.string().default("native,tesseract"),
+    // SHA-256 of the coordinator's credential; the credential itself stays on the VPS.
+    EXTRACTION_COORDINATOR_TOKEN_HASH: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    // Web-only key for attempt grants; at least 32 characters.
+    EXTRACTION_GRANT_KEY: z.string().min(32).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.RECORDS_ENCRYPTION_KEY === value.TOKEN_ENCRYPTION_KEY) {

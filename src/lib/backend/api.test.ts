@@ -61,6 +61,21 @@ describe("apiBackend", () => {
     expect(new URL(state.requests.at(-1)!.url).pathname).toBe("/api/sources/a%2Fb/refresh");
   });
 
+  it("collects every page of ready documents, and reads FHIR refusals as messages", async () => {
+    const file = (id: string, status = "ready") => ({ id, name: `${id}.pdf`, type: "application/pdf", sizeBytes: 1, uploadedAt: "2026-11-01T00:00:00.000Z", status });
+    state.respond = (request) => {
+      const page = Number(new URL(request.url).searchParams.get("page"));
+      return json({ files: page === 1 ? [file("a"), file("b", "pending")] : [file("c")], usage: { count: 51, bytes: 2 }, page });
+    };
+    expect((await apiBackend.readyDocuments("u")).map((f) => f.id)).toEqual(["a", "c"]);
+    expect(state.requests.map((r) => new URL(r.url).searchParams.get("page"))).toEqual(["1", "2"]);
+    state.respond = () => json({ error: "This extraction does not match the original file." }, 409);
+    expect(await apiBackend.documentFhir("u", "f", "r")).toEqual({ error: "This extraction does not match the original file." });
+    expect(new URL(state.requests.at(-1)!.url).search).toBe("?runId=r");
+    state.respond = () => json({ error: "not_found" }, 404);
+    expect(await apiBackend.documentFhir("u", "f")).toBeNull();
+  });
+
   it("fails loudly on other API errors", async () => {
     state.respond = () => json({ error: "internal_error" }, 500);
     await expect(apiBackend.sources("u")).rejects.toThrow("API responded 500");

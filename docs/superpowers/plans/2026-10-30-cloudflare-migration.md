@@ -296,7 +296,16 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [ ] Lockfile note: installing OpenNext and Wrangler at the root moved `sharp` to 0.35.5 (Sept 27) and some AWS SDK packages forward a patch (published Nov 10), shared with the Vercel app's R2 client. Root tests and build pass on them; they reach production only when this branch merges
 - [ ] Phase 6: Documents, chat, extraction and demo pages still use their Next API routes, which on Cloudflare are now the API Worker's paths (not ported yet, so 404 there)
 
-### Phases 6–8
+### Phase 6: Documents, extraction, demo, chat
+
+Done in that order, one commit each.
+
+- [x] Documents (`api/src/data/documents.ts`, `routes/documents.ts`): the same paths, limits and messages as the Next routes, objects in the `FILES` R2 binding. The quota check is one insert-select anchored on the person's data key row; a piece's arrival is one `json_set` batch, so pieces sent in parallel can't overwrite each other; completion is a compare-and-set on status. Files over 25 MB stay as pieces and stream back. Pages read through `backend().documents` and `document`
+- [x] Extraction (`api/src/data/extraction.ts`, `routes/extraction.ts`): the workbench API, the VPS worker protocol (`/api/extraction/worker/v1/*`) and the FHIR view. Advisory locks became a `UserLock` Durable Object (`api/src/locks.ts`, audit pattern L): `extraction:<user>` serializes a person's enqueues so the 80-job limit holds, `extraction-claim` serializes claims. A completion is one batch guarded on an unset result and a still-valid grant, file and session. The root store tests are ported (`api/test/extraction.test.ts`), plus 41 simultaneous enqueues staying under the limit. The workbench, progress and FHIR pages read through `backend().readyDocuments` and `documentFhir`. Off unless `EXTRACTION_ENABLED=1`
+- [ ] Demo: `/api/demo/*`, demo workspace selection in `/api/session`, demo identities blocked in connect routes
+- [ ] Chat: security boundary spec updated and reviewed first; then the chat Worker with `CHAT_DB`, a read-only RPC on the API, and a `ChatSessionLock` Durable Object
+
+### Phases 7–8
 
 Outlined in the table; each gets task-level steps when it starts, as in the records storage plan.
 

@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, getTableName, inArray, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableColumns, getTableName, gt, inArray, sql, type SQL } from "drizzle-orm";
 import type { AnySQLiteColumn, SelectedFields, SQLiteColumn, SQLiteInsertValue, SQLiteSelect, SQLiteTable } from "drizzle-orm/sqlite-core";
 import type { Db } from "../db";
 import * as schema from "../db/schema";
@@ -118,6 +118,20 @@ export function forUser(db: Db, userId: string) {
     // only src/data builds these (see auditFrom).
     insertSelect<T extends UserTable>(table: T, query: SQLiteSelect) {
       return db.insert(table).select(query as never);
+    },
+
+    // Whether one of this person's own login sessions is still active (Better Auth's table; read
+    // only by id, user and expiry).
+    async sessionActive(sessionId: string, now = new Date()): Promise<boolean> {
+      const s = schema.session;
+      const [row] = await db.select({ id: s.id }).from(s).where(and(eq(s.id, sessionId), eq(s.userId, userId), gt(s.expiresAt, now))).limit(1);
+      return Boolean(row);
+    },
+
+    // The same check, as SQL for a guarded statement in a batch.
+    sessionActiveSql(sessionId: string, now = new Date()): SQL {
+      const s = schema.session;
+      return sql`exists (select 1 from ${s} where ${s.id} = ${sessionId} and ${s.userId} = ${userId} and ${s.expiresAt} > ${now.getTime()})`;
     },
 
     // Where a source's incremental sync resumes from. sync_cursor has no user_id: the row is

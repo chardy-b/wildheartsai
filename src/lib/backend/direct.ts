@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { asUser } from "@/lib/db/rls";
 import { deleteConnection } from "@/lib/epic/connections";
 import { connectChoices } from "@/lib/epic/directory-store";
-import { enabledEpicEnvironment, env } from "@/lib/env";
+import { appUrl, enabledEpicEnvironment, env } from "@/lib/env";
 import { exportBundle, exportFilename } from "@/lib/export";
 import { deleteMetriportConnection } from "@/lib/metriport/connections";
 import { personaById } from "@/lib/metriport/personas";
@@ -21,6 +21,7 @@ import { recordsKey } from "@/lib/records-keys";
 import { fileMetadata, fileUsage, listFiles } from "@/lib/wildcards-store";
 import { r2Configured } from "@/lib/wildcards-r2";
 import { documentsPage } from "@/lib/wildcards";
+import { DocumentFhirError, loadDocumentFhir } from "@/lib/extraction/fhir-store";
 import type { Backend } from "./types";
 
 // The backend as on Vercel today: Postgres through the app's own modules. Logic moved here from
@@ -109,4 +110,19 @@ export const directBackend: Backend = {
     return { files: await listFiles(db, recordsKey(), userId, page), usage, page };
   },
   document: (userId, id) => fileMetadata(db, recordsKey(), userId, id),
+  async readyDocuments(userId) {
+    const usage = await fileUsage(db, userId);
+    const files = [];
+    for (let page = 1; page <= Math.ceil(usage.count / 50); page++) files.push(...(await listFiles(db, recordsKey(), userId, page)));
+    return files.filter((f) => f.status === "ready");
+  },
+  async documentFhir(userId, id, runId) {
+    try {
+      const data = await loadDocumentFhir(db, recordsKey(), userId, id, appUrl(), runId);
+      return data ? { data } : null;
+    } catch (error) {
+      if (error instanceof DocumentFhirError) return { error: error.message };
+      throw error;
+    }
+  },
 };
