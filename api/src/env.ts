@@ -17,6 +17,8 @@ export type Bindings = {
   // One per lock key: work that Postgres kept apart with advisory locks (src/locks.ts).
   USER_LOCK: DurableObjectNamespace<UserLock>;
   RATE_LIMITER: DurableObjectNamespace<RateLimiter>;
+  // Cloudflare Email Sending (production only): verification and password-reset links.
+  EMAIL?: SendEmail;
   // Background jobs (src/jobs/workflows.ts). Parameters are ids only, never PHI.
   SYNC_WORKFLOW: Workflow<SyncRequest>;
   REFRESH_WORKFLOW: Workflow;

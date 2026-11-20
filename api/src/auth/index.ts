@@ -16,7 +16,7 @@ export type AuthDeps = { sendEmail?: SendEmail };
 
 export function createAuth(env: Bindings, deps: AuthDeps = {}) {
   const config = secrets(env);
-  const sendEmail = deps.sendEmail ?? createEmailSender({ appEnv: env.APP_ENV, logLinks: config.EMAIL_LOG_LINKS });
+  const sendEmail = deps.sendEmail ?? createEmailSender({ appEnv: env.APP_ENV, logLinks: config.EMAIL_LOG_LINKS, binding: env.EMAIL, from: config.EMAIL_FROM });
   return betterAuth({
     baseURL: config.BETTER_AUTH_URL,
     secret: config.BETTER_AUTH_SECRET,

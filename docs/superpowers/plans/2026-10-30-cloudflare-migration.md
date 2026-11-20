@@ -238,11 +238,10 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [x] List every transaction (`db.transaction`, `asUser`) and classify it: `docs/superpowers/specs/2026-10-30-d1-transaction-audit.md`
 - [x] Check the sealing associated data: `table:field:userId:rowId`, so names and IDs are preserved verbatim (see schema conversion)
 - [x] Cloudflare: create the D1 databases (`wildhearts-prod`, `wildhearts-preview`, `wildhearts-chat-prod`, `wildhearts-chat-preview`) (owner, 2026-11-20, verified empty)
-- [ ] Confirm the R2 buckets
+- [x] Confirm the R2 buckets: `wildheartsai-wildcards-preview` and `wildheartsai-wildcards-production`, the ones Vercel uses (2026-11-20)
 - [ ] Workers paid plan (owner); confirm the current D1, Workflows and Workers limits used in this plan against Cloudflare's docs
-- [ ] CI (owner): GitHub secrets `CLOUDFLARE_API_TOKEN` (scoped to Workers and D1 edit on this account) and `CLOUDFLARE_ACCOUNT_ID`, then the repository variable `CLOUDFLARE_PREVIEW_DEPLOY=true` to turn on the `api-preview` job
+- [ ] CI (owner): the `cloudflare-preview` GitHub environment (deployments from `cloudflare` only) with a preview-only `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then the repository variable `CLOUDFLARE_PREVIEW_DEPLOY=true` to turn on `.github/workflows/cloudflare-preview.yml`. It releases each push to `cloudflare` in one locked job: build, both migrations, then the API, chat and web Workers
 - [x] Put the real D1 database IDs into `api/wrangler.jsonc` and `api/wrangler.chat.jsonc` (2026-11-20; checked with `wrangler deploy --dry-run` for preview and production). The rehearsal database's id is set when it's created
-- [ ] Confirm the R2 bucket names in `api/wrangler.jsonc` match Vercel's `R2_BUCKET_NAME` per scope
 - [x] Answer the open questions (2026-10-30), except email
 - [ ] Before Phase 7: move the zone's nameservers to Cloudflare with records still pointing at Vercel (owner)
 
@@ -264,7 +263,8 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [x] Rate limiting keys on `cf-connecting-ip` (Cloudflare sets it; `X-Forwarded-For` can be forged) and is on outside development explicitly, since Better Auth's default follows `NODE_ENV`. The web Worker must forward `cf-connecting-ip` unchanged (Phase 5)
 - [x] Proven on workerd: password hashes made by the Node app verify, the remembered-browser renewal over 100 days, invite codes, closed sign-up, the IP rate limit (checked by switching it back to `X-Forwarded-For` and watching the test fail), and a `wrangler dev` run of sign-up → verify → sign-in → `/api/session`
 - [x] Email: development prints links; preview prints them only with `EMAIL_LOG_LINKS=true` (set in `api/wrangler.jsonc`'s preview vars); production never sends or prints until a provider is chosen. Better Auth logs a failed email and still answers 200 (as on Vercel today), so the account stays unverified
-- [ ] Email provider (owner decision; blocks the cutover, not preview)
+- [x] Email provider: Cloudflare Email Sending (owner, 2026-11-20); Google Workspace keeps the inboxes. Production's API Worker binds `EMAIL` (`src/auth/email.ts`); preview logs links
+- [ ] Onboard the sender's domain for Email Sending (owner)
 - [ ] At cutover, give the Workers the same `BETTER_AUTH_SECRET` as Vercel production, so copied sessions and cookies stay valid
 
 ### Phase 3: Epic and records
@@ -349,7 +349,7 @@ Cleanup, after 30 days on Cloudflare: see the table and the runbook's section 6.
 
 ## Open questions
 
-1. **Email provider** (owner will decide later). Gmail SMTP can't be used from a Worker. Needed before cutover, not before Phase 2 work on preview.
+1. ~~**Email provider**~~ Decided 2026-11-20: Cloudflare Email Sending.
 
 Answered 2026-10-30:
 

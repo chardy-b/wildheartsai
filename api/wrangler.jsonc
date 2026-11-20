@@ -38,8 +38,8 @@
       "d1_databases": [
         { "binding": "DB", "database_name": "wildhearts-preview", "database_id": "d57e490d-de96-45a3-9f5c-c58e1d7d3456", "migrations_dir": "migrations" }
       ],
-      // The existing preview bucket's name (today's R2_BUCKET_NAME in Vercel's Preview scope).
-      "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-preview" }],
+      // The bucket Vercel's Preview scope uses (R2_BUCKET_NAME, checked 2026-11-20): the same files.
+      "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildheartsai-wildcards-preview" }],
       "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }, { "name": "USER_LOCK", "class_name": "UserLock" }, { "name": "RATE_LIMITER", "class_name": "RateLimiter" }] },
       "workflows": [
         { "name": "wildhearts-sync-preview", "binding": "SYNC_WORKFLOW", "class_name": "SyncSourceWorkflow" },
@@ -52,11 +52,14 @@
     "production": {
       "name": "wildhearts-api-production",
       "vars": { "APP_ENV": "production" },
+      // Cloudflare Email Sending: verification and password-reset links (src/auth/email.ts). The
+      // sender's domain must be onboarded first (`npx wrangler email sending enable <domain>`).
+      "send_email": [{ "name": "EMAIL" }],
       "d1_databases": [
         { "binding": "DB", "database_name": "wildhearts-prod", "database_id": "d4e6e009-c53f-43fd-9d05-cedf0e067359", "migrations_dir": "migrations" }
       ],
-      // The existing production bucket's name (today's R2_BUCKET_NAME in Vercel's Production scope).
-      "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-production" }],
+      // The bucket Vercel's Production scope uses (R2_BUCKET_NAME, checked 2026-11-20): the same files.
+      "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildheartsai-wildcards-production" }],
       "durable_objects": { "bindings": [{ "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }, { "name": "USER_LOCK", "class_name": "UserLock" }, { "name": "RATE_LIMITER", "class_name": "RateLimiter" }] },
       "workflows": [
         { "name": "wildhearts-sync-production", "binding": "SYNC_WORKFLOW", "class_name": "SyncSourceWorkflow" },
@@ -67,12 +70,12 @@
       "triggers": { "crons": ["17 10 * * *", "41 8 * * *", "5 8 * * *"] }
     },
     // Not deployed: only the copy tool (api/scripts/copy-to-d1.ts --target rehearsal) uses it, to
-    // rehearse the Neon → D1 copy with production data in a database nothing serves. Create it for
-    // a rehearsal (`wrangler d1 create wildhearts-rehearsal`) and delete it right after.
+    // rehearse the Neon → D1 copy with production data in a database nothing serves. Empty it (or
+    // delete and recreate it, updating this id) after each rehearsal.
     "rehearsal": {
       "name": "wildhearts-api-rehearsal",
       "d1_databases": [
-        { "binding": "DB", "database_name": "wildhearts-rehearsal", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+        { "binding": "DB", "database_name": "wildhearts-rehearsal", "database_id": "47f07b68-6926-483c-9eae-6e2d06b0f459", "migrations_dir": "migrations" }
       ]
     }
   }

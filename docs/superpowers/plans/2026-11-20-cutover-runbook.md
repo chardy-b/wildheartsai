@@ -14,19 +14,19 @@ The rule throughout: **only Vercel and Neon take production writes until the DNS
 
 Not ready, and blocking the cutover:
 
-- **Email provider (owner).** Production on Cloudflare sends no email until one is chosen (verification and password reset links). See "Open questions" in the migration plan.
+- **Email Sending onboarding (owner).** Verification and password-reset links go through Cloudflare Email Sending (owner decision, 2026-11-20): production's API Worker binds `EMAIL`. The sender's domain must be onboarded first (`npx wrangler email sending enable <domain>`; check its DNS records with the zone export before the nameserver move). Preview logs links instead (`EMAIL_LOG_LINKS`), since its accounts are synthetic.
 - **Read-only mode has to be in production first.** It's on this branch; it must reach `main` and deploy to Vercel before the cutover day. A small pull request with just that change is the safe way (`src/lib/read-only.ts`, the proxy, the server actions, the root layout).
 
 ## 1. One-time setup (owner, any time before)
 
 1. **Cloudflare account:** Workers Paid plan. ~~Create the D1 databases~~ Done 2026-11-20: `wildhearts-prod`, `wildhearts-preview`, `wildhearts-chat-prod` and `wildhearts-chat-preview` exist, and their ids are in `api/wrangler.jsonc` and `api/wrangler.chat.jsonc`.
-2. **R2:** confirm the bucket names in `api/wrangler.jsonc` (`wildhearts-files-production`, `wildhearts-files-preview`) are the buckets Vercel uses today (`R2_BUCKET_NAME` per scope). Documents already live there, so nothing is copied.
+2. **R2:** ~~confirm the bucket names~~ Done 2026-11-20: `api/wrangler.jsonc` binds `wildheartsai-wildcards-preview` and `wildheartsai-wildcards-production`, the buckets Vercel's `R2_BUCKET_NAME` names in each scope. Documents already live there, so nothing is copied.
 3. **Secrets, production** (`npx wrangler secret put <NAME> --env production -c api/wrangler.jsonc`, from `api/`):
    - **Copy these from Vercel production exactly** (otherwise data won't open or sessions end): `BETTER_AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `RECORDS_ENCRYPTION_KEY`, `EPIC_PRIVATE_JWK` and `EPIC_PRODUCTION_PRIVATE_JWK` (plus the retiring public JWKs, if set), `EPIC_CLIENT_ID`, `EPIC_PRODUCTION_CLIENT_ID`, `METRIPORT_API_KEY`, `EXTRACTION_GRANT_KEY`, `EXTRACTION_COORDINATOR_TOKEN_HASH`.
-   - **Set on Cloudflare** (as vars or secrets): `BETTER_AUTH_URL=https://www.wildheartsai.com`, `EPIC_REDIRECT_URI=https://www.wildheartsai.com/api/epic/callback`, `EPIC_ENVIRONMENT`, `EPIC_PRODUCTION_ACCESS_ENABLED`, `EPIC_EXPANDED_SCOPES`, `SIGNUPS_ENABLED`, `SIGNUP_INVITE_CODE`, `EMAIL_FROM`, `EXTRACTION_ENABLED`, `EXTRACTION_METHODS`, and the email provider's key.
+   - **Set on Cloudflare** (as vars or secrets): `BETTER_AUTH_URL=https://www.wildheartsai.com`, `EPIC_REDIRECT_URI=https://www.wildheartsai.com/api/epic/callback`, `EPIC_ENVIRONMENT`, `EPIC_PRODUCTION_ACCESS_ENABLED`, `EPIC_EXPANDED_SCOPES`, `SIGNUPS_ENABLED`, `SIGNUP_INVITE_CODE`, `EMAIL_FROM`, `EXTRACTION_ENABLED`, `EXTRACTION_METHODS`. Email needs no key: the `EMAIL` binding sends it.
    - **Chat Worker:** `CHAT_EDGE_TOKEN` (new; its SHA-256 goes on the VPS as `CHAT_EDGE_TOKEN_HASH`), and `CHAT_EDGE_URL` in `api/wrangler.chat.jsonc`'s production vars.
-4. **Repeat step 3 for preview**, with preview values. Use preview's own keys: never production's.
-5. **CI:** GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then the repository variable `CLOUDFLARE_PREVIEW_DEPLOY=true`.
+4. **Repeat step 3 for preview**, with preview's own values from Bitwarden/Keyholder: never production's. Set `EMAIL_LOG_LINKS=true` on preview.
+5. **CI:** create the GitHub environment `cloudflare-preview`, with deployments limited to the `cloudflare` branch, holding `CLOUDFLARE_API_TOKEN` (preview Workers and databases only) and `CLOUDFLARE_ACCOUNT_ID`. Never use repository-wide secrets. Then set the repository variable `CLOUDFLARE_PREVIEW_DEPLOY=true`, which turns on `.github/workflows/cloudflare-preview.yml`: one locked release per push to `cloudflare`.
 6. **DNS:** move the `wildheartsai.com` zone's nameservers to Cloudflare, keeping every record pointing at Vercel and set to DNS-only (not proxied). Nothing changes for visitors.
 7. **Epic:** add the staging callback (`https://<staging host>/api/epic/callback`) to the **sandbox** client only.
 8. **VPS:** run the edge service (`CHAT_SERVICE_MODE=edge`, see `services/chat/README.md`), reachable by the chat Worker through a Cloudflare Tunnel or an HTTPS address. The extraction workers keep their URL (`/api/extraction/worker/v1/*` on the same origin).
@@ -34,7 +34,7 @@ Not ready, and blocking the cutover:
 ## 2. Staging (weeks before; both stacks running)
 
 1. Deploy production's Workers without a custom domain: `npx wrangler deploy --env production` in `api/` (then with `-c wrangler.chat.jsonc`), and `npm run cf:build && npx wrangler deploy --env production` at the root. Before any data is copied, their D1 databases are empty.
-2. Run the walkthrough against the staging host. Point `BASE` in `scripts/qa-cloudflare-walkthrough.mjs` at it; the sign-up step needs the email provider, or `EMAIL_LOG_LINKS` on preview.
+2. Run the walkthrough against the staging host. Point `BASE` in `scripts/qa-cloudflare-walkthrough.mjs` at it; the sign-up step reads the link from the logs, which needs `EMAIL_LOG_LINKS` on preview.
 3. **Rehearse the copy twice, timing each run.** Read from a **Neon branch** of production (Neon console → Branches → create from `main`), so production isn't touched. Write into a **rehearsal D1 database** that no Worker serves (the `rehearsal` environment in `api/wrangler.jsonc`), never into preview, which every branch deploys to:
 
    ```bash

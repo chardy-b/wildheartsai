@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createEmailSender, EmailUnavailableError, passwordResetEmail, verificationEmail } from "../src/auth/email";
+import { createEmailSender, EmailUnavailableError, passwordResetEmail, sender, verificationEmail } from "../src/auth/email";
 
 const email = verificationEmail({ to: "person@example.test", url: "https://wildheartsai.test/verify?token=made-up" });
 
@@ -22,6 +22,18 @@ describe("email", () => {
     const lines: string[] = [];
     await expect(createEmailSender({ appEnv: "production", logLinks: true, log: (line) => lines.push(line) })(email)).rejects.toThrow(EmailUnavailableError);
     expect(lines).toEqual([]);
+  });
+
+  it("sends through Cloudflare Email Sending when the binding is there, and says nothing about the message when it fails", async () => {
+    const sent: unknown[] = [];
+    const binding = { send: async (message: unknown) => void sent.push(message) };
+    await createEmailSender({ appEnv: "production", logLinks: false, binding, from: "Wild Hearts Health <no-reply@example.test>" })(email);
+    expect(sent).toEqual([{ from: { name: "Wild Hearts Health", email: "no-reply@example.test" }, to: "person@example.test", subject: email.subject, text: email.text }]);
+    const failing = { send: async () => { throw Object.assign(new Error("person@example.test rejected"), { code: "E_RECIPIENT" }); } };
+    const refused = createEmailSender({ appEnv: "production", logLinks: false, binding: failing, from: "no-reply@example.test" })(email);
+    await expect(refused).rejects.toThrow(EmailUnavailableError);
+    await expect(refused).rejects.not.toThrow(/person@example|token/);
+    expect(sender("no-reply@example.test")).toBe("no-reply@example.test");
   });
 
   it("keeps the Next app's wording", () => {
