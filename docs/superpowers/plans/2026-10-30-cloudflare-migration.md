@@ -316,9 +316,21 @@ Done in that order, one commit each.
 - [ ] Deploy the edge service on the VPS (`CHAT_SERVICE_MODE=edge`, behind a Cloudflare Tunnel or an HTTPS address only the chat Worker uses), set `CHAT_EDGE_TOKEN` on the chat Worker and its hash on the VPS, then `CHAT_ENABLED=1` on the chat and web Workers
 - [ ] Retire the VPS coordinator, private gateway and Iggy workers once chat runs on Cloudflare (they serve only Vercel's chat until the cutover)
 
-### Phases 7–8
+### Phase 7: data migration and cutover
 
-Outlined in the table; each gets task-level steps when it starts, as in the records storage plan.
+Step by step in `2026-11-20-cutover-runbook.md`.
+
+- [x] Copy tool (`api/scripts/copy-to-d1.ts`): `export` from Postgres in one read-only snapshot (keyset pages, types converted to the D1 schema, timestamps read as UTC, self-references filled in after their table, values over D1's 100 KB statement limit appended in pieces, demo identities and the Epic directory left out), `import` (refuses a database that already has users), `verify` (row counts and order-independent checksums per table; a sample of data keys, records and Epic tokens opened with the Workers' keys). Logs table names and counts only
+- [x] Local rehearsal: the seeded local Postgres, plus a 250 KB value and a demo identity, exported, imported into a fresh local D1 and verified; a deliberately altered row is caught; signing in on the local Cloudflare stack shows the copied account's connections, records (with the amended lab) and export
+- [x] Read-only mode for Vercel (`MAINTENANCE_READ_ONLY=1`): refuses changes in `src/proxy.ts` (API writes, server actions except reading a note, Epic's Connect GETs) and inside the server actions, with a notice on every page; sign-in, sign-out and viewing still work. Tests cover both layers
+- [x] A rehearsal environment in `api/wrangler.jsonc` (a D1 database no Worker serves) for rehearsing with production data
+- [ ] Read-only mode to `main` and deployed on Vercel (a small pull request), before the cutover day
+- [ ] Owner setup in the runbook's section 1 (accounts, databases, secrets copied exactly from Vercel, DNS zone, Epic sandbox redirect, the VPS edge service), and the email provider
+- [ ] Two timed rehearsals with production data (runbook section 2), then the cutover (section 4)
+
+### Phase 8
+
+Cleanup, after 30 days on Cloudflare: see the table and the runbook's section 6.
 
 ## Risks
 

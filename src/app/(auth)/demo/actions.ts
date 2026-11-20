@@ -1,5 +1,6 @@
 "use server";
 
+import { assertWritable } from "@/lib/read-only";
 import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getRealSession } from "@/lib/session";
@@ -8,6 +9,7 @@ import { DEMO_GUEST_COOKIE, DEMO_MODE_COOKIE, demoModeValue } from "@/lib/demo/i
 import { isDemoUser } from "@/lib/demo/access";
 
 export async function enterDemo() {
+  assertWritable();
   if (process.env.DEMO_ENABLED !== "1") notFound();
   const identity = await getRealSession();
   if (!identity?.user.emailVerified) redirect("/demo");
@@ -26,6 +28,7 @@ export async function leaveDemo() {
 
 // Anyone, without an account (where the backend offers it): a day's view of the central demo chart.
 export async function enterGuestDemo() {
+  assertWritable();
   const api = await backend();
   if (process.env.DEMO_ENABLED !== "1" || !api.guestDemoAvailable()) notFound();
   if (await getRealSession()) return enterDemo();

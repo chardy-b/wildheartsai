@@ -67,6 +67,15 @@
       ],
       // Nightly refresh and directory import (src/index.ts, CRONS).
       "triggers": { "crons": ["17 10 * * *", "41 8 * * *", "5 8 * * *"] }
+    },
+    // Not deployed: only the copy tool (api/scripts/copy-to-d1.ts --target rehearsal) uses it, to
+    // rehearse the Neon → D1 copy with production data in a database nothing serves. Create it for
+    // a rehearsal (`wrangler d1 create wildhearts-rehearsal`) and delete it right after.
+    "rehearsal": {
+      "name": "wildhearts-api-rehearsal",
+      "d1_databases": [
+        { "binding": "DB", "database_name": "wildhearts-rehearsal", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+      ]
     }
   }
 }
