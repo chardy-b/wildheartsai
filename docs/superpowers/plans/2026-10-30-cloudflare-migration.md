@@ -237,10 +237,12 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [ ] Measure Neon: size per table, largest `fhir_attachment` and `fhir_resource` rows, row counts. Decide the R2 threshold for large attachments
 - [x] List every transaction (`db.transaction`, `asUser`) and classify it: `docs/superpowers/specs/2026-10-30-d1-transaction-audit.md`
 - [x] Check the sealing associated data: `table:field:userId:rowId`, so names and IDs are preserved verbatim (see schema conversion)
-- [ ] Cloudflare: create the D1 databases (`wildhearts-prod`, `wildhearts-preview`, `wildhearts-chat-prod`, `wildhearts-chat-preview`), and confirm the R2 buckets
+- [x] Cloudflare: create the D1 databases (`wildhearts-prod`, `wildhearts-preview`, `wildhearts-chat-prod`, `wildhearts-chat-preview`) (owner, 2026-11-20, verified empty)
+- [ ] Confirm the R2 buckets
 - [ ] Workers paid plan (owner); confirm the current D1, Workflows and Workers limits used in this plan against Cloudflare's docs
 - [ ] CI (owner): GitHub secrets `CLOUDFLARE_API_TOKEN` (scoped to Workers and D1 edit on this account) and `CLOUDFLARE_ACCOUNT_ID`, then the repository variable `CLOUDFLARE_PREVIEW_DEPLOY=true` to turn on the `api-preview` job
-- [ ] Put the real D1 database IDs and R2 bucket names into `api/wrangler.jsonc` and `api/wrangler.chat.jsonc` (placeholders today)
+- [x] Put the real D1 database IDs into `api/wrangler.jsonc` and `api/wrangler.chat.jsonc` (2026-11-20; checked with `wrangler deploy --dry-run` for preview and production). The rehearsal database's id is set when it's created
+- [ ] Confirm the R2 bucket names in `api/wrangler.jsonc` match Vercel's `R2_BUCKET_NAME` per scope
 - [x] Answer the open questions (2026-10-30), except email
 - [ ] Before Phase 7: move the zone's nameservers to Cloudflare with records still pointing at Vercel (owner)
 

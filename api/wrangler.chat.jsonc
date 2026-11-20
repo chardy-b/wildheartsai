@@ -38,8 +38,7 @@
       // CHAT_EDGE_URL: the VPS edge service's address once it serves preview (Phase 7).
       "vars": { "CHAT_ENABLED": "0", "CHAT_MODEL_ID": "health-model" },
       "d1_databases": [
-        // database_id: set after `wrangler d1 create wildhearts-chat-preview` (Phase 0).
-        { "binding": "CHAT_DB", "database_name": "wildhearts-chat-preview", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "chat-migrations" }
+        { "binding": "CHAT_DB", "database_name": "wildhearts-chat-preview", "database_id": "4dd16320-0f11-49ac-8e46-180afde8f282", "migrations_dir": "chat-migrations" }
       ],
       "services": [{ "binding": "RECORDS", "service": "wildhearts-api-preview", "entrypoint": "ChatRecords" }],
       "durable_objects": {
@@ -54,8 +53,7 @@
       "name": "wildhearts-chat-production",
       "vars": { "CHAT_ENABLED": "0", "CHAT_MODEL_ID": "health-model" },
       "d1_databases": [
-        // database_id: set after `wrangler d1 create wildhearts-chat-prod` (Phase 0).
-        { "binding": "CHAT_DB", "database_name": "wildhearts-chat-prod", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "chat-migrations" }
+        { "binding": "CHAT_DB", "database_name": "wildhearts-chat-prod", "database_id": "1b5ac8f5-5b44-4512-888e-4f0933d187a1", "migrations_dir": "chat-migrations" }
       ],
       "services": [{ "binding": "RECORDS", "service": "wildhearts-api-production", "entrypoint": "ChatRecords" }],
       "durable_objects": {

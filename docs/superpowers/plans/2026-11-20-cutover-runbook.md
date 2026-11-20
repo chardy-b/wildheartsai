@@ -17,7 +17,7 @@ Not ready, and blocking the cutover:
 
 ## 1. One-time setup (owner, any time before)
 
-1. **Cloudflare account:** Workers Paid plan. Create the D1 databases `wildhearts-prod`, `wildhearts-preview`, `wildhearts-chat-prod` and `wildhearts-chat-preview`, and put their ids in `api/wrangler.jsonc` and `api/wrangler.chat.jsonc` (placeholders now).
+1. **Cloudflare account:** Workers Paid plan. ~~Create the D1 databases~~ Done 2026-11-20: `wildhearts-prod`, `wildhearts-preview`, `wildhearts-chat-prod` and `wildhearts-chat-preview` exist, and their ids are in `api/wrangler.jsonc` and `api/wrangler.chat.jsonc`.
 2. **R2:** confirm the bucket names in `api/wrangler.jsonc` (`wildhearts-files-production`, `wildhearts-files-preview`) are the buckets Vercel uses today (`R2_BUCKET_NAME` per scope). Documents already live there, so nothing is copied.
 3. **Secrets, production** (`npx wrangler secret put <NAME> --env production -c api/wrangler.jsonc`, from `api/`):
    - **Copy these from Vercel production exactly** (otherwise data won't open or sessions end): `BETTER_AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `RECORDS_ENCRYPTION_KEY`, `EPIC_PRIVATE_JWK` and `EPIC_PRODUCTION_PRIVATE_JWK` (plus the retiring public JWKs, if set), `EPIC_CLIENT_ID`, `EPIC_PRODUCTION_CLIENT_ID`, `METRIPORT_API_KEY`, `EXTRACTION_GRANT_KEY`, `EXTRACTION_COORDINATOR_TOKEN_HASH`.

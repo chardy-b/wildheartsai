@@ -36,8 +36,7 @@
       // chosen. Preview data is made up; production never does this (src/auth/email.ts).
       "vars": { "APP_ENV": "preview", "EMAIL_LOG_LINKS": "true" },
       "d1_databases": [
-        // database_id: set after `wrangler d1 create wildhearts-preview` (Phase 0).
-        { "binding": "DB", "database_name": "wildhearts-preview", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+        { "binding": "DB", "database_name": "wildhearts-preview", "database_id": "d57e490d-de96-45a3-9f5c-c58e1d7d3456", "migrations_dir": "migrations" }
       ],
       // The existing preview bucket's name (today's R2_BUCKET_NAME in Vercel's Preview scope).
       "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-preview" }],
@@ -54,8 +53,7 @@
       "name": "wildhearts-api-production",
       "vars": { "APP_ENV": "production" },
       "d1_databases": [
-        // database_id: set after `wrangler d1 create wildhearts-prod` (Phase 0).
-        { "binding": "DB", "database_name": "wildhearts-prod", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+        { "binding": "DB", "database_name": "wildhearts-prod", "database_id": "d4e6e009-c53f-43fd-9d05-cedf0e067359", "migrations_dir": "migrations" }
       ],
       // The existing production bucket's name (today's R2_BUCKET_NAME in Vercel's Production scope).
       "r2_buckets": [{ "binding": "FILES", "bucket_name": "wildhearts-files-production" }],
