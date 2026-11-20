@@ -3,9 +3,10 @@ import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DEMO_GUEST_COOKIE, DEMO_MODE_COOKIE, demoModeValue } from "@/lib/demo/identity";
 import { buildDemoScenario, DEMO_USER_ID } from "@/lib/demo/scenario";
-import { guestViewer, issueGuestViewer } from "../src/data/demo";
+import { demoSnapshot, ensureDemoChart, guestViewer, issueGuestViewer } from "../src/data/demo";
+import type { Bindings } from "../src/env";
 import * as s from "../src/db/schema";
-import { clearAll, db, origin, signedIn } from "./helpers";
+import { clearAll, db, origin, recordsKey, signedIn } from "./helpers";
 
 // The guided demo on Workers: one central fictional chart that everyone views, and nothing
 // written for any visitor. Fictional data only.
@@ -109,6 +110,41 @@ describe("the demo on rails", () => {
     // Signing out ends the demo view with the login.
     await SELF.fetch(`${origin}/api/auth/sign-out`, { method: "POST", headers: { cookie: m.cookie, Origin: origin } });
     expect((await m.send("/api/session")).status).toBe(401);
+  });
+
+  it("re-dates the chart to each new day in place, so its appointments stay upcoming", async () => {
+    const bindings = env as unknown as Bindings;
+    const day1 = new Date("2026-11-20T20:00:00Z"), day4 = new Date("2026-11-23T20:00:00Z");
+    await ensureDemoChart(bindings, db, recordsKey, day1);
+    const before = (await demoSnapshot(db, recordsKey, { document: true }))!;
+    const counts = { records: await db.$count(s.fhirResource), notes: await db.$count(s.fhirAttachment) };
+    expect(before.anchor).toBe("2026-11-20");
+    // Later the same day: nothing to do, nothing written.
+    const footprintBefore = await footprint();
+    await ensureDemoChart(bindings, db, recordsKey, new Date("2026-11-21T06:00:00Z"));
+    expect(await footprint()).toEqual(footprintBefore);
+
+    await ensureDemoChart(bindings, db, recordsKey, day4);
+    const after = (await demoSnapshot(db, recordsKey, { document: true }))!;
+    expect(after.anchor).toBe("2026-11-23");
+    expect(after.records.map((r) => r.fhirId).sort()).toEqual(before.records.map((r) => r.fhirId).sort());
+    // Replaced, not added to: no old versions or notes left behind.
+    expect({ records: await db.$count(s.fhirResource), notes: await db.$count(s.fhirAttachment) }).toEqual(counts);
+    // Every note belongs to a current record, and its text carries the new dates.
+    const notes = await db.select({ resourceId: s.fhirAttachment.resourceId }).from(s.fhirAttachment);
+    const currentIds = new Set(after.records.map((r) => r.id));
+    expect(notes.every((n) => currentIds.has(n.resourceId))).toBe(true);
+    const note = after.records.find((r) => r.fhirId === "allergy-assessment")!;
+    // A viewer cookie straight from the issuer: opening the demo through the API would re-date
+    // the chart to the real today.
+    const viewer = `${DEMO_GUEST_COOKIE}=${issueGuestViewer(secret).cookie}`;
+    const text = (await (await SELF.fetch(`${origin}/api/records/note?${new URLSearchParams({ sourceId: (await db.select().from(s.fhirResource).where(eq(s.fhirResource.id, note.id)))[0].sourceId, url: "Binary/allergy-assessment" })}`, { headers: { cookie: viewer } })).json()) as { ok: boolean; text?: string };
+    const expected = buildDemoScenario("2026-11-23").find((e) => e.resource.id === "allergy-assessment")!.noteText!;
+    expect(expected).not.toEqual(buildDemoScenario("2026-11-20").find((e) => e.resource.id === "allergy-assessment")!.noteText);
+    expect(text).toEqual({ ok: true, text: expected });
+    const appointments = after.records.filter((r) => r.resourceType === "Appointment").map((r) => (r.resource as unknown as { start: string }).start);
+    expect(appointments.length).toBeGreaterThan(0);
+    expect(appointments.every((start) => new Date(start) > day4)).toBe(true);
   });
 
   it("accepts only its own guest cookies, and only for a day", async () => {

@@ -26,7 +26,7 @@
   ],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TokenRefresher"] }, { "tag": "v2", "new_sqlite_classes": ["UserLock"] }, { "tag": "v3", "new_sqlite_classes": ["RateLimiter"] }],
   // Nightly refresh and directory import (src/index.ts, CRONS). `wrangler dev --test-scheduled` runs them locally.
-  "triggers": { "crons": ["17 10 * * *", "41 8 * * *"] },
+  "triggers": { "crons": ["17 10 * * *", "41 8 * * *", "5 8 * * *"] },
 
   "env": {
     // Shared by every pull request's preview (one preview database, by decision).
@@ -48,7 +48,7 @@
         { "name": "wildhearts-directory-preview", "binding": "DIRECTORY_WORKFLOW", "class_name": "DirectoryImportWorkflow" }
       ],
       // Nightly refresh and directory import (src/index.ts, CRONS).
-      "triggers": { "crons": ["17 10 * * *", "41 8 * * *"] }
+      "triggers": { "crons": ["17 10 * * *", "41 8 * * *", "5 8 * * *"] }
     },
     "production": {
       "name": "wildhearts-api-production",
@@ -66,7 +66,7 @@
         { "name": "wildhearts-directory-production", "binding": "DIRECTORY_WORKFLOW", "class_name": "DirectoryImportWorkflow" }
       ],
       // Nightly refresh and directory import (src/index.ts, CRONS).
-      "triggers": { "crons": ["17 10 * * *", "41 8 * * *"] }
+      "triggers": { "crons": ["17 10 * * *", "41 8 * * *", "5 8 * * *"] }
     }
   }
 }

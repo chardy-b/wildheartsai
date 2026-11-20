@@ -1,11 +1,12 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import { DEMO_NAME, DEMO_SOURCES, DEMO_USER_ID, buildDemoScenario, demoDocumentEntries, type DemoEntry } from "@/lib/demo/scenario";
 import { describeResource } from "@/lib/fhir/describe";
 import { CONSENT_VERSION } from "@/lib/onboarding";
 import { diffResources } from "@/lib/sync/diff";
 import { SYNC_QUERIES, type SyncQuery } from "@/lib/sync/plan";
-import { fhirResource, healthSource, profile, syncRun, user } from "../db/schema";
+import { hmacFor } from "../crypto/fields";
+import { fhirAttachment, fhirResource, healthSource, profile, syncRun, user } from "../db/schema";
 import type { Db } from "../db";
 import type { Bindings } from "../env";
 import { applyDiff, currentRows, prepareFetched } from "../jobs/sync/store";
@@ -17,8 +18,8 @@ import { userKeysFor } from "./user-keys";
 
 // The guided demo on Cloudflare: one central, fictional chart that everyone views, and nothing
 // created per visitor. The chart is the demo account (DEMO_USER_ID, which has no login), written
-// once on first use through the real normalizers, diffing, encryption and note store: the base
-// story and the sample PDF's records. Visitors get a demo identity that reads it (see
+// through the real normalizers, diffing, encryption and note store, dated from today (see
+// `ensureDemoChart`): the base story and the sample PDF's records. Visitors get a demo identity that reads it (see
 // `demoIdentity` and the read-only guard in src/session.ts); every walkthrough step answers from
 // it without writing.
 
@@ -59,7 +60,11 @@ async function importEntries(scope: UserScope, kek: Buffer, entries: DemoEntry[]
         and(eq(fhirResource.sourceId, stored.id), inJson(fhirResource.fhirId, notes.map((e) => e.resource.id!)), isNull(fhirResource.supersededAt)));
       for (const entry of notes) {
         const record = records.find((r) => r.fhirId === entry.resource.id)!;
-        await storeNote(scope, keys, { sourceId: stored.id, resourceId: record.id, url: `Binary/${entry.resource.id}`, contentType: "text/plain", raw: entry.noteText! }, now);
+        const url = `Binary/${entry.resource.id}`;
+        // A re-dated record's note is re-dated too: the old version's note (one per source and
+        // address) makes way, or the new one would be skipped and then deleted with the old record.
+        await scope.delete(fhirAttachment, and(eq(fhirAttachment.sourceId, stored.id), eq(fhirAttachment.urlHmac, hmacFor(keys, url)), ne(fhirAttachment.resourceId, record.id)));
+        await storeNote(scope, keys, { sourceId: stored.id, resourceId: record.id, url, contentType: "text/plain", raw: entry.noteText! }, now);
       }
     }
     // Bounded metadata history: repeat presentations do not grow an unbounded log.
@@ -73,21 +78,28 @@ async function importEntries(scope: UserScope, kek: Buffer, entries: DemoEntry[]
 
 const DOCUMENTS = baseUrl("documents");
 
-// Writes the central chart if it isn't there yet: one read when it is. Idempotent (the sync
-// diff), so a retry after a failure only fills in what's missing.
+// Keeps the central chart dated from today, so the story never goes stale and its appointments
+// are always upcoming: written on first use, then rewritten once a day (the daily cron, or the
+// first demo entry of the day if the cron hasn't run yet). One read when it's current.
+// The rewrite goes through the sync diff, so every re-dated record is replaced in one atomic
+// batch (no reader sees a gap or a duplicate); then the old versions, and their notes, go.
 export async function ensureDemoChart(env: Bindings, db: Db, kek: Buffer, now = new Date()): Promise<void> {
   const scope = forUser(db, DEMO_USER_ID);
-  const complete = async () => (await scope.selectFields(healthSource, { url: healthSource.fhirBaseUrl }, inJson(healthSource.fhirBaseUrl, [baseUrl("primary"), DOCUMENTS]))).length === 2;
-  if (await complete()) return;
+  const anchor = referenceDate(now);
+  const current = async () => {
+    const sources = await scope.selectFields(healthSource, { url: healthSource.fhirBaseUrl, syncedAt: healthSource.lastSyncedAt }, inJson(healthSource.fhirBaseUrl, [baseUrl("primary"), DOCUMENTS]));
+    return sources.length === 2 && sources.every((s) => s.syncedAt && referenceDate(s.syncedAt) === anchor);
+  };
+  if (await current()) return;
   await withLock(env, "demo-chart", async () => {
-    if (await complete()) return;
+    if (await current()) return;
     const sys = system(db);
     await sys.batch([
       sys.insert(user).values({ id: DEMO_USER_ID, name: `${DEMO_NAME} (fictional demo)`, email: "demo-chart@demo.invalid", emailVerified: true, createdAt: now, updatedAt: now }).onConflictDoNothing(),
       scope.insert(profile, { userId: DEMO_USER_ID, preferredName: "Alex (demo)", consentVersion: CONSENT_VERSION, consentedAt: now, onboardedAt: now }).onConflictDoNothing(),
     ]);
-    const anchor = referenceDate(now);
     await importEntries(scope, kek, [...buildDemoScenario(anchor), ...demoDocumentEntries(anchor)], now);
+    await scope.delete(fhirResource, isNotNull(fhirResource.supersededAt));
   });
 }
 
@@ -102,7 +114,7 @@ export async function demoSnapshot(db: Db, kek: Buffer, options: { document: boo
   const keys = await userKeysFor(scope, kek, new Date());
   const rows = await scope.select(fhirResource, and(inJson(fhirResource.sourceId, sources.map((s) => s.id)), isNull(fhirResource.supersededAt), isNull(fhirResource.removedAt))).limit(200);
   return {
-    anchor: referenceDate(primary.createdAt),
+    anchor: referenceDate(primary.lastSyncedAt ?? primary.createdAt),
     sources: sources.map((source) => ({ id: source.id, key: DEMO_SOURCES.find((s) => baseUrl(s.key) === source.fhirBaseUrl)!.key, name: source.organizationName, syncedAt: source.lastSyncedAt?.toISOString() ?? null, count: rows.filter((r) => r.sourceId === source.id).length })),
     records: rows.map((row) => {
       const opened = openStoredRow(keys, row);

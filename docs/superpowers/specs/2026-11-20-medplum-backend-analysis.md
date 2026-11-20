@@ -1,6 +1,6 @@
 # Medplum as the records backend and search: analysis
 
-Date: November 20, 2026. Status: analysis for an owner decision; nothing built.
+Date: November 20, 2026. Status: direction decided (below, "Decisions and answers"); nothing built.
 
 Question: use open-source Medplum for the records backend and FHIR search? Is it easy to adopt, where would it run (VPS or Cloudflare), where would the data live, and should we instead keep SQLite?
 
@@ -10,6 +10,61 @@ Question: use open-source Medplum for the records backend and FHIR search? Is it
 - **It can't live in Cloudflare's own storage.** Medplum's resources and search indexes are in Postgres. In Cloudflare objects, at most the binary attachments could sit in R2, and only if Medplum's `s3:` storage accepts a custom endpoint, which we haven't confirmed.
 - **Biggest trade-off: encryption.** Today every record is sealed with a per-person key before it reaches the database, and deleting a person destroys their key. Medplum stores resources and their search indexes as plaintext in Postgres; that is what makes its FHIR search work. Adopting it means relying on disk encryption and access control instead of per-person sealing.
 - **Recommendation:** finish the Cloudflare cutover on D1 first, as planned. If we then want Medplum, run it on its **own small VM, not the GPU VPS**, with managed Postgres (Neon, which we already use) and local Redis, reached from Workers through a Cloudflare Tunnel. Don't run SQLite on the VPS: D1 already is managed SQLite.
+
+## Decisions and answers (November 20, later)
+
+Owner decisions: long term, **Medplum on our own VPS is the main backend**, on Postgres. Per-person encryption **isn't a requirement** for now. **Move to Cloudflare first.**
+
+### Is moving to Cloudflare first still worth it?
+
+Yes. Most of what's been built isn't about where records are stored:
+- **Carries over:** the web app on Workers, Better Auth and sessions, Epic connect and tokens, sync orchestration (Workflows), Documents in R2, extraction coordination, chat (Pi durable, one Durable Object per conversation), the demo, rate limits.
+- **Temporary:** the D1 records tables and their read paths (timeline, record pages, notes, export, chat's records RPC), roughly a fifth of the API. When Medplum arrives they become Medplum calls behind the same routes, so pages don't change.
+- **No second migration of records:** they come from Epic and Metriport and can be re-synced straight into Medplum. Only records Wild Hearts made itself (from documents) need copying.
+- **What's left on Cloudflare:** the chat port and the cutover, both needed whatever the records store becomes.
+
+Two consequences of records on the VPS, to plan for:
+- Every record read becomes Worker → Cloudflare Tunnel → VPS, so the VPS's uptime is the records' uptime (backups, monitoring, upgrades one Medplum minor version at a time).
+- It changes the chat boundary: today the VPS holds no record data. Keep Medplum and its Postgres away from the inference and research processes: another host is best; at the least, separate containers, networks and credentials.
+
+### Medplum as the entire backend, or our own source of truth synced to it?
+
+Neither, exactly. **Make Medplum the source of truth for clinical data (the FHIR resources), and keep our API as the backend for everything else. Mirror nothing.**
+- **Medplum isn't a good fit for the rest:** Better Auth accounts and sessions, Epic OAuth tokens and connection state, sync scheduling and cursors, chat, rate limits, the demo, Documents' upload flow and quotas. Those stay in our API and D1.
+- **Why not our own store plus a Medplum mirror for search:** two copies of every record, every correction and deletion propagated, drift between them, and two places to secure. It's only worth it if our store has to hold something Medplum can't (per-person sealing was that reason), which no longer applies.
+- **What owning clinical data in Medplum means for the code:**
+  - Sync writes transaction bundles of conditional updates, keyed by an identifier (source URL plus Epic's id), with references between imported resources rewritten inside the bundle.
+  - Records are tagged with their source, so deleting a source deletes by tag.
+  - Medplum's history replaces our supersede chain.
+  - Each person is a Patient compartment. Requests go on behalf of a membership whose AccessPolicy allows only that compartment.
+
+### How much does Medplum give us over building search ourselves?
+
+Our record queries today are per person and small (hundreds to a few thousand records each):
+- filter by category, source and date;
+- text search over titles and notes;
+- a record by id;
+- lab trends by code;
+- coverage counts.
+
+**Without encryption, our own search is cheap:** plaintext columns (code, display, date, value, unit, status) plus Postgres full-text or trigram search, or SQLite FTS5 in D1, covers all of that in a couple of weeks.
+
+**What Medplum adds beyond search:**
+- full FHIR search (token systems, quantities with units, chaining, `_include` and `_revinclude`);
+- versioning and history;
+- validation against profiles;
+- terminology services (`$expand`, `$validate-code`; needs code systems loaded, and LOINC and SNOMED have licence terms);
+- Subscriptions and Bots;
+- a SMART on FHIR server, so other apps can read a person's data with their consent;
+- bulk `$export`, access policies, an admin UI;
+- a standard API that extraction already targets.
+
+**Verdict:** for search alone, Medplum isn't worth running a server, Postgres and Redis. It earns its keep when Wild Hearts becomes a FHIR platform:
+- apps or care teams reading the data;
+- workflows (tasks, care plans, messages);
+- terminology-backed normalization, such as mapping labs from several health systems to LOINC so trends join up.
+
+Since that's the stated direction, adopt Medplum as the clinical store when the first of those features starts. Don't build our own search first and throw it away. If that's more than a quarter or two out and search is needed sooner, add the plaintext columns and full-text index to the existing store as a stopgap: small, and replaced by Medplum's search later.
 
 ## What Medplum is, as a runtime
 
@@ -51,7 +106,7 @@ Search works through Postgres: each resource type has a table with columns for c
 - **Timeline, record pages, export, the chat tools**: FHIR searches against Medplum instead of D1 reads. This is the real gain: proper date, token, quantity, chained and `_include` searches instead of filtering decrypted rows in code.
 - **Extraction to FHIR** (`plans/2026-10-15-pdf-to-fhir-and-medplum.md`) already maps to Medplum's API and would write there directly.
 
-## Recommendation, in order
+## Recommendation, in order (before the decisions above)
 
 1. Finish the Cloudflare cutover on D1 as planned. Medplum is a separate change, and swapping the records store mid-migration doubles the risk.
 2. Decide on encryption first. If per-person sealing stays a requirement, Medplum's plaintext indexes rule it out as the system of record, and the plan of October 15 stands: Medplum as an optional destination, not a second authoritative store.
