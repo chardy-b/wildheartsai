@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function DemoEntryPage({ searchParams }: PageProps<"/demo">) {
+export default async function DemoEntryPage() {
   if (process.env.DEMO_ENABLED !== "1") notFound();
 
   const session = await getRealSession();
@@ -22,7 +22,6 @@ export default async function DemoEntryPage({ searchParams }: PageProps<"/demo">
   const selected = await getSession();
   if (selected && isDemoUser(selected.user.id)) redirect("/app/demo");
   const guests = (await backend()).guestDemoAvailable();
-  const busy = (await searchParams).error === "busy";
 
   return (
     <AuthCard title="One patient. The whole story." lede="Meet Alex, a fictional patient whose care is scattered across three clinics. Explore the records, ask Holo, add a sample PDF and prepare for the next visit.">
@@ -30,10 +29,9 @@ export default async function DemoEntryPage({ searchParams }: PageProps<"/demo">
         <p className="form-notice">You’re signed in. Your demo has its own fictional chart and chat history, separate from your personal records.</p>
         <form action={enterDemo} className="auth-form"><button className="btn btn-lg" type="submit">Open guided demo</button></form>
       </> : guests ? <>
-        {busy && <p className="form-error" role="alert">Too many demos were started from this network in the last hour. Try again later, or sign in.</p>}
         <form action={enterGuestDemo} className="auth-form"><button className="btn btn-lg" type="submit">Open guided demo</button></form>
-        <p className="form-notice">No account needed. Your demo chart is fictional and is deleted after a day, or when you leave.</p>
-        <details><summary>Have an account? Sign in to keep a demo alongside it.</summary>
+        <p className="form-notice">No account needed. Everything in the demo is fictional, and nothing you do in it is saved.</p>
+        <details><summary>Have an account? Sign in to open the demo from it.</summary>
           <SignInForm destination="/demo" submitLabel="Sign in to open demo" notice="Use your usual Wild Hearts account. No separate demo login is needed." />
         </details>
       </> : <SignInForm destination="/demo" submitLabel="Sign in to open demo" notice="Use your usual Wild Hearts account. No separate demo login is needed." />}

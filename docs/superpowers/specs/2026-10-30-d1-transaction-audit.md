@@ -83,7 +83,7 @@ On Cloudflare each conversation's content lives in its own `ChatConversation` Du
 | `demo/workspace.ts` (parent session `FOR SHARE`, per-user advisory lock, profile upsert) | **S** + **L** (conditional insert keyed on the demo user; idempotent) |
 | `demo/store.ts` per-demo-user advisory lock | **L** via `UserLock` |
 
-Done (`api/src/data/demo.ts`): the workspace's user, profile and session rows go in one batch under `demo-workspace:<user>`, after the parent-session check; the session row's foreign key to its parent fails the batch if the login ended in between. Imports run under `demo:<user>` and are idempotent (the sync diff), so a retry after a failure only fills in what's missing. `provision.ts` (the single shared demo login, `npm run demo:seed`) isn't ported: per-person workspaces replace it, and its rows come across with the data migration if it exists.
+Done (`api/src/data/demo.ts`), and later simplified (November 20): the demo is one central chart written once under `UserLock` key `demo-chart`, idempotently (the sync diff), and read by everyone; nothing is written per visitor, so there are no per-person workspaces or locks. `provision.ts` (the single shared demo login, `npm run demo:seed`) isn't ported: the central chart has no login.
 
 ## Consequences for the schema
 

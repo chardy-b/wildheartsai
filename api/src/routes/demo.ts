@@ -1,83 +1,71 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { isDemoIdentity } from "@/lib/demo/identity";
 import { demoPdf } from "@/lib/demo/pdf";
-import { createGuestDemo, demoSnapshot, endGuestDemo, ensureDemoWorkspace, importDemoDocument, populateDemo } from "../data/demo";
+import { demoSnapshot, ensureDemoChart, issueGuestViewer } from "../data/demo";
 import { database } from "../db";
 import { secrets } from "../env";
 import { recordsKey } from "../epic/credentials";
-import { DEMO_GUEST_COOKIE } from "@/lib/demo/identity";
-import { allow, clientIp, tooMany } from "../limits";
-import { applicationSession, cookieValue, realSession, type AppEnv } from "../session";
+import { applicationSession, realSession, type AppEnv } from "../session";
 
-// The guided demo (src/lib/demo/http.ts and src/app/(auth)/demo/actions.ts in the Next app).
+// The guided demo (src/lib/demo/http.ts and src/app/(auth)/demo/actions.ts in the Next app), on
+// rails: one central fictional chart, and no endpoint here writes anything for a visitor. The
+// walkthrough's steps (replay the sync, reset, add the sample PDF) answer what the chart already
+// holds; the page keeps track of which step the visitor is on.
 export const demoRoutes = new Hono<AppEnv>();
 
 const PRIVATE = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" };
 const answer = (data: unknown, status = 200) => Response.json(data, { status, headers: PRIVATE });
 const digest = (input: Uint8Array) => createHash("sha256").update(input).digest("hex");
+const failed = (what: string, error: unknown) => {
+  console.error(`[demo] ${what} failed`, error instanceof Error ? error.name : "unknown");
+  return answer({ error: "The demo could not open. Please try again." }, 500);
+};
 
-// Opens (or reopens) the signed-in person's own workspace. The web Worker's demo entry action
-// calls this, then sets the cookie that selects the workspace for this login.
+// A signed-in person opening the demo. The web Worker's entry action calls this, then sets the
+// demo-mode cookie bound to this login. Nothing is created for the person.
 demoRoutes.post("/demo/workspace", async (c) => {
   const identity = await realSession(c.env, c.req.raw.headers);
   if (!identity?.user.emailVerified) return answer({ error: "Sign in with your Wild Hearts account to open the demo." }, 401);
-  if (isDemoIdentity(identity.user.id)) return answer({ ok: true });
   try {
-    await ensureDemoWorkspace(c.env, database(c.env.DB), recordsKey(secrets(c.env)), identity);
+    await ensureDemoChart(c.env, database(c.env.DB), recordsKey(secrets(c.env)));
   } catch (error) {
-    console.error("[demo] workspace failed", error instanceof Error ? error.name : "unknown");
-    return answer({ error: "The demo could not open. Please try again." }, 500);
+    return failed("chart", error);
   }
   return answer({ ok: true });
 });
 
-// A visitor without an account: a fictional workspace of their own for a day. Answers the cookie
-// value; the web Worker's entry action sets it (httpOnly). Strictly limited per network.
+// A visitor without an account: a signed viewer cookie for a day, and nothing stored for it.
+// The web Worker's entry action sets it (httpOnly).
 demoRoutes.post("/demo/guest", async (c) => {
   if (await realSession(c.env, c.req.raw.headers)) return answer({ error: "You're signed in. Open the demo from your account." }, 409);
-  const limited = await allow(c.env, [["guestDemoPerIp", clientIp(c.req.raw.headers)]]);
-  if (!limited.ok) return tooMany(limited.retryAfterSeconds, "Too many demos were started from this network. Try again later.");
   try {
-    const { cookie, expiresAt } = await createGuestDemo(c.env, database(c.env.DB), recordsKey(secrets(c.env)));
-    return answer({ cookie, expiresAt }, 201);
+    await ensureDemoChart(c.env, database(c.env.DB), recordsKey(secrets(c.env)));
   } catch (error) {
-    console.error("[demo] guest failed", error instanceof Error ? error.name : "unknown");
-    return answer({ error: "The demo could not open. Please try again." }, 500);
+    return failed("chart", error);
   }
-});
-
-// Leaving the guest demo deletes its fictional chart now rather than at expiry.
-demoRoutes.delete("/demo/guest", async (c) => {
-  await endGuestDemo(database(c.env.DB), cookieValue(c.req.raw.headers, DEMO_GUEST_COOKIE));
-  return c.body(null, 204, PRIVATE);
+  return answer(issueGuestViewer(secrets(c.env).BETTER_AUTH_SECRET), 201);
 });
 
 demoRoutes.on(["GET", "POST"], "/demo/*", async (c) => {
   const request = c.req.raw;
   const identity = await applicationSession(c.env, request.headers);
-  if (!identity || !identity.user.emailVerified) return answer({ error: "Open the demo again from the demo page." }, 401);
-  const config = secrets(c.env);
-  if (!isDemoIdentity(identity.user.id)) return answer({ error: "Not found." }, 404);
+  if (!identity) return answer({ error: "Open the demo again from the demo page." }, 401);
+  if (!("demo" in identity)) return answer({ error: "Not found." }, 404);
   const url = new URL(request.url);
   const route = url.pathname.replace(/^\/api\/demo\//, "");
   if (request.method !== "GET" && (request.headers.get("origin") !== url.origin || request.headers.get("sec-fetch-site") === "cross-site")) return answer({ error: "Request not allowed." }, 403);
-  const db = database(c.env.DB), kek = recordsKey(config), userId = identity.user.id;
-  if (request.method === "POST") {
-    const limited = await allow(c.env, [["demoWritePerPerson", userId], ["demoWritePerIp", clientIp(request.headers)]]);
-    if (!limited.ok) return tooMany(limited.retryAfterSeconds, "The demo has been reset or reloaded many times. Try again later.");
-  }
+  const db = database(c.env.DB), kek = recordsKey(secrets(c.env));
+  const snapshot = (document: boolean) => demoSnapshot(db, kek, { document });
   try {
     if (request.method === "GET" && route === "sample.pdf") {
       return new Response(new Uint8Array(demoPdf()), { headers: { ...PRIVATE, "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="alex-morgan-demo-report.pdf"' } });
     }
-    if (request.method === "POST" && (route === "sync" || route === "reset")) {
-      await populateDemo(c.env, db, kek, userId, { reset: route === "reset" });
-      return answer(await demoSnapshot(db, kek, userId));
-    }
+    // Replaying the sync shows the chart as it is; `document=1` keeps the PDF step's records.
+    if (request.method === "POST" && route === "sync") return answer(await snapshot(url.searchParams.get("document") === "1"));
+    if (request.method === "POST" && route === "reset") return answer(await snapshot(false));
     if (request.method === "POST" && route === "document") {
-      // Only the supplied synthetic fixture is accepted. Never label arbitrary user documents
-      // as successfully OCR'd or turn them into invented facts.
+      // Only the supplied synthetic fixture is accepted: never label a visitor's own document as
+      // read, or turn it into invented facts. Its records are already in the chart.
       const reader = request.body?.getReader();
       if (!reader) return answer({ error: "Choose the provided sample PDF." }, 400);
       const chunks: Uint8Array[] = [];
@@ -93,16 +81,15 @@ demoRoutes.on(["GET", "POST"], "/demo/*", async (c) => {
         chunks.push(item.value);
       }
       if (digest(Buffer.concat(chunks)) !== digest(demoPdf())) return answer({ error: "This guided replay accepts only the provided sample PDF. Use Documents for real extraction." }, 422);
-      await importDemoDocument(c.env, db, kek, userId);
-      return answer(await demoSnapshot(db, kek, userId));
+      return answer(await snapshot(true));
     }
     if (request.method === "GET" && (route === "snapshot" || route === "fhir")) {
-      const snapshot = await demoSnapshot(db, kek, userId);
-      if (!snapshot) return answer({ error: "Return to the demo entry page and open the guided demo again." }, 409);
-      if (route === "snapshot") return answer(snapshot);
+      const found = await snapshot(route === "fhir" || url.searchParams.get("document") === "1");
+      if (!found) return answer({ error: "Return to the demo entry page and open the guided demo again." }, 409);
+      if (route === "snapshot") return answer(found);
       const type = url.searchParams.get("type") ?? "", query = url.searchParams.get("q")?.trim().toLowerCase() ?? "";
       if (query.length > 200 || type.length > 60) return answer({ error: "Search is too long." }, 400);
-      const resources = snapshot.records.filter((r) => (!type || r.resourceType === type) && (!query || JSON.stringify(r.resource).toLowerCase().includes(query)));
+      const resources = found.records.filter((r) => (!type || r.resourceType === type) && (!query || JSON.stringify(r.resource).toLowerCase().includes(query)));
       return answer({ resourceType: "Bundle", type: "searchset", total: resources.length, meta: { tag: [{ code: "demo-local-store", display: "Wild Hearts local FHIR search; not a Medplum server" }] }, entry: resources.map((r) => ({ fullUrl: `urn:uuid:${r.id}`, resource: r.resource })) });
     }
     return answer({ error: "Not found." }, 404);

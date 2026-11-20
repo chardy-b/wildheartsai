@@ -55,7 +55,7 @@ export function DemoWorkspace({ initial }: { initial: DemoSnapshot }) {
   async function runAction(action: "sync" | "reset") {
     setBusy(true); setError(""); setNotice("");
     try {
-      setSnapshot(await demoApi(action, { method: "POST" }));
+      setSnapshot(await demoApi(action === "sync" && imported ? "sync?document=1" : action, { method: "POST" }));
       if (action === "reset") { setChapter(0); setVisited([0]); setPrompt(null); setEvidence(null); setDocumentStage("idle"); setDocumentBytes(null); }
       setNotice(action === "sync" ? "Sample sync complete. All three fictional clinics are up to date. Repeated imports do not duplicate records." : "Fictional chart restored and tour restarted. Real accounts are unaffected.");
     } catch (e) { setError(e instanceof Error ? e.message : "Please try again."); }
@@ -86,7 +86,7 @@ export function DemoWorkspace({ initial }: { initial: DemoSnapshot }) {
   async function mapDocument() {
     if (!documentBytes) return;
     setBusy(true); setError("");
-    try { setSnapshot(await demoApi("document", { method: "POST", headers: { "Content-Type": "application/pdf" }, body: documentBytes })); setDocumentStage("saved"); setNotice("Two sample FHIR records saved. They are now searchable here and in the main app's record tools."); }
+    try { setSnapshot(await demoApi("document", { method: "POST", headers: { "Content-Type": "application/pdf" }, body: documentBytes })); setDocumentStage("saved"); setNotice("Two sample FHIR records mapped from the PDF. They're searchable here and in the main app's record tools."); }
     catch (e) { setError(e instanceof Error ? e.message : "Try again."); }
     finally { setBusy(false); }
   }

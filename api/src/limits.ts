@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Context, MiddlewareHandler } from "hono";
 import type { Bindings } from "./env";
 
-// Strict limits on what costs storage or compute: starting a guest demo, uploading files, and
+// Strict limits on what costs storage or compute: uploading files and
 // (with the chat port) asking questions. One `RateLimiter` object per key counts hits in a
 // sliding window; it keeps only timestamps, never content. Keys are a person's id or the
 // client's IP (`cf-connecting-ip`, which Cloudflare sets and the web Worker forwards as is).
@@ -10,14 +10,9 @@ import type { Bindings } from "./env";
 const MINUTE = 60_000, HOUR = 60 * MINUTE;
 
 export const LIMITS = {
-  // New guest demos from one network. A shared network (a class, a conference) fits a few.
-  guestDemoPerIp: { limit: 10, windowMs: HOUR },
   // Files started in Documents (each file of a folder is one). Pieces of a file aren't counted.
   uploadPerPerson: { limit: 100, windowMs: HOUR },
   uploadPerIp: { limit: 300, windowMs: HOUR },
-  // The demo's sample PDF, and its sync and reset (each writes the whole fictional chart).
-  demoWritePerPerson: { limit: 30, windowMs: HOUR },
-  demoWritePerIp: { limit: 120, windowMs: HOUR },
 } as const satisfies Record<string, { limit: number; windowMs: number }>;
 export type LimitName = keyof typeof LIMITS;
 

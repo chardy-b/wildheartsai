@@ -123,7 +123,6 @@ export const directBackend: Backend = {
   // Guest demos exist only on Cloudflare; Vercel keeps the signed-in demo until the cutover.
   guestDemoAvailable: () => false,
   openGuestDemo: () => Promise.reject(new Error("guest_demo_unavailable")),
-  endGuestDemo: async () => {},
   async documentFhir(userId, id, runId) {
     try {
       const data = await loadDocumentFhir(db, recordsKey(), userId, id, appUrl(), runId);

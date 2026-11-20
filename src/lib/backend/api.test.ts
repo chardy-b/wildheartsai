@@ -88,12 +88,12 @@ describe("apiBackend", () => {
     expect(await apiBackend.demoSnapshot("u")).toBeNull();
   });
 
-  it("starts guest demos through the API, reading a refusal as limited", async () => {
-    state.respond = () => json({ cookie: "demo_guest_x.y", expiresAt: "2026-11-21T00:00:00.000Z" }, 201);
-    expect(await apiBackend.openGuestDemo()).toEqual({ cookie: "demo_guest_x.y", expiresAt: new Date("2026-11-21T00:00:00.000Z") });
+  it("starts guest demo views through the API, and reads who is viewing the demo", async () => {
+    state.respond = () => json({ cookie: "made-up.1795000000000.sig", expiresAt: "2026-11-21T00:00:00.000Z" }, 201);
+    expect(await apiBackend.openGuestDemo()).toEqual({ cookie: "made-up.1795000000000.sig", expiresAt: new Date("2026-11-21T00:00:00.000Z") });
     expect([state.requests[0].method, new URL(state.requests[0].url).pathname]).toEqual(["POST", "/api/demo/guest"]);
-    state.respond = () => json({ error: "Too many demos were started from this network. Try again later." }, 429);
-    expect(await apiBackend.openGuestDemo()).toBe("limited");
+    state.respond = () => json({ user: { id: "wildhearts_demo_patient_v1", email: "e", name: "n", emailVerified: true }, session: { id: "demo_view_x", userId: "wildhearts_demo_patient_v1", expiresAt: "2026-11-21T00:00:00.000Z" }, demo: { viewer: "guest" } });
+    expect((await apiBackend.session(new Headers()))?.demo).toEqual({ viewer: "guest" });
   });
 
   it("fails loudly on other API errors", async () => {

@@ -6,7 +6,7 @@ import { userKeysFor } from "../data/user-keys";
 import { secrets } from "../env";
 import { recordsKey } from "../epic/credentials";
 import { clientIp, rateLimited } from "../limits";
-import { notGuest, requireUser, type AppEnv } from "../session";
+import { requireUser, type AppEnv } from "../session";
 
 // Documents (src/app/api/wildcards/* in the Next app): the same paths, checks and messages, which
 // the upload client (src/lib/wildcards-client.ts) shows to people. Files go to R2 through the FILES
@@ -77,10 +77,9 @@ documentRoutes.get("/wildcards/:id/info", requireUser("json"), async (c) => {
   return file ? c.json({ file }, 200, PRIVATE_HEADERS) : fileError("File not found.", 404);
 });
 
-// Starting a file: guests can't, and everyone else is limited per person and per network.
+// Starting a file is limited per person and per network (demo viewers can't: requireUser).
 // A large file's pieces belong to one start, so they aren't counted.
 const uploadAllowed = [
-  notGuest(() => fileError("Create a free account to upload your own documents. The demo uses a fictional sample.", 403)),
   rateLimited<AppEnv>((c) => [["uploadPerPerson", c.get("userId")], ["uploadPerIp", clientIp(c.req.raw.headers)]], "Too many uploads in the last hour. Try again later."),
 ] as const;
 

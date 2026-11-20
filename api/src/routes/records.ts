@@ -6,6 +6,7 @@ import { fhirRead } from "@/lib/fhir/client";
 import { encodeCursor, hasFilters, parseCursor, parseFilters } from "@/lib/timeline-filters";
 import { userKeysFor } from "../data/user-keys";
 import { auditStatement } from "../data/audit";
+import { isDemoIdentity } from "@/lib/demo/identity";
 import { getConnectionForSource } from "../data/connections";
 import { allMatching, allNotes, storedNoteText, timelinePage } from "../data/records";
 import type { UserScope } from "../data/scope";
@@ -96,7 +97,8 @@ recordsRoutes.get("/export", async (c) => {
   const keys = await userKeysFor(scope, recordsKey(secrets(c.env)), new Date());
   const items = await allMatching(scope, keys, sources, filters);
   const now = new Date();
-  await auditStatement(scope, { action: "export", detail: { records: items.length, filtered: hasFilters(filters) } }, now);
+  // Not for the shared demo chart: nothing a demo viewer does is stored.
+  if (!isDemoIdentity(scope.userId)) await auditStatement(scope, { action: "export", detail: { records: items.length, filtered: hasFilters(filters) } }, now);
   return new Response(JSON.stringify(exportBundle(items, sources, now), null, 2), {
     headers: {
       "Content-Type": "application/fhir+json; charset=utf-8",

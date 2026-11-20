@@ -52,7 +52,7 @@ async function sessionFromApi(path: string): Promise<AppSession | null> {
   if (response.status === 401) return null;
   if (!response.ok) throw new ApiError(response.status);
   const found = (await response.json()) as AppSession;
-  return { user: found.user, session: { ...found.session, expiresAt: new Date(found.session.expiresAt) } };
+  return { user: found.user, session: { ...found.session, expiresAt: new Date(found.session.expiresAt) }, ...(found.demo ? { demo: found.demo } : {}) };
 }
 
 const outcome = async (path: string, method = "POST", body?: unknown) => (await json<{ outcome: string }>(path, { method, body })).outcome;
@@ -135,14 +135,9 @@ export const apiBackend: Backend = {
   guestDemoAvailable: () => true,
   async openGuestDemo() {
     const response = await call("/api/demo/guest", { method: "POST" });
-    if (response.status === 429) return "limited";
     if (!response.ok) throw new ApiError(response.status);
     const { cookie, expiresAt } = (await response.json()) as { cookie: string; expiresAt: string };
     return { cookie, expiresAt: new Date(expiresAt) };
-  },
-  async endGuestDemo() {
-    const response = await call("/api/demo/guest", { method: "DELETE" });
-    if (!response.ok) throw new ApiError(response.status);
   },
   async demoSnapshot() {
     const response = await call("/api/demo/snapshot");

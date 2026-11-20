@@ -24,20 +24,18 @@ export async function leaveDemo() {
   redirect("/app");
 }
 
-// Anyone, without an account (where the backend offers it): a fictional chart of their own for a day.
+// Anyone, without an account (where the backend offers it): a day's view of the central demo chart.
 export async function enterGuestDemo() {
   const api = await backend();
   if (process.env.DEMO_ENABLED !== "1" || !api.guestDemoAvailable()) notFound();
   if (await getRealSession()) return enterDemo();
   const opened = await api.openGuestDemo();
-  if (opened === "limited") redirect("/demo?error=busy");
   (await cookies()).set(DEMO_GUEST_COOKIE, opened.cookie, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", expires: opened.expiresAt });
   redirect("/app/demo");
 }
 
-// Leaving a guest demo deletes its fictional chart now, rather than when the day is up.
+// Nothing was stored for the guest, so leaving only forgets the cookie.
 export async function leaveGuestDemo() {
-  await (await backend()).endGuestDemo().catch(() => undefined);
   (await cookies()).delete(DEMO_GUEST_COOKIE);
   redirect("/demo");
 }

@@ -18,7 +18,8 @@ authRoutes.get("/signup-settings", (c) => {
 // The signed-in person, for the web Worker's server components and actions (they forward the
 // browser's cookie). Doesn't renew the session: page renders can't set cookies, so the browser's
 // own /api/auth/get-session check renews it. Never returns the session token.
-// The demo workspace when the browser selected one; `?real=1` for the login itself.
+// The demo chart (with `demo`: who is viewing) when the browser is viewing the demo; `?real=1`
+// for the login itself.
 authRoutes.get("/session", async (c) => {
   const headers = c.req.raw.headers;
   const found = c.req.query("real") === "1" ? await realSession(c.env, headers) : await applicationSession(c.env, headers);
@@ -28,5 +29,6 @@ authRoutes.get("/session", async (c) => {
   return c.json({
     user: { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified, image: user.image ?? null, createdAt: user.createdAt },
     session: { id: session.id, userId: session.userId, expiresAt: session.expiresAt, createdAt: session.createdAt },
+    ...("demo" in found ? { demo: { viewer: found.demo.viewer } } : {}),
   });
 });

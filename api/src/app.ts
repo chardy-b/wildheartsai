@@ -8,10 +8,14 @@ import { extractionRoutes } from "./routes/extraction";
 import { epicRoutes } from "./routes/epic";
 import { profileRoutes } from "./routes/profile";
 import { recordsRoutes } from "./routes/records";
+import { demoReadOnly } from "./session";
 
 // Every route lives under /api, at the same paths the Next app serves today, so browsers, Epic
 // and the VPS services see no change. Requests arrive from the web Worker's service binding.
 export const app = new Hono<{ Bindings: Bindings }>().basePath("/api");
+
+// The shared demo chart is read-only for everyone viewing it (src/session.ts).
+app.use("*", demoReadOnly);
 
 // Unauthenticated liveness check: no bindings, no secrets, no dependencies.
 app.get("/health", (c) => c.json({ status: "ok", service: "wildheartsai" }, 200, { "Cache-Control": "no-store" }));
