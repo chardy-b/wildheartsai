@@ -2,6 +2,8 @@
 
 Phase 7 of `2026-10-30-cloudflare-migration.md`. This is the step-by-step version of its "Data migration" and "Cutover" sections. Steps marked **(owner)** need the owner's accounts (Cloudflare, Vercel, Neon, Epic, the DNS zone, the VPS). Everything else is commands from the repository root on an operator machine.
 
+Deployments in this runbook follow the team's release policy, `docs/cloudflare-release-runbook.md`. Under it, migrations come first, then the API, chat and web Workers in that order; a failed step stops the sequence; and the Neon → D1 cutover, DNS changes and production migrations each need their own approval.
+
 The rule throughout: **only Vercel and Neon take production writes until the DNS swap.** The copy runs while Vercel is read-only, so nothing written on Vercel is left behind.
 
 ## What's ready (November 20, 2026)
