@@ -99,7 +99,7 @@ The chat Worker holds `RECORDS_ENCRYPTION_KEY` (to open records and seal chat co
 Repeat the cross-tenant and revocation cases from "Verification required before rollout" against the chat Worker on workerd, with both D1 databases, the RPC and the conversation objects. Add:
 
 - **Durability:** abort the object mid-run (between a tool result and the next model call, and during a model call), then see the alarm resume from the checkpoint. A completed tool call isn't repeated, and the answer arrives once.
-- **The fence:** sign out during a run and see the next step refused; the same when a demo workspace's parent login ends, and when a guest demo expires.
+- **The fence:** sign out during a run and see the next step refused; the same for a signed-in demo viewer's login, and when a guest's viewer cookie expires.
 - **The RPC:** the method-list test; user A's id never returns user B's rows; no answer carries `session.token` or any column of `account`, `verification`, `epic_connection` or `profile`.
 - **Limits:** questions past each limit are refused with 429 before anything is recorded or any model is called.
 - **Configuration:** the chat Worker's configuration binds no main database and no R2 (checked from `wrangler.chat.jsonc` in CI).
