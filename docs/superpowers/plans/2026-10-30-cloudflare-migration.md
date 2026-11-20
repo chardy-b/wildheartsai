@@ -16,7 +16,7 @@
 Everything in the roadmap's Security rules and in `AGENTS.md` still applies. This plan does not change what we may claim: no HIPAA, Epic-approval or clinical-accuracy claims.
 
 
-> **Long-term direction (November 20, 2026):** Medplum, self-hosted on our own VPS with Postgres, becomes the source of truth for clinical data (FHIR resources); our API on Cloudflare stays the backend for everything else. Moving to Cloudflare first still stands; the D1 records tables are the part Medplum later replaces. See `specs/2026-11-20-medplum-backend-analysis.md`, "Decisions and answers".
+> **Long-term direction (November 20, 2026):** Medplum, self-hosted on our own VPS with Postgres, becomes the source of truth for clinical data (FHIR resources); our API on Cloudflare stays the backend for everything else. Wild Hearts admins get Medplum's admin app and tools; patients don't. Moving to Cloudflare first still stands; the D1 records tables are the part Medplum later replaces. See `specs/2026-11-20-medplum-backend-analysis.md`, "Decisions and answers".
 ## Global constraints
 
 - Health data is written only through the per-user sealing helpers (`src/lib/crypto/user-keys.ts`, ported as they are). Sealed values move between databases as opaque bytes; no key is unwrapped during migration.
@@ -312,7 +312,9 @@ Done in that order, one commit each.
 - [ ] The shared demo login (`scripts/seed-demo.ts`, `src/lib/demo/provision.ts`) isn't ported; its rows move with the data migration if production has one
 - [x] Chat design decided ("Cloudflare topology" in `specs/2026-10-07-web-owned-chat-security-boundary.md`): one Durable Object per conversation running Pi durable (1.5.2). Checked on workerd that a run killed mid-model-call resumes from its checkpoint without repeating its tool call
 - [x] Chat limits decided: 30 questions an hour signed in, 10 for a guest, 5 a minute for anyone
-- [ ] Chat: the `ChatRecords` RPC on the API; the `wildhearts-chat` Worker with `CHAT_DB` (index and summaries) and the `ChatConversation` object (storage, Pi from alarms with checkpoints, tools, events, cancel); question limits; the inference relay credential on the VPS; the verification list in the spec
+- [x] Chat (November 20). The `ChatRecords` RPC on the API answers the record tools there, with read receipts. The `wildhearts-chat` Worker (`api/src/chat/`) serves the browser's chat API at the same paths, with `CHAT_DB` for conversation lists, the run index and summaries. Each conversation is a `ChatConversation` Durable Object running Pi durable 1.5.2 from its alarm. The VPS gains an edge mode in `services/chat` (inference and research behind `CHAT_EDGE_TOKEN`). The web Worker routes `/api/chat/*` to the chat Worker. Question limits as decided. Tested on workerd against a scripted model: answers, events and sources; one run at a time; isolation; the session fence; resume after a killed object without repeating a tool; cancel; limits; demo guests and the expiry sweep. Also tested in the local browser walkthrough, against the edge service and a made-up model
+- [ ] Deploy the edge service on the VPS (`CHAT_SERVICE_MODE=edge`, behind a Cloudflare Tunnel or an HTTPS address only the chat Worker uses), set `CHAT_EDGE_TOKEN` on the chat Worker and its hash on the VPS, then `CHAT_ENABLED=1` on the chat and web Workers
+- [ ] Retire the VPS coordinator, private gateway and Iggy workers once chat runs on Cloudflare (they serve only Vercel's chat until the cutover)
 
 ### Phases 7–8
 

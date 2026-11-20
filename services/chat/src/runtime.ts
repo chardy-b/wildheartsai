@@ -13,6 +13,18 @@ export function createCoordinatorRuntime(env: Environment = process.env) {
 }
 
 export function createGatewayRuntime(env: Environment = process.env) {
+  const researchRoot = env.CHAT_RESEARCH_CORPUS_ROOT?.trim();
+  const researchToken = env.CHAT_RESEARCH_GATEWAY_TOKEN?.trim();
+  if (researchToken && !/^[A-Za-z0-9_-]{43}$/.test(researchToken)) throw new Error("invalid_chat_research_gateway_token");
+  return {
+    api: new ChatWebApi({ baseUrl: requiredUrl(env, "CHAT_WEB_API_URL") }),
+    ...inferenceConfig(env),
+    ...(researchRoot && researchToken ? { researchCorpus: new ResearchCorpus({ root: researchRoot }), researchGatewayToken: researchToken } : {}),
+  };
+}
+
+// The model the relay forwards to, shared by the gateway and edge modes.
+function inferenceConfig(env: Environment) {
   const inferenceUrl = requiredUrl(env, "CHAT_INFERENCE_URL");
   if (!/^https?:$/.test(inferenceUrl.protocol) || inferenceUrl.username || inferenceUrl.password || inferenceUrl.search || inferenceUrl.hash) throw new Error("invalid_chat_inference_url");
   inferenceUrl.pathname = `${inferenceUrl.pathname.replace(/\/$/, "")}/`;
@@ -21,25 +33,19 @@ export function createGatewayRuntime(env: Environment = process.env) {
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 8192) throw new Error("invalid_chat_inference_max_tokens");
   const fallbackModelIds = parseFallbackModels(env.CHAT_INFERENCE_FALLBACK_MODELS, modelId);
   const attemptTimeoutMs = parseAttemptTimeout(env.CHAT_INFERENCE_ATTEMPT_TIMEOUT_MS);
-  const researchRoot = env.CHAT_RESEARCH_CORPUS_ROOT?.trim();
-  const researchToken = env.CHAT_RESEARCH_GATEWAY_TOKEN?.trim();
-  if (researchToken && !/^[A-Za-z0-9_-]{43}$/.test(researchToken)) throw new Error("invalid_chat_research_gateway_token");
   return {
-    api: new ChatWebApi({ baseUrl: requiredUrl(env, "CHAT_WEB_API_URL") }),
     inferenceUrl,
     modelId,
     apiKey: env.CHAT_INFERENCE_API_KEY || undefined,
     maxTokens,
     ...(fallbackModelIds ? { fallbackModelIds, attemptTimeoutMs } : {}),
-    ...(researchRoot && researchToken ? { researchCorpus: new ResearchCorpus({ root: researchRoot }), researchGatewayToken: researchToken } : {}),
   };
 }
 
 // The edge service (CHAT_SERVICE_MODE=edge) for chat on Cloudflare: the inference relay and the
 // research corpus, behind the chat Worker's token. Only the token's SHA-256 is configured here.
 export function createEdgeRuntime(env: Environment = process.env) {
-  const gateway = { ...env, CHAT_WEB_API_URL: env.CHAT_WEB_API_URL ?? "http://unused.invalid" };
-  const { inferenceUrl, modelId, apiKey, maxTokens, ...rest } = createGatewayRuntime(gateway);
+  const { inferenceUrl, modelId, apiKey, maxTokens, ...rest } = inferenceConfig(env);
   const tokenHash = required(env, "CHAT_EDGE_TOKEN_HASH");
   if (!/^[a-f0-9]{64}$/.test(tokenHash)) throw new Error("invalid_chat_edge_token_hash");
   const researchRoot = env.CHAT_RESEARCH_CORPUS_ROOT?.trim();

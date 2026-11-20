@@ -48,4 +48,14 @@ npm run cf:migrate:local   # the API's D1 schema, in the shared local state
 npm run cf:preview         # both Workers on http://localhost:8787
 ```
 
-Put local secrets in `api/.dev.vars` (from `.dev.vars.example`), with `BETTER_AUTH_URL` and `EPIC_REDIRECT_URI` on `http://localhost:8787`. `node scripts/qa-cloudflare-walkthrough.mjs <log>` then walks through sign-up, onboarding, records, refresh, delete, export, Documents and the guided demo in a browser; see the script's header.
+Put local secrets in `api/.dev.vars` (from `.dev.vars.example`), with `BETTER_AUTH_URL` and `EPIC_REDIRECT_URI` on `http://localhost:8787`. `node scripts/qa-cloudflare-walkthrough.mjs <log>` then walks through sign-up, onboarding, records, refresh, delete, export, Documents, the guided demo and (when the edge service runs) live chat in a browser; see the script's header.
+
+### Chat
+
+`cf:preview` also runs the chat Worker (`wrangler.chat.jsonc`, `src/chat/`): one `ChatConversation` Durable Object per conversation running Pi durable, `CHAT_DB` for lists and summaries, and records only through this Worker's `ChatRecords` entrypoint. For answers it needs the VPS edge service on `http://127.0.0.1:8090` (its local `CHAT_EDGE_URL`) and a model behind it. Set `CHAT_EDGE_TOKEN` in `api/.dev.vars`, then from `services/chat`:
+
+```bash
+CHAT_SERVICE_MODE=edge CHAT_EDGE_TOKEN_HASH=<sha256 of the token> CHAT_INFERENCE_URL=<OpenAI-compatible base URL>/ CHAT_INFERENCE_MODEL=local-model PORT=8090 npx tsx src/index.ts
+```
+
+Chat's tests (`npm test`, project `chat`) run the chat Worker and the API's chat-facing classes in one workerd (`test/chat/wrangler.test.jsonc`) against a scripted model (`test/chat/fake-edge.ts`).

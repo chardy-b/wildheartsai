@@ -146,6 +146,22 @@ const step = (name) => console.log(`✓ ${name}`);
   await visitor.goto(`${BASE}/app?view=records`);
   await visitor.waitForSelector("text=fictional demo");
   step("guest: the record timeline shows the fictional chart");
+  // Live chat about the demo chart (needs the chat Worker's edge service; see api/README.md).
+  const chatState = await visitor.request.get(`${BASE}/api/chat/v1/conversations`, { headers: { "x-wildhearts-workspace": "demo" } });
+  if (chatState.status() === 200) {
+    await visitor.goto(`${BASE}/app/chat`);
+    await visitor.fill("#chat-message", "What did the biopsies show?");
+    await visitor.click("button[aria-label='Send message']");
+    await visitor.waitForSelector(".chat-message-assistant:not(.chat-partial)", { timeout: 60_000 });
+    const answer = (await visitor.textContent(".chat-message-assistant:not(.chat-partial)")).replace(/\s+/g, " ").trim();
+    const reply = answer.match(/Two biopsy results.*?\)/)?.[0];
+    if (!reply) throw new Error(`no answer in the chat: ${answer.slice(0, 200)}`);
+    step(`guest: asked the demo chart in live chat (Pi durable in a Durable Object): "${reply}"`);
+    // The chat page's header covers the demo banner; leave from the story page.
+    await visitor.goto(`${BASE}/app/demo`);
+  } else {
+    step(`guest: live chat skipped (chat API answered ${chatState.status()})`);
+  }
   await visitor.click("button:has-text('Leave demo')");
   await visitor.waitForURL(`${BASE}/demo`);
   const after = await visitor.request.get(`${BASE}/api/session`);

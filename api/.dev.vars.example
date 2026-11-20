@@ -15,3 +15,6 @@ EPIC_PRIVATE_JWK=
 TOKEN_ENCRYPTION_KEY=
 RECORDS_ENCRYPTION_KEY=
 METRIPORT_API_KEY=
+# Chat Worker (api/wrangler.chat.jsonc): the token the VPS edge service accepts (services/chat,
+# CHAT_SERVICE_MODE=edge, configured with its SHA-256 as CHAT_EDGE_TOKEN_HASH). Made-up locally.
+CHAT_EDGE_TOKEN=

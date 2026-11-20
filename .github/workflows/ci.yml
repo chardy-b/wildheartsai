@@ -24,6 +24,32 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # The VPS chat service (services/chat): the edge service chat on Cloudflare uses, and the
+  # coordinator and gateway Vercel's chat uses until the cutover.
+  chat-service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/chat
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/chat/package-lock.json
+      # Shared modules come from the root src/, which resolves its packages from the root install.
+      - run: npm ci --no-audit --no-fund
+        working-directory: .
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+
   # The Cloudflare API Worker (api/): its own install, typecheck and tests in workerd.
   api:
     runs-on: ubuntu-latest

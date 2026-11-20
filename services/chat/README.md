@@ -6,6 +6,15 @@ The coordinator sends an idempotent claim request to `CHAT_WEB_API_URL`, then gi
 
 The fixed gateway forwards worker context, cancellation, tool, and event requests to the web API. It accepts only an execution grant. Before forwarding inference it checks cancellation; while a stream is open it polls the web API every second and aborts if the run is cancelled or the authority cannot be reached. The inference URL and model come only from gateway configuration. Requests override model selection and cap `max_tokens`; upstream response bytes and request bodies are bounded. Prompts, answers, tokens, and provider errors are never written to logs.
 
+## Edge mode (chat on Cloudflare)
+
+On Cloudflare, each conversation's Durable Object runs the Pi agent itself (`api/src/chat/`), so the VPS keeps only what needs it: model inference and the offline research corpus. `CHAT_SERVICE_MODE=edge` serves just those (`src/edge.ts`):
+
+- `POST /v1/inference/chat/completions`: relayed to the configured model only (the request's `model` is ignored), with `max_tokens` capped and the fallback models tried before any output is sent.
+- `POST /v1/research/search` and `/v1/research/read`: the corpus, as the gateway serves it to workers.
+
+It needs `CHAT_EDGE_TOKEN_HASH` (the SHA-256, in hex, of the token the chat Worker holds as `CHAT_EDGE_TOKEN`), `CHAT_INFERENCE_URL` and `CHAT_INFERENCE_MODEL`, the same optional inference settings as the gateway, and optionally `CHAT_RESEARCH_CORPUS_ROOT`. `PORT` defaults to 8090. Expose it only to the chat Worker, through a Cloudflare Tunnel or an HTTPS address. It holds no database credentials, record key or grants, and logs no prompts or answers. The coordinator, gateway and Iggy workers below serve Vercel's chat until the cutover.
+
 ## Configure
 
 Provide the coordinator and gateway with separate environment sets. The coordinator needs `CHAT_WEB_API_URL`, `CHAT_COORDINATOR_TOKEN`, `CHAT_WORKER_ID`, `IGGY_URL`, and `IGGY_BEARER_TOKEN`. The gateway needs `CHAT_WEB_API_URL`, `CHAT_INFERENCE_URL`, and `CHAT_INFERENCE_MODEL`; optionally set `CHAT_INFERENCE_MAX_TOKENS`, `CHAT_INFERENCE_API_KEY`, `CHAT_INFERENCE_FALLBACK_MODELS`, and `CHAT_INFERENCE_ATTEMPT_TIMEOUT_MS`. Do not put coordinator credentials in the gateway environment or execution grants in coordinator configuration. The URL prefix is fixed to `/api/chat/worker/v1`; it is not accepted from request bodies.

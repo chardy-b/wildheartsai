@@ -13,7 +13,7 @@ Question: use open-source Medplum for the records backend and FHIR search? Is it
 
 ## Decisions and answers (November 20, later)
 
-Owner decisions: long term, **Medplum on our own VPS is the main backend**, on Postgres. Per-person encryption **isn't a requirement** for now. **Move to Cloudflare first.**
+Owner decisions: long term, **Medplum on our own VPS is the main backend**, on Postgres. Per-person encryption **isn't a requirement** for now. **Move to Cloudflare first.** **Medplum's admin interface and tools are for Wild Hearts admins** (its admin app, Bots, Subscriptions, `$export`): served only to admin accounts. A sketch: the admin app on its own hostname behind Cloudflare Access (or the Tunnel), signing in to a Medplum project membership with an admin AccessPolicy; patients never get a Medplum login, and reach their data only through our API.
 
 ### Is moving to Cloudflare first still worth it?
 

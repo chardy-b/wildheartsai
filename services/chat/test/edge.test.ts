@@ -61,3 +61,12 @@ describe("edge service", () => {
     expect((await without("/v1/research/search", { query: "heart" })).status).toBe(503);
   });
 });
+
+describe("edge runtime", () => {
+  it("needs only the token hash and the model, not the old web API settings", async () => {
+    const { createEdgeRuntime } = await import("../src/runtime.js");
+    const runtime = createEdgeRuntime({ CHAT_EDGE_TOKEN_HASH: "a".repeat(64), CHAT_INFERENCE_URL: "http://127.0.0.1:9913/v1/", CHAT_INFERENCE_MODEL: "local-model" });
+    expect(runtime).toMatchObject({ tokenHash: "a".repeat(64), modelIds: ["local-model"] });
+    expect(() => createEdgeRuntime({ CHAT_EDGE_TOKEN_HASH: "not-a-hash", CHAT_INFERENCE_URL: "http://127.0.0.1:9913/v1/", CHAT_INFERENCE_MODEL: "local-model" })).toThrow("invalid_chat_edge_token_hash");
+  });
+});
