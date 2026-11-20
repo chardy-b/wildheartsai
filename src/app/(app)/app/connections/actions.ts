@@ -1,5 +1,6 @@
 "use server";
 
+import { assertWritable } from "@/lib/read-only";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
@@ -14,6 +15,7 @@ import { requestSyncFor } from "@/lib/sync/server";
 
 // Removes the tokens. Records already imported stay until the person deletes them.
 export async function disconnectAction(formData: FormData): Promise<void> {
+  assertWritable();
   const session = await requireSession();
   const userId = session.user.id;
   const connectionId = String(formData.get("connectionId") ?? "");
@@ -25,6 +27,7 @@ export async function disconnectAction(formData: FormData): Promise<void> {
 }
 
 export async function refreshAction(formData: FormData): Promise<void> {
+  assertWritable();
   const session = await requireSession();
   let outcome: string;
   try {
@@ -39,6 +42,7 @@ export async function refreshAction(formData: FormData): Promise<void> {
 
 // Checks every connected organization for new records.
 export async function refreshAllAction(): Promise<void> {
+  assertWritable();
   const session = await requireSession();
   const sources = (await asUser(db, session.user.id, (tx) => listSources(tx, session.user.id))).filter((s) => s.status === "connected");
   const outcomes = await Promise.all(
@@ -57,6 +61,7 @@ export async function refreshAllAction(): Promise<void> {
 
 // Deletes the organization and everything stored from it: records, sync history and tokens.
 export async function deleteSourceAction(formData: FormData): Promise<void> {
+  assertWritable();
   const session = await requireSession();
   const userId = session.user.id;
   await asUser(db, userId, (tx) => deleteSource(tx, userId, String(formData.get("sourceId") ?? "")));
@@ -66,6 +71,7 @@ export async function deleteSourceAction(formData: FormData): Promise<void> {
 
 // Connects one of Metriport's sample patients: no sign-in, so it goes straight to importing.
 export async function connectMetriportSandboxAction(formData: FormData): Promise<void> {
+  assertWritable();
   const session = await requireSession();
   const persona = personaById(String(formData.get("persona") ?? ""));
   if (!persona || !metriportEnabled()) redirect("/app/connections?error=unavailable");
