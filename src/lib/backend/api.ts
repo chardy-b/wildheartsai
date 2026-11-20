@@ -132,6 +132,18 @@ export const apiBackend: Backend = {
   async openDemoWorkspace() {
     await json("/api/demo/workspace", { method: "POST" });
   },
+  guestDemoAvailable: () => true,
+  async openGuestDemo() {
+    const response = await call("/api/demo/guest", { method: "POST" });
+    if (response.status === 429) return "limited";
+    if (!response.ok) throw new ApiError(response.status);
+    const { cookie, expiresAt } = (await response.json()) as { cookie: string; expiresAt: string };
+    return { cookie, expiresAt: new Date(expiresAt) };
+  },
+  async endGuestDemo() {
+    const response = await call("/api/demo/guest", { method: "DELETE" });
+    if (!response.ok) throw new ApiError(response.status);
+  },
   async demoSnapshot() {
     const response = await call("/api/demo/snapshot");
     if (response.status === 409) return null;

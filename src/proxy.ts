@@ -1,12 +1,14 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextResponse, type NextRequest } from "next/server";
 import { contentSecurityPolicy, createNonce } from "@/lib/csp";
+import { DEMO_GUEST_COOKIE } from "@/lib/demo/cookies";
 
 export function proxy(request: NextRequest) {
-  // Optimistic check only: it keeps signed-out visitors away from /app quickly.
+  // Optimistic check only: it keeps signed-out visitors away from /app quickly (a guest demo's
+  // cookie counts: the API decides whether it's still valid).
   // The real session check happens in src/app/(app)/app/layout.tsx.
   const { pathname } = request.nextUrl;
-  if ((pathname === "/app" || pathname.startsWith("/app/")) && !getSessionCookie(request)) {
+  if ((pathname === "/app" || pathname.startsWith("/app/")) && !getSessionCookie(request) && !request.cookies.has(DEMO_GUEST_COOKIE)) {
     return NextResponse.redirect(new URL("/sign-in", request.url));
   }
 

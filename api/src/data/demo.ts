@@ -1,7 +1,7 @@
-import { randomBytes, createHash } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { and, eq, gt, isNull, like, notExists } from "drizzle-orm";
 import { DEMO_NAME, DEMO_SOURCES, buildDemoScenario, demoDocumentEntries, type DemoEntry } from "@/lib/demo/scenario";
-import { demoUserId, isDemoIdentity } from "@/lib/demo/identity";
+import { DEMO_GUEST_PREFIX, demoUserId, isDemoIdentity, isGuestDemoIdentity } from "@/lib/demo/identity";
 import { describeResource } from "@/lib/fhir/describe";
 import { CONSENT_VERSION } from "@/lib/onboarding";
 import { diffResources } from "@/lib/sync/diff";
@@ -167,4 +167,57 @@ export async function selectedDemoSession(db: Db, identity: ParentIdentity) {
     await sys.update(session).set({ expiresAt: parent.expiresAt, updatedAt: now }).where(eq(session.id, selected.id));
   }
   return { user: demoUser, session: { ...selected, expiresAt: parent.expiresAt } };
+}
+
+// Guests: anyone without an account can open the demo. Each visitor gets a fictional workspace
+// of their own for a day, reached by its own cookie (`<session id>.<token>`). The session row
+// stores only the token's SHA-256, so a database read can't be replayed as a cookie, and the
+// row can't serve as a Better Auth login (that cookie is signed with the auth secret).
+export const GUEST_TTL_MS = 24 * 60 * 60 * 1000;
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+
+export async function createGuestDemo(env: Bindings, db: Db, kek: Buffer, now = new Date()) {
+  const hex = randomBytes(32).toString("hex");
+  const userId = `${DEMO_GUEST_PREFIX}${hex}`;
+  const sessionId = `demo_guest_${randomBytes(16).toString("hex")}`;
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(now.getTime() + GUEST_TTL_MS);
+  const sys = system(db);
+  await sys.batch([
+    sys.insert(user).values({ id: userId, name: `${DEMO_NAME} (fictional demo)`, email: `${hex}@guest.demo.invalid`, emailVerified: true, createdAt: now, updatedAt: now }),
+    forUser(db, userId).insert(profile, { userId, preferredName: "Alex (demo)", consentVersion: CONSENT_VERSION, consentedAt: now, onboardedAt: now }),
+    sys.insert(session).values({ id: sessionId, userId, token: sha256(token), expiresAt, createdAt: now, updatedAt: now }),
+  ]);
+  await populateDemo(env, db, kek, userId, { now });
+  return { cookie: `${sessionId}.${token}`, expiresAt };
+}
+
+// The guest behind a cookie, or null: unknown, expired, tampered, or not a guest's session.
+export async function guestDemoSession(db: Db, cookie: string | undefined, now = new Date()) {
+  const match = /^(demo_guest_[a-f0-9]{32})\.([A-Za-z0-9_-]{43})$/.exec(cookie ?? "");
+  if (!match) return null;
+  const sys = system(db);
+  const [found] = await sys.select().from(session).innerJoin(user, eq(user.id, session.userId))
+    .where(and(eq(session.id, match[1]), isNull(session.parentSessionId), gt(session.expiresAt, now)));
+  if (!found || !isGuestDemoIdentity(found.user.id)) return null;
+  const expected = Buffer.from(found.session.token, "hex"), given = createHash("sha256").update(match[2]).digest();
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+  return { user: found.user, session: found.session };
+}
+
+// Leaving, or the hourly sweep: deleting the guest deletes its whole fictional chart (cascade).
+export async function endGuestDemo(db: Db, cookie: string | undefined): Promise<boolean> {
+  const found = await guestDemoSession(db, cookie);
+  if (!found) return false;
+  await system(db).delete(user).where(eq(user.id, found.user.id));
+  return true;
+}
+
+export async function deleteExpiredGuests(db: Db, now = new Date()): Promise<number> {
+  const sys = system(db);
+  const gone = await sys.delete(user).where(and(
+    like(user.id, `${DEMO_GUEST_PREFIX}%`),
+    notExists(sys.select({ id: session.id }).from(session).where(and(eq(session.userId, user.id), gt(session.expiresAt, now)))),
+  )).returning({ id: user.id });
+  return gone.length;
 }

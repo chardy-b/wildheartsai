@@ -18,12 +18,12 @@
   "env": {
     "preview": {
       "name": "wildhearts-web-preview",
-      "vars": { "WILDHEARTS_BACKEND": "api" },
+      "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1" },
       "services": [{ "binding": "API", "service": "wildhearts-api-preview" }]
     },
     "production": {
       "name": "wildhearts-web-production",
-      "vars": { "WILDHEARTS_BACKEND": "api" },
+      "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1" },
       "services": [{ "binding": "API", "service": "wildhearts-api-production" }]
     }
   }

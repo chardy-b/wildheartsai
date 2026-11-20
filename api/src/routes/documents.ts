@@ -5,7 +5,8 @@ import { fileObjects } from "../data/file-objects";
 import { userKeysFor } from "../data/user-keys";
 import { secrets } from "../env";
 import { recordsKey } from "../epic/credentials";
-import { requireUser, type AppEnv } from "../session";
+import { clientIp, rateLimited } from "../limits";
+import { notGuest, requireUser, type AppEnv } from "../session";
 
 // Documents (src/app/api/wildcards/* in the Next app): the same paths, checks and messages, which
 // the upload client (src/lib/wildcards-client.ts) shows to people. Files go to R2 through the FILES
@@ -76,7 +77,14 @@ documentRoutes.get("/wildcards/:id/info", requireUser("json"), async (c) => {
   return file ? c.json({ file }, 200, PRIVATE_HEADERS) : fileError("File not found.", 404);
 });
 
-documentRoutes.post("/wildcards", fromApp("Upload must come from this app."), requireUser({ message: "Sign in to upload files." }), async (c) => {
+// Starting a file: guests can't, and everyone else is limited per person and per network.
+// A large file's pieces belong to one start, so they aren't counted.
+const uploadAllowed = [
+  notGuest(() => fileError("Create a free account to upload your own documents. The demo uses a fictional sample.", 403)),
+  rateLimited<AppEnv>((c) => [["uploadPerPerson", c.get("userId")], ["uploadPerIp", clientIp(c.req.raw.headers)]], "Too many uploads in the last hour. Try again later."),
+] as const;
+
+documentRoutes.post("/wildcards", fromApp("Upload must come from this app."), requireUser({ message: "Sign in to upload files." }), ...uploadAllowed, async (c) => {
   if (c.req.header("content-type") !== "application/octet-stream") return fileError("Unsupported upload request.", 415);
   try {
     let name: string;
@@ -94,7 +102,7 @@ documentRoutes.post("/wildcards", fromApp("Upload must come from this app."), re
   }
 });
 
-documentRoutes.post("/wildcards/uploads", fromApp("Uploads must come from Documents in this app."), requireUser({ message: "Your session has expired. Sign in again, then upload your file." }), async (c) => {
+documentRoutes.post("/wildcards/uploads", fromApp("Uploads must come from Documents in this app."), requireUser({ message: "Your session has expired. Sign in again, then upload your file." }), ...uploadAllowed, async (c) => {
   try {
     if (c.req.header("content-type") !== "application/json") throw new FileInputError("Invalid upload request.");
     const bytes = await readUpload(c.req.raw);

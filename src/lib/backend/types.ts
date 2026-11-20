@@ -67,6 +67,11 @@ export type Backend = {
   // The guided demo: open (or reopen) the real login's workspace, and the workspace's chart.
   openDemoWorkspace(identity: AppSession): Promise<void>;
   demoSnapshot(userId: string): Promise<DemoSnapshot | null>;
+  // Visitors without an account (Cloudflare only): start a guest demo, answering the cookie to set,
+  // or "limited" when this network started too many; and end one, deleting its fictional chart.
+  guestDemoAvailable(): boolean;
+  openGuestDemo(): Promise<{ cookie: string; expiresAt: Date } | "limited">;
+  endGuestDemo(): Promise<void>;
   // A document as FHIR resources; `error` when its extraction can't be shown, null when missing.
   documentFhir(userId: string, id: string, runId?: string): Promise<{ data: DocumentFhirView } | { error: string } | null>;
 };

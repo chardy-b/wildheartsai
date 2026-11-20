@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { isDemoIdentity } from "@/lib/demo/identity";
 import { demoPdf } from "@/lib/demo/pdf";
-import { demoSnapshot, ensureDemoWorkspace, importDemoDocument, populateDemo } from "../data/demo";
+import { createGuestDemo, demoSnapshot, endGuestDemo, ensureDemoWorkspace, importDemoDocument, populateDemo } from "../data/demo";
 import { database } from "../db";
 import { secrets } from "../env";
 import { recordsKey } from "../epic/credentials";
-import { applicationSession, realSession, type AppEnv } from "../session";
+import { DEMO_GUEST_COOKIE } from "@/lib/demo/identity";
+import { allow, clientIp, tooMany } from "../limits";
+import { applicationSession, cookieValue, realSession, type AppEnv } from "../session";
 
 // The guided demo (src/lib/demo/http.ts and src/app/(auth)/demo/actions.ts in the Next app).
 export const demoRoutes = new Hono<AppEnv>();
@@ -18,7 +20,6 @@ const digest = (input: Uint8Array) => createHash("sha256").update(input).digest(
 // Opens (or reopens) the signed-in person's own workspace. The web Worker's demo entry action
 // calls this, then sets the cookie that selects the workspace for this login.
 demoRoutes.post("/demo/workspace", async (c) => {
-  if (secrets(c.env).DEMO_ENABLED !== "1") return answer({ error: "Not found." }, 404);
   const identity = await realSession(c.env, c.req.raw.headers);
   if (!identity?.user.emailVerified) return answer({ error: "Sign in with your Wild Hearts account to open the demo." }, 401);
   if (isDemoIdentity(identity.user.id)) return answer({ ok: true });
@@ -31,16 +32,41 @@ demoRoutes.post("/demo/workspace", async (c) => {
   return answer({ ok: true });
 });
 
+// A visitor without an account: a fictional workspace of their own for a day. Answers the cookie
+// value; the web Worker's entry action sets it (httpOnly). Strictly limited per network.
+demoRoutes.post("/demo/guest", async (c) => {
+  if (await realSession(c.env, c.req.raw.headers)) return answer({ error: "You're signed in. Open the demo from your account." }, 409);
+  const limited = await allow(c.env, [["guestDemoPerIp", clientIp(c.req.raw.headers)]]);
+  if (!limited.ok) return tooMany(limited.retryAfterSeconds, "Too many demos were started from this network. Try again later.");
+  try {
+    const { cookie, expiresAt } = await createGuestDemo(c.env, database(c.env.DB), recordsKey(secrets(c.env)));
+    return answer({ cookie, expiresAt }, 201);
+  } catch (error) {
+    console.error("[demo] guest failed", error instanceof Error ? error.name : "unknown");
+    return answer({ error: "The demo could not open. Please try again." }, 500);
+  }
+});
+
+// Leaving the guest demo deletes its fictional chart now rather than at expiry.
+demoRoutes.delete("/demo/guest", async (c) => {
+  await endGuestDemo(database(c.env.DB), cookieValue(c.req.raw.headers, DEMO_GUEST_COOKIE));
+  return c.body(null, 204, PRIVATE);
+});
+
 demoRoutes.on(["GET", "POST"], "/demo/*", async (c) => {
   const request = c.req.raw;
   const identity = await applicationSession(c.env, request.headers);
-  if (!identity || !identity.user.emailVerified) return answer({ error: "Sign in with your Wild Hearts account to open the demo." }, 401);
+  if (!identity || !identity.user.emailVerified) return answer({ error: "Open the demo again from the demo page." }, 401);
   const config = secrets(c.env);
-  if (config.DEMO_ENABLED !== "1" || !isDemoIdentity(identity.user.id)) return answer({ error: "Not found." }, 404);
+  if (!isDemoIdentity(identity.user.id)) return answer({ error: "Not found." }, 404);
   const url = new URL(request.url);
   const route = url.pathname.replace(/^\/api\/demo\//, "");
   if (request.method !== "GET" && (request.headers.get("origin") !== url.origin || request.headers.get("sec-fetch-site") === "cross-site")) return answer({ error: "Request not allowed." }, 403);
   const db = database(c.env.DB), kek = recordsKey(config), userId = identity.user.id;
+  if (request.method === "POST") {
+    const limited = await allow(c.env, [["demoWritePerPerson", userId], ["demoWritePerIp", clientIp(request.headers)]]);
+    if (!limited.ok) return tooMany(limited.retryAfterSeconds, "The demo has been reset or reloaded many times. Try again later.");
+  }
   try {
     if (request.method === "GET" && route === "sample.pdf") {
       return new Response(new Uint8Array(demoPdf()), { headers: { ...PRIVATE, "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="alex-morgan-demo-report.pdf"' } });

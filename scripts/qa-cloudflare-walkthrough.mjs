@@ -135,6 +135,22 @@ const step = (name) => console.log(`✓ ${name}`);
   const back = await (await page.request.get(`${BASE}/api/session`)).json();
   step(`left the demo: back to the real account (${back.user.id === body.user.id})`);
 
+  // A visitor without an account: the public guest demo, in a fresh browser context.
+  const visitor = await (await browser.newContext()).newPage();
+  visitor.on("pageerror", (e) => problems.push(`guest pageerror: ${e.message.slice(0, 200)}`));
+  await visitor.goto(`${BASE}/demo`);
+  await visitor.click("button:has-text('Open guided demo')");
+  await visitor.waitForURL(`${BASE}/app/demo`);
+  await visitor.waitForSelector("text=43 stored records");
+  step("guest: opened the demo without an account, 43 fictional records");
+  await visitor.goto(`${BASE}/app?view=records`);
+  await visitor.waitForSelector("text=fictional demo");
+  step("guest: the record timeline shows the fictional chart");
+  await visitor.click("button:has-text('Leave demo')");
+  await visitor.waitForURL(`${BASE}/demo`);
+  const after = await visitor.request.get(`${BASE}/api/session`);
+  step(`guest: left the demo, chart deleted (session now ${after.status()})`);
+
   console.log(problems.length ? `problems:\n${problems.join("\n")}` : "no console or page errors");
   await browser.close();
 })().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });

@@ -43,16 +43,17 @@ Everything in the roadmap's Security rules and in `AGENTS.md` still applies. Thi
      │      │      │
     D1     R2   Workflows / Queues / Cron / Durable Objects
  (records, (Wildcards (sync-source, nightly refresh,
-  auth,    ciphertext, directory import, chat reaper,
-  jobs)    large notes) chat session locks, rate limits)
+  auth,    ciphertext, directory import, rate limits,
+  jobs)    large notes) one object per chat conversation
+                         running the Pi agent)
      ▲
-     │ HTTPS, scoped grants only (unchanged contract)
-  VPS: services/chat (coordinator, gateway, Iggy), services/extraction
+     │ HTTPS: extraction grants (unchanged); model and research calls from chat
+  VPS: inference relay and research corpus (services/chat), services/extraction
 ```
 
 - **One origin, routed by the web Worker.** The web Worker is the only public entry point. Its entry (a small wrapper around OpenNext's worker) sends `/api/*` to the API Worker over the service binding, request streamed as is, and everything else to Next. This works the same on a staging hostname and on `www.wildheartsai.com`, and doesn't depend on zone routes. Session cookies stay first-party with no CORS, and after the DNS swap `EPIC_REDIRECT_URI`, both JWKS URLs and the VPS `CHAT_WEB_API_URL` keep their current values. The API Worker has no public URL (`workers_dev: false`): it is reachable only through the binding, so the VPS also comes in through the web Worker at the same paths.
 - **Next → API over a service binding.** Server components and server actions call `env.API.fetch(...)` (`getCloudflareContext()` from OpenNext), forwarding the incoming `Cookie` header. The browser keeps calling `/api/*` directly (uploads, chat streams, PDF viewing).
-- **The VPS contract doesn't change.** `services/chat` and `services/extraction` already talk to the web backend only over HTTPS, with scoped grants (no database or R2 credentials), so they just reach Hono at the same paths. GPU inference and OCR stay on the VPS: Workers can't run them. Cloudflare Containers or Workers AI could be evaluated later, separately.
+- **Extraction's VPS contract doesn't change.** `services/extraction` already talks to the web backend only over HTTPS with scoped grants, so it reaches Hono at the same paths. **Chat's changes** (owner decision, November 20): each conversation's Durable Object runs the Pi agent itself and calls the VPS only for model inference and research. The VPS coordinator, grants, gateway and Iggy dispatch aren't used on Cloudflare. GPU inference and OCR stay on the VPS: Workers can't run them.
 
 ## Repository layout
 
@@ -77,11 +78,11 @@ After cutover, a cleanup PR moves Next into `web/` and deletes `drizzle/`, `verc
 | Neon Postgres (`pg` Pool, Drizzle node-postgres) | D1 (Drizzle `d1` driver) |
 | Postgres RLS (`asUser`, migration 0006) | User-scoped data layer, plus cross-user isolation tests (below) |
 | Restricted chat roles (`CHAT_DATABASE_URL`, `CHAT_QUEUE_DATABASE_URL`) | A separate `wildhearts-chat` Worker with its own narrow D1 bindings (below) |
-| `chat_lock_session_v2` (Postgres function) | Durable Object per browser session (`ChatSessionLock`) |
+| `chat_lock_session_v2` (Postgres function) | The `sessionFence` RPC, checked by each conversation object before every step and read |
 | Inngest `sync-source` (per-source concurrency 1, global 5) | Workflow `SyncSourceWorkflow`, one instance per run (instance id = run id), started directly when a run is queued. Per-source exclusivity comes from the `sync_run` "one active run per source" index. Workflows have no global cap, so the nightly refresh paces itself instead (below). No Queue: the Workflow already gives durable, retried steps |
 | Inngest `refresh-sources` (cron 10:17 UTC) | Cron Trigger `17 10 * * *` → Workflow `RefreshSourcesWorkflow` (same steps and schedule history; queues in groups of 25 a minute apart, standing in for Inngest's global limit of 5) |
 | Inngest `refresh-epic-directory` (cron 08:41 UTC, or on event) | Cron Trigger `41 8 * * *` → Workflow `DirectoryImportWorkflow` (streamed import, see D1 notes). On request: `npx wrangler workflows trigger wildhearts-directory-<env>`, rather than an endpoint |
-| Inngest `reap-chat-runs` (every minute) | Cron Trigger `* * * * *` on the chat Worker |
+| Inngest `reap-chat-runs` (every minute) | Not needed: each conversation object's alarm resumes or ends its own run |
 | `@aws-sdk/client-s3` → R2 | R2 binding (`env.FILES`), the same opaque keys and ciphertext format, so no object rewrite |
 | nodemailer → Gmail SMTP | An HTTP email API called from the API Worker (provider to be chosen by the owner; open question 1). Until then the API keeps the current development behaviour on preview (print the link) and production cutover is blocked on it |
 | `@vercel/analytics` (with `beforeSend` scrubbing) | No browser analytics on Cloudflare: Cloudflare's beacon can't drop query strings (which can carry reset tokens), so traffic is read from Workers analytics instead. Vercel keeps its component until cutover |
@@ -104,8 +105,8 @@ Every handler moves to Hono under the same path, so the browser, Epic and the VP
 | `/api/wildcards`, `/api/wildcards/[id]`, `/[id]/fhir`, `/uploads`, `/uploads/[id]/[part]`, `/uploads/[id]/complete` | R2 binding. Uploads already use 3 MB parts, well under the Workers request-body limit. Streaming download of chunked files uses `ReadableStream` |
 | `/api/wildcards/pdfjs/[...asset]` | Drop the route: serve the pdf.js worker, cmaps and fonts as static assets of the web Worker (copied at build). Removes `outputFileTracingIncludes` |
 | `/api/extraction`, `/api/extraction/worker/v1/*` | Unchanged contract with the VPS |
-| `/api/chat/ticket`, `/api/chat/v1/*`, `/api/chat/worker/v1/*` | Served by `wildhearts-chat` (see chat isolation) via a route or service binding |
-| `/api/demo/*` | Unchanged logic |
+| `/api/chat/v1/*` | Served by `wildhearts-chat` through the web Worker's `CHAT` binding. `/api/chat/ticket` and `/api/chat/worker/v1/*` are retired on Cloudflare (the agent runs in the conversation objects) |
+| `/api/demo/*` | Same logic, plus guest demos (`POST`/`DELETE /api/demo/guest`) for visitors without an account |
 | `/api/inngest` | Deleted after cutover |
 | `/app/export` (Next route handler) | Becomes `/api/export`; the page links to it |
 
@@ -150,15 +151,15 @@ This is the main security cost of D1, and it gets its own review before Phase 3 
 3. **Isolation tests.** Port `rls.test.ts` to a table-driven test: for every table in `USER_TABLES` (today's `RLS_TABLES`), seed two users and assert that each repository function for user A never returns, updates or deletes user B's rows. `api/test/user-tables.test.ts` (successor of `db:check-rls`) fails CI if a table with a `user_id` column isn't classified.
 4. **Encryption stays as the second layer.** Record fields remain sealed with per-user data keys whose associated data includes the user ID, so a scoping bug exposes ciphertext that won't open under the wrong user's key.
 
-### Chat isolation (replaces the restricted Postgres roles)
+### Chat on Cloudflare (replaces the restricted Postgres roles and the VPS agent)
 
-Today the chat backend connects with two restricted roles (`docs/superpowers/specs/2026-10-04-chat-database-role-gate.md`) so a chat bug can't read tokens, accounts or profiles. On Cloudflare, bindings are the capability boundary:
+Decided November 20; the design is "Cloudflare topology" in `docs/superpowers/specs/2026-10-07-web-owned-chat-security-boundary.md`. In short:
 
-- A separate **`wildhearts-chat` Worker** serves `/api/chat/*` and the reaper cron. It is bound to a **`wildhearts-chat` D1 database** holding the chat tables (conversations, messages, runs, tool calls, events, summaries).
-- It doesn't bind the main D1. It reaches the records it may read (session validity, data keys, health sources, FHIR resources) through a narrow, read-only RPC on the API Worker (`WorkerEntrypoint` service binding). That RPC exposes exactly what today's column grants allow, and nothing about `session.token`, `account`, `verification`, Epic connections or profiles.
-- The chat database is in its own D1, so a chat bug can't join across to the main database.
-- `chat_lock_session_v2` becomes a session fence checked before and after each read (proposed in place of a `ChatSessionLock` Durable Object; see the spec for why).
-- **Needs security review:** the proposal is in `docs/superpowers/specs/2026-10-07-web-owned-chat-security-boundary.md`, "Cloudflare topology". The chat port starts once it's accepted.
+- A separate **`wildhearts-chat` Worker** serves the browser's chat API (`/api/chat/v1/*`). It has no binding to the main D1. It reaches identity, session checks, data keys and records only through a narrow read RPC on the API Worker (`ChatRecords`).
+- **One `ChatConversation` Durable Object per conversation** stores that conversation (messages, runs, tool calls, events) in its own SQLite storage. It runs the Pi agent from alarms, checkpointing after every step, so a run survives eviction and deploys and resumes where it stopped.
+- **`CHAT_DB`** keeps what spans conversations: each person's conversation list and saved summaries.
+- The session check (`chat_lock_session_v2` today) becomes a fence before every model call, tool read and browser read.
+- Asking a question is strictly rate limited (per person, per guest, per network). Guests can use live chat on their fictional chart.
 
 ## Testing
 
@@ -207,7 +208,7 @@ The owner swaps DNS from Vercel to the new site once everything works there. Unt
 Every variable in `src/lib/env.ts` and `.env.example` maps to a Worker secret or var on the Worker that needs it. Only the API and chat Workers hold secrets.
 
 - `wildhearts-api` secrets: `BETTER_AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `RECORDS_ENCRYPTION_KEY`, the `EPIC_*` keys, `METRIPORT_API_KEY`, the extraction verifier and grant key, the email API key.
-- `wildhearts-chat` secrets: `CHAT_GRANT_DERIVATION_KEY`, `CHAT_RESEARCH_GATEWAY_TOKEN_HASH`, plus what the chat role preflight checks today.
+- `wildhearts-chat` secrets: `RECORDS_ENCRYPTION_KEY`, `CHAT_INFERENCE_TOKEN` (the VPS inference relay), `CHAT_RESEARCH_GATEWAY_TOKEN`. The grant, coordinator and ticket keys aren't used on Cloudflare.
 - `wildhearts-web`: no secrets, only the `API` service binding and public vars.
 - Removed: `DATABASE_URL*`, `CHAT_DATABASE_URL`, `CHAT_QUEUE_DATABASE_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (replaced by bindings), `INNGEST_*`, `SMTP_*`, `VERCEL_URL`.
 - `env.ts` keeps its Zod validation, now applied to the Worker `env` object (bindings plus secrets) per request, so a missing secret still fails closed.
@@ -222,7 +223,7 @@ Every variable in `src/lib/env.ts` and `.env.example` maps to a Worker secret or
 | 3 | Epic and records | Epic authorize/callback/JWKS, directory search and import, records and timeline reads, export |
 | 4 | Jobs | Sync Workflow, nightly refresh, directory import Workflow, Metriport, sandbox replay green |
 | 5 | Next on Workers | OpenNext build, the web Worker routing `/api/*` to the API, pages and server actions through a backend adapter, pdf.js as assets |
-| 6 | Wildcards, extraction, chat, demo | R2 binding routes, extraction worker API, `wildhearts-chat` Worker with its D1 and Durable Object, demo |
+| 6 | Wildcards, extraction, chat, demo | R2 binding routes, extraction worker API, demo (public, with guest demos), rate limits, `wildhearts-chat` Worker with its D1 and one Durable Object per conversation running Pi |
 | 7 | Data migration and cutover | Read-only flag on Vercel, rehearsals on staging, the production copy, the owner's DNS swap, verification |
 | 8 | Cleanup | Remove Vercel, Neon, Inngest, `pg`, `@aws-sdk`, nodemailer; move Next to `web/`; rewrite `AGENTS.md` and the delivery skill for Cloudflare |
 
@@ -303,11 +304,11 @@ Done in that order, one commit each.
 - [x] Documents (`api/src/data/documents.ts`, `routes/documents.ts`): the same paths, limits and messages as the Next routes, objects in the `FILES` R2 binding. The quota check is one insert-select anchored on the person's data key row; a piece's arrival is one `json_set` batch, so pieces sent in parallel can't overwrite each other; completion is a compare-and-set on status. Files over 25 MB stay as pieces and stream back. Pages read through `backend().documents` and `document`
 - [x] Extraction (`api/src/data/extraction.ts`, `routes/extraction.ts`): the workbench API, the VPS worker protocol (`/api/extraction/worker/v1/*`) and the FHIR view. Advisory locks became a `UserLock` Durable Object (`api/src/locks.ts`, audit pattern L): `extraction:<user>` serializes a person's enqueues so the 80-job limit holds, `extraction-claim` serializes claims. A completion is one batch guarded on an unset result and a still-valid grant, file and session. The root store tests are ported (`api/test/extraction.test.ts`), plus 41 simultaneous enqueues staying under the limit. The workbench, progress and FHIR pages read through `backend().readyDocuments` and `documentFhir`. Off unless `EXTRACTION_ENABLED=1`
 - [x] Demo (`api/src/data/demo.ts`, `routes/demo.ts`): `/api/demo/*` at the same paths, `POST /api/demo/workspace` for the entry action, and workspace selection in the API's session (`applicationSession` in `api/src/session.ts`): every signed-in route, and `/api/session`, see the workspace when the demo cookie bound to this login is present; `/api/session?real=1` is the login itself. Demo identities are refused by Epic authorize and callback and by Metriport connect, whatever `DEMO_ENABLED` says. The demo pages and entry action use `backend().openDemoWorkspace` and `demoSnapshot`. Tested over HTTP (isolation between two people, idempotent re-entry and sample PDF, reset, sign-out removing the workspace) and in the local browser walkthrough
-- [ ] `DEMO_ENABLED=1` must be set on both Workers wherever the demo should be offered (on in local development only; Vercel's value decides preview and production)
+- [x] The demo is always on and public (owner decision, November 20). Anyone without an account can open a guest demo: a fictional chart of their own, reached by its own httpOnly cookie (the session row stores only the token's hash), deleted when they leave or after a day (hourly cron). At most 10 new guests an hour per network. Guests can't upload files or connect anything. `DEMO_ENABLED` is `1` in every web Worker environment; the API has no flag. Vercel keeps the signed-in demo, behind its own `DEMO_ENABLED`, until the cutover
+- [x] Strict rate limits (`api/src/limits.ts`, a `RateLimiter` Durable Object per key, sliding windows): files started in Documents (100 an hour per person, 300 per network), demo writes (sync, reset, sample PDF: 30 an hour per person, 120 per network), new guest demos (10 an hour per network). Chat's limits come with the chat port
 - [ ] The shared demo login (`scripts/seed-demo.ts`, `src/lib/demo/provision.ts`) isn't ported; its rows move with the data migration if production has one
-- [x] Chat security boundary: proposal written ("Cloudflare topology" in `specs/2026-10-07-web-owned-chat-security-boundary.md`)
-- [ ] Owner review of that proposal, in particular the session fence replacing the `ChatSessionLock` Durable Object
-- [ ] Chat: the `wildhearts-chat` Worker with `CHAT_DB`, the `ChatRecords` RPC on the API, ported store and gateway, and the verification list in the spec
+- [x] Chat design decided ("Cloudflare topology" in `specs/2026-10-07-web-owned-chat-security-boundary.md`): one Durable Object per conversation running Pi durably. Checked that Pi 1.0.0 runs in a Durable Object on workerd
+- [ ] Chat: the `ChatRecords` RPC on the API; the `wildhearts-chat` Worker with `CHAT_DB` (index and summaries) and the `ChatConversation` object (storage, Pi from alarms with checkpoints, tools, events, cancel); question limits; the inference relay credential on the VPS; the verification list in the spec
 
 ### Phases 7–8
 

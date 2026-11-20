@@ -1,7 +1,7 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { DEMO_MODE_COOKIE, demoSelected, isDemoIdentity } from "@/lib/demo/identity";
+import { DEMO_GUEST_COOKIE, DEMO_MODE_COOKIE, demoSelected, isDemoIdentity, isGuestDemoIdentity } from "@/lib/demo/identity";
 import { authFor } from "./auth";
-import { selectedDemoSession } from "./data/demo";
+import { guestDemoSession, selectedDemoSession } from "./data/demo";
 import { forUser, type UserScope } from "./data/scope";
 import { database } from "./db";
 import type { Bindings } from "./env";
@@ -16,12 +16,16 @@ export const realSession = (env: Bindings, headers: Headers) => authFor(env).api
 // The person a request acts as (src/lib/application-session.ts in the Next app). Auth always
 // checks the real login first; the demo cookie, bound to that login's session, only selects its
 // workspace. A missing or revoked workspace answers signed out, never the personal records.
-// Selection doesn't depend on DEMO_ENABLED: turning entry off must never switch an open demo
-// to personal data.
+// Without a login, a guest demo cookie is the visitor's own fictional workspace.
 export async function applicationSession(env: Bindings, headers: Headers) {
   const identity = await realSession(env, headers);
-  if (!identity || !headers.get("cookie")?.includes(`${DEMO_MODE_COOKIE}=`) || !demoSelected(headers, identity.session.id)) return identity;
+  if (!identity) return guestDemoSession(database(env.DB), cookieValue(headers, DEMO_GUEST_COOKIE));
+  if (!headers.get("cookie")?.includes(`${DEMO_MODE_COOKIE}=`) || !demoSelected(headers, identity.session.id)) return identity;
   return selectedDemoSession(database(env.DB), identity);
+}
+
+export function cookieValue(headers: Headers, name: string): string | undefined {
+  return headers.get("cookie")?.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
 // `whenSignedOut`: redirect to sign-in (browser navigations), answer 401, or answer 401 with a
@@ -47,3 +51,9 @@ export function notInDemo(refuse: (c: Context<AppEnv>) => Response): MiddlewareH
     await next();
   };
 }
+
+// Guests may look around, but not store their own files (no account to keep them in).
+export const notGuest = (refuse: (c: Context<AppEnv>) => Response): MiddlewareHandler<AppEnv> => async (c, next) => {
+  if (isGuestDemoIdentity(c.get("userId"))) return refuse(c);
+  await next();
+};

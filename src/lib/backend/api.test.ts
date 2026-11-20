@@ -88,6 +88,14 @@ describe("apiBackend", () => {
     expect(await apiBackend.demoSnapshot("u")).toBeNull();
   });
 
+  it("starts guest demos through the API, reading a refusal as limited", async () => {
+    state.respond = () => json({ cookie: "demo_guest_x.y", expiresAt: "2026-11-21T00:00:00.000Z" }, 201);
+    expect(await apiBackend.openGuestDemo()).toEqual({ cookie: "demo_guest_x.y", expiresAt: new Date("2026-11-21T00:00:00.000Z") });
+    expect([state.requests[0].method, new URL(state.requests[0].url).pathname]).toEqual(["POST", "/api/demo/guest"]);
+    state.respond = () => json({ error: "Too many demos were started from this network. Try again later." }, 429);
+    expect(await apiBackend.openGuestDemo()).toBe("limited");
+  });
+
   it("fails loudly on other API errors", async () => {
     state.respond = () => json({ error: "internal_error" }, 500);
     await expect(apiBackend.sources("u")).rejects.toThrow("API responded 500");
