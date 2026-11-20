@@ -7,6 +7,7 @@ import { recordsKey } from "./epic/credentials";
 export { TokenRefresher } from "./epic/token-refresher";
 export { UserLock } from "./locks";
 export { RateLimiter } from "./limits";
+export { ChatRecords } from "./chat-records";
 export { DirectoryImportWorkflow, RefreshSourcesWorkflow, SyncSourceWorkflow } from "./jobs/workflows";
 
 // demoChart: just after midnight Pacific, re-dates the demo chart to the new day.
