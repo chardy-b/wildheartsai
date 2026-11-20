@@ -156,7 +156,7 @@ This is the main security cost of D1, and it gets its own review before Phase 3 
 Decided November 20; the design is "Cloudflare topology" in `docs/superpowers/specs/2026-10-07-web-owned-chat-security-boundary.md`. In short:
 
 - A separate **`wildhearts-chat` Worker** serves the browser's chat API (`/api/chat/v1/*`). It has no binding to the main D1. It reaches identity, session checks, data keys and records only through a narrow read RPC on the API Worker (`ChatRecords`).
-- **One `ChatConversation` Durable Object per conversation** stores that conversation (messages, runs, tool calls, events) in its own SQLite storage. It runs the Pi agent from alarms, checkpointing after every step, so a run survives eviction and deploys and resumes where it stopped.
+- **One `ChatConversation` Durable Object per conversation** hosts a **Pi durable** `Harness` (`@earendil-works/pi-durable`) over its own SQLite storage. Pi durable checkpoints every step, and the object's alarm resumes unfinished work, so a run survives eviction and deploys.
 - **`CHAT_DB`** keeps what spans conversations: each person's conversation list and saved summaries.
 - The session check (`chat_lock_session_v2` today) becomes a fence before every model call, tool read and browser read.
 - Asking a question is strictly rate limited (per person, per guest, per network). Guests can use live chat on their fictional chart.
@@ -307,7 +307,8 @@ Done in that order, one commit each.
 - [x] The demo is always on and public (owner decision, November 20). Anyone without an account can open a guest demo: a fictional chart of their own, reached by its own httpOnly cookie (the session row stores only the token's hash), deleted when they leave or after a day (hourly cron). At most 10 new guests an hour per network. Guests can't upload files or connect anything. `DEMO_ENABLED` is `1` in every web Worker environment; the API has no flag. Vercel keeps the signed-in demo, behind its own `DEMO_ENABLED`, until the cutover
 - [x] Strict rate limits (`api/src/limits.ts`, a `RateLimiter` Durable Object per key, sliding windows): files started in Documents (100 an hour per person, 300 per network), demo writes (sync, reset, sample PDF: 30 an hour per person, 120 per network), new guest demos (10 an hour per network). Chat's limits come with the chat port
 - [ ] The shared demo login (`scripts/seed-demo.ts`, `src/lib/demo/provision.ts`) isn't ported; its rows move with the data migration if production has one
-- [x] Chat design decided ("Cloudflare topology" in `specs/2026-10-07-web-owned-chat-security-boundary.md`): one Durable Object per conversation running Pi durably. Checked that Pi 1.0.0 runs in a Durable Object on workerd
+- [x] Chat design decided ("Cloudflare topology" in `specs/2026-10-07-web-owned-chat-security-boundary.md`): one Durable Object per conversation running Pi durable (1.5.2). Checked on workerd that a run killed mid-model-call resumes from its checkpoint without repeating its tool call
+- [x] Chat limits decided: 30 questions an hour signed in, 10 for a guest, 5 a minute for anyone
 - [ ] Chat: the `ChatRecords` RPC on the API; the `wildhearts-chat` Worker with `CHAT_DB` (index and summaries) and the `ChatConversation` object (storage, Pi from alarms with checkpoints, tools, events, cancel); question limits; the inference relay credential on the VPS; the verification list in the spec
 
 ### Phases 7–8
