@@ -24,8 +24,8 @@
     "chat:coordinator": "node scripts/provision-chat-coordinator.mjs",
     "postinstall": "node scripts/copy-pdfjs.mjs",
     "cf:build": "opennextjs-cloudflare build",
-    "cf:preview": "wrangler dev -c wrangler.jsonc -c api/wrangler.jsonc --port 8787",
-    "cf:migrate:local": "wrangler d1 migrations apply DB --local -c api/wrangler.jsonc --persist-to .wrangler/state"
+    "cf:preview": "wrangler dev -c wrangler.jsonc -c api/wrangler.jsonc -c api/wrangler.chat.jsonc --port 8787",
+    "cf:migrate:local": "wrangler d1 migrations apply DB --local -c api/wrangler.jsonc --persist-to .wrangler/state && wrangler d1 migrations apply CHAT_DB --local -c api/wrangler.chat.jsonc --persist-to .wrangler/state"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1150.0",

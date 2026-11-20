@@ -35,6 +35,21 @@ export function createGatewayRuntime(env: Environment = process.env) {
   };
 }
 
+// The edge service (CHAT_SERVICE_MODE=edge) for chat on Cloudflare: the inference relay and the
+// research corpus, behind the chat Worker's token. Only the token's SHA-256 is configured here.
+export function createEdgeRuntime(env: Environment = process.env) {
+  const gateway = { ...env, CHAT_WEB_API_URL: env.CHAT_WEB_API_URL ?? "http://unused.invalid" };
+  const { inferenceUrl, modelId, apiKey, maxTokens, ...rest } = createGatewayRuntime(gateway);
+  const tokenHash = required(env, "CHAT_EDGE_TOKEN_HASH");
+  if (!/^[a-f0-9]{64}$/.test(tokenHash)) throw new Error("invalid_chat_edge_token_hash");
+  const researchRoot = env.CHAT_RESEARCH_CORPUS_ROOT?.trim();
+  return {
+    tokenHash, inferenceUrl, maxTokens, apiKey,
+    modelIds: [modelId, ...("fallbackModelIds" in rest && rest.fallbackModelIds ? rest.fallbackModelIds : [])],
+    ...(researchRoot ? { researchCorpus: new ResearchCorpus({ root: researchRoot }) } : {}),
+  };
+}
+
 function parseFallbackModels(value: string | undefined, primaryModel: string): string[] | undefined {
   if (value === undefined || value.trim() === "") return undefined;
   let parsed: unknown;

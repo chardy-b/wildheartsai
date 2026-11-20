@@ -2,6 +2,7 @@ import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { generateKeyPairSync } from "node:crypto";
 import { join } from "node:path";
 import { defineConfig } from "vitest/config";
+import { fakeEdge } from "./test/chat/fake-edge";
 
 // Tests run inside workerd (the Workers runtime) with real D1 and R2 bindings from Miniflare,
 // one project per Worker so each sees only its own bindings, as in production.
@@ -38,8 +39,10 @@ export default defineConfig(async () => {
         },
         {
           resolve,
-          plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.chat.jsonc" }, miniflare: { bindings: { TEST_MIGRATIONS: chatMigrations } } })],
-          test: { name: "chat", include: ["test/chat/**/*.test.ts"], setupFiles: ["./test/chat/setup.ts"] },
+          // The chat Worker and the API's chat-facing classes in one Worker (test/chat/wrangler.test.jsonc),
+          // with a scripted stand-in for the VPS edge service.
+          plugins: [cloudflareTest({ wrangler: { configPath: "./test/chat/wrangler.test.jsonc" }, miniflare: { bindings: { ...testSecrets, CHAT_EDGE_TOKEN: "test-edge-token", TEST_MIGRATIONS: mainMigrations, TEST_CHAT_MIGRATIONS: chatMigrations }, outboundService: fakeEdge as never } })],
+          test: { name: "chat", include: ["test/chat/**/*.test.ts"], setupFiles: ["./test/chat/setup.ts"], testTimeout: 30_000 },
         },
       ],
     },

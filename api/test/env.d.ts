@@ -6,6 +6,7 @@ declare global {
   namespace Cloudflare {
     interface Env extends Bindings, Partial<ChatBindings> {
       TEST_MIGRATIONS: D1Migration[];
+      TEST_CHAT_MIGRATIONS?: D1Migration[];
     }
   }
 }

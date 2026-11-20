@@ -23,9 +23,10 @@ const eslintConfig = defineConfig([
   ]),
   {
     // The API Worker has no row-level security: only the data layer (forUser, system) and jobs
-    // may touch tables. Routes go through src/data. See api/src/data/scope.ts.
+    // may touch tables. Routes go through src/data. See api/src/data/scope.ts. The chat Worker's
+    // own data layer (api/src/chat/data, every query owner-scoped) is the same for CHAT_DB.
     files: ["api/src/**/*.ts"],
-    ignores: ["api/src/data/**", "api/src/db/**", "api/src/jobs/**"],
+    ignores: ["api/src/data/**", "api/src/db/**", "api/src/jobs/**", "api/src/chat/data/**"],
     rules: {
       "no-restricted-imports": ["error", {
         patterns: [{

@@ -1,0 +1,26 @@
+// Test-only: the chat Worker and the API Worker's chat-facing classes in one Worker, so the chat
+// tests run in one workerd with both databases. RECORDS is bound back to this Worker's
+// ChatRecords entrypoint; production binds it to the API Worker (api/wrangler.chat.jsonc).
+{
+  "name": "wildhearts-chat-test",
+  "main": "./entry.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "alias": { "server-only": "../../src/server-only.ts" },
+  "vars": { "CHAT_ENABLED": "1", "CHAT_EDGE_URL": "https://edge.test", "CHAT_MODEL_ID": "fake-model", "APP_ENV": "development" },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "test-main", "database_id": "test-main" },
+    { "binding": "CHAT_DB", "database_name": "test-chat", "database_id": "test-chat" }
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "test-files" }],
+  "services": [{ "binding": "RECORDS", "service": "wildhearts-chat-test", "entrypoint": "ChatRecords" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CONVERSATION", "class_name": "ChatConversation" },
+      { "name": "RATE_LIMITER", "class_name": "RateLimiter" },
+      { "name": "USER_LOCK", "class_name": "UserLock" },
+      { "name": "TOKEN_REFRESHER", "class_name": "TokenRefresher" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatConversation", "RateLimiter", "UserLock", "TokenRefresher"] }]
+}

@@ -1,5 +1,6 @@
 // The web Worker: the Next app on Cloudflare (OpenNext), and the only public entry point.
-// `/api/*` goes to the API Worker (api/wrangler.jsonc) over the API service binding. No secrets
+// `/api/*` goes to the API Worker (api/wrangler.jsonc) over the API service binding, and `/api/chat/*`
+// to the chat Worker (api/wrangler.chat.jsonc) over CHAT. No secrets
 // and no database here: pages reach data only through the API (src/lib/backend/api.ts).
 // Plan: docs/superpowers/plans/2026-10-30-cloudflare-migration.md
 {
@@ -11,20 +12,21 @@
   "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
   "observability": { "enabled": true },
 
-  // Local development: `npm run cf:preview` runs this Worker and the API Worker together.
-  "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1" },
-  "services": [{ "binding": "API", "service": "wildhearts-api" }],
+  // Local development: `npm run cf:preview` runs this Worker, the API Worker and the chat Worker together.
+  // CHAT_ENABLED shows the chat page; keep it equal to the chat Worker's.
+  "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1", "CHAT_ENABLED": "1" },
+  "services": [{ "binding": "API", "service": "wildhearts-api" }, { "binding": "CHAT", "service": "wildhearts-chat" }],
 
   "env": {
     "preview": {
       "name": "wildhearts-web-preview",
-      "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1" },
-      "services": [{ "binding": "API", "service": "wildhearts-api-preview" }]
+      "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1", "CHAT_ENABLED": "0" },
+      "services": [{ "binding": "API", "service": "wildhearts-api-preview" }, { "binding": "CHAT", "service": "wildhearts-chat-preview" }]
     },
     "production": {
       "name": "wildhearts-web-production",
-      "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1" },
-      "services": [{ "binding": "API", "service": "wildhearts-api-production" }]
+      "vars": { "WILDHEARTS_BACKEND": "api", "DEMO_ENABLED": "1", "CHAT_ENABLED": "0" },
+      "services": [{ "binding": "API", "service": "wildhearts-api-production" }, { "binding": "CHAT", "service": "wildhearts-chat-production" }]
     }
   }
 }

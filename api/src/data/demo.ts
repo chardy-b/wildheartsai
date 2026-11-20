@@ -29,7 +29,7 @@ const referenceDate = (value: Date) => new Intl.DateTimeFormat("en-CA", { timeZo
 
 // One query per (source, search) instead of per record keeps an import well under the
 // per-invocation query limit.
-async function importEntries(scope: UserScope, kek: Buffer, entries: DemoEntry[], now: Date) {
+export async function importEntries(scope: UserScope, kek: Buffer, entries: DemoEntry[], now: Date) {
   const keys = await userKeysFor(scope, kek, now);
   const sources = await scope.select(healthSource);
   for (const source of DEMO_SOURCES) {

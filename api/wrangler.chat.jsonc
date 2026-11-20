@@ -1,5 +1,9 @@
-// The chat Worker. Its database holds only chat tables; it reads records through a narrow RPC
-// on the API Worker (Phase 6). See docs/superpowers/specs/2026-10-30-d1-transaction-audit.md.
+// The chat Worker (src/chat/): the browser's chat API, one ChatConversation Durable Object per
+// conversation running Pi durable, and CHAT_DB for what spans conversations. No binding to the
+// main database or R2: records come only through the API Worker's ChatRecords entrypoint
+// (RECORDS). See "Cloudflare topology" in
+// docs/superpowers/specs/2026-10-07-web-owned-chat-security-boundary.md.
+// Secrets (`wrangler secret put`, or .dev.vars locally): CHAT_EDGE_TOKEN.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "wildhearts-chat",
@@ -9,25 +13,58 @@
   "workers_dev": false,
   "preview_urls": false,
   "observability": { "enabled": true },
+  "alias": { "server-only": "./src/server-only.ts" },
 
+  // Local development: chat on, against a local edge service (services/chat, CHAT_SERVICE_MODE=edge).
+  "vars": { "CHAT_ENABLED": "1", "CHAT_EDGE_URL": "http://127.0.0.1:8090", "CHAT_MODEL_ID": "local-model" },
   "d1_databases": [
     { "binding": "CHAT_DB", "database_name": "wildhearts-chat-local", "database_id": "local-chat", "migrations_dir": "chat-migrations" }
   ],
+  "services": [{ "binding": "RECORDS", "service": "wildhearts-api", "entrypoint": "ChatRecords" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CONVERSATION", "class_name": "ChatConversation" },
+      // The API Worker's limiter, so limits are counted in one place.
+      { "name": "RATE_LIMITER", "class_name": "RateLimiter", "script_name": "wildhearts-api" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatConversation"] }],
+  // Hourly: demo conversations past their day are deleted.
+  "triggers": { "crons": ["29 * * * *"] },
 
   "env": {
     "preview": {
       "name": "wildhearts-chat-preview",
+      // CHAT_EDGE_URL: the VPS edge service's address once it serves preview (Phase 7).
+      "vars": { "CHAT_ENABLED": "0", "CHAT_MODEL_ID": "health-model" },
       "d1_databases": [
         // database_id: set after `wrangler d1 create wildhearts-chat-preview` (Phase 0).
         { "binding": "CHAT_DB", "database_name": "wildhearts-chat-preview", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "chat-migrations" }
-      ]
+      ],
+      "services": [{ "binding": "RECORDS", "service": "wildhearts-api-preview", "entrypoint": "ChatRecords" }],
+      "durable_objects": {
+        "bindings": [
+          { "name": "CONVERSATION", "class_name": "ChatConversation" },
+          { "name": "RATE_LIMITER", "class_name": "RateLimiter", "script_name": "wildhearts-api-preview" }
+        ]
+      },
+      "triggers": { "crons": ["29 * * * *"] }
     },
     "production": {
       "name": "wildhearts-chat-production",
+      "vars": { "CHAT_ENABLED": "0", "CHAT_MODEL_ID": "health-model" },
       "d1_databases": [
         // database_id: set after `wrangler d1 create wildhearts-chat-prod` (Phase 0).
         { "binding": "CHAT_DB", "database_name": "wildhearts-chat-prod", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "chat-migrations" }
-      ]
+      ],
+      "services": [{ "binding": "RECORDS", "service": "wildhearts-api-production", "entrypoint": "ChatRecords" }],
+      "durable_objects": {
+        "bindings": [
+          { "name": "CONVERSATION", "class_name": "ChatConversation" },
+          { "name": "RATE_LIMITER", "class_name": "RateLimiter", "script_name": "wildhearts-api-production" }
+        ]
+      },
+      "triggers": { "crons": ["29 * * * *"] }
     }
   }
 }

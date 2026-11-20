@@ -1,6 +1,7 @@
 import { createPrivateToolGateway } from "./private-gateway.js";
 import { IggyRunDispatcher, runDispatchLoop } from "./dispatcher.js";
-import { createCoordinatorRuntime, createGatewayRuntime, required } from "./runtime.js";
+import { createCoordinatorRuntime, createEdgeRuntime, createGatewayRuntime, required } from "./runtime.js";
+import { createEdgeService } from "./edge.js";
 
 async function main(): Promise<void> {
   const mode = process.env.CHAT_SERVICE_MODE;
@@ -22,6 +23,16 @@ async function main(): Promise<void> {
     gateway.listen(port, "0.0.0.0");
     await new Promise<void>((resolve) => {
       controller.signal.addEventListener("abort", () => gateway.close(() => resolve()), { once: true });
+    });
+    return;
+  }
+  if (mode === "edge") {
+    const edge = createEdgeService(createEdgeRuntime());
+    const port = Number.parseInt(process.env.PORT ?? "8090", 10);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error("invalid_port");
+    edge.listen(port, "0.0.0.0");
+    await new Promise<void>((resolve) => {
+      controller.signal.addEventListener("abort", () => edge.close(() => resolve()), { once: true });
     });
     return;
   }

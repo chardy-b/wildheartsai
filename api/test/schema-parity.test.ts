@@ -2,7 +2,6 @@ import { is } from "drizzle-orm";
 import { getTableConfig as pgTableConfig, PgTable } from "drizzle-orm/pg-core";
 import { getTableConfig as sqliteTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
 import { describe, expect, it } from "vitest";
-import * as chat from "../src/db/chat/schema";
 import * as main from "../src/db/schema";
 // The Postgres schema of the app being migrated, read for names only. It loads the root
 // install's drizzle copy, so tables are recognized with `is()` rather than instanceof.
@@ -22,15 +21,17 @@ function columnsByTable<T>(tables: Record<string, unknown>, isTable: (value: unk
 }
 
 describe("D1 schema parity with Postgres", () => {
-  const pg = columnsByTable(postgres, (v): v is PgTable => is(v, PgTable), pgTableConfig);
-  const d1 = {
-    ...columnsByTable(main, (v): v is SQLiteTable => is(v, SQLiteTable), sqliteTableConfig),
-    ...columnsByTable(chat, (v): v is SQLiteTable => is(v, SQLiteTable), sqliteTableConfig),
-  };
+  const allPg = columnsByTable(postgres, (v): v is PgTable => is(v, PgTable), pgTableConfig);
+  // Chat isn't copied: it never ran in production, and on Cloudflare its content lives in one
+  // Durable Object per conversation (api/src/db/chat/schema.ts has what spans conversations).
+  const CHAT = ["chat_conversation", "chat_coordinator", "chat_event", "chat_message", "chat_run", "chat_tool_call", "summary_evidence", "user_summary"];
+  const pg = Object.fromEntries(Object.entries(allPg).filter(([table]) => !CHAT.includes(table)));
+  const d1 = columnsByTable(main, (v): v is SQLiteTable => is(v, SQLiteTable), sqliteTableConfig);
 
-  it("has every Postgres table, split between the main and chat databases, and nothing else", () => {
+  it("has every Postgres table but chat's in the main database, and nothing else", () => {
+    expect(Object.keys(allPg).filter((table) => CHAT.includes(table)).sort()).toEqual(CHAT);
     expect(Object.keys(d1).sort()).toEqual(Object.keys(pg).sort());
-    expect(Object.keys(pg)).toHaveLength(30);
+    expect(Object.keys(allPg)).toHaveLength(30);
   });
 
   // Columns D1 has that Postgres doesn't, each with a default so the Neon copy fills them.
