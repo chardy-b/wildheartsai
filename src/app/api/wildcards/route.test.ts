@@ -10,6 +10,7 @@ vi.mock("@/lib/wildcards-store", async (original) => ({ ...await original<typeof
 import { POST } from "./route";
 import { GET, DELETE } from "./[id]/route";
 import { UPLOAD_CHUNK_BYTES } from "@/lib/wildcards";
+import { FileInputError } from "@/lib/wildcards-store";
 import { readUpload } from "@/lib/wildcards-http";
 
 const url = "https://app.example/api/wildcards";
@@ -53,6 +54,7 @@ describe("private file endpoints", () => {
   it("derives ownership from the session and preserves filename and bytes", async () => {
     const response = await POST(upload());
     expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ ok: true });
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(mocks.store).toHaveBeenCalledWith({}, expect.any(Buffer), "owner", "my file.txt", Buffer.from("hello"), "test-objects");
   });
@@ -81,6 +83,13 @@ describe("private file endpoints", () => {
     expect(response.headers.get("content-length")).toBeNull();
     expect(response.body).toBeInstanceOf(ReadableStream);
     expect(Buffer.from(await response.arrayBuffer()).equals(bytes)).toBe(true);
+  });
+  it("returns a retryable failure rather than success while historical duplicate checks are incomplete", async () => {
+    mocks.store.mockRejectedValue(new FileInputError("Checking existing documents for duplicates. Please retry this upload.", 503));
+    const response = await POST(upload());
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(await response.json()).toEqual({ error: "Checking existing documents for duplicates. Please retry this upload." });
   });
   it("never exposes internal storage errors", async () => {
     mocks.store.mockRejectedValue(new Error("sensitive database detail"));
