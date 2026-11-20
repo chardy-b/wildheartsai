@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { READ_ONLY_MESSAGE, readOnly } from "@/lib/read-only";
 import { M_PLUS_Rounded_1c } from "next/font/google";
 import { connection } from "next/server";
 import { Analytics } from "./analytics";
@@ -41,6 +42,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={rounded.variable}>
       <body>
+        {readOnly() && <p role="status" className="read-only-notice" style={{ margin: 0, padding: "8px 16px", textAlign: "center", fontSize: 14, background: "var(--ink, #222)", color: "var(--paper, #fff)" }}>{READ_ONLY_MESSAGE}</p>}
         {children}
         <Analytics />
       </body>

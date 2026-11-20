@@ -1,5 +1,6 @@
 "use server";
 
+import { assertWritable } from "@/lib/read-only";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { acknowledgeSchema, CONSENT_VERSION, nameSchema } from "@/lib/onboarding";
@@ -9,6 +10,7 @@ import { requireSession } from "@/lib/session";
 export type FormState = { error?: string };
 
 export async function saveNameAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  assertWritable();
   const session = await requireSession();
   const parsed = nameSchema.safeParse({ preferredName: String(formData.get("preferredName") ?? "") });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
@@ -17,6 +19,7 @@ export async function saveNameAction(_prev: FormState, formData: FormData): Prom
 }
 
 export async function acknowledgeAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  assertWritable();
   const session = await requireSession();
   const parsed = acknowledgeSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
@@ -25,6 +28,7 @@ export async function acknowledgeAction(_prev: FormState, formData: FormData): P
 }
 
 export async function finishOnboardingAction(): Promise<FormState> {
+  assertWritable();
   const session = await requireSession();
   await completeOnboarding(db, session.user.id, new Date());
   redirect("/app");
