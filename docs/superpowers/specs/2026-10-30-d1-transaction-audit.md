@@ -65,15 +65,15 @@ One more D1 detail: an `INSERT … SELECT` followed by `ON CONFLICT` needs a `WH
 
 Done (`api/src/data/extraction.ts`): enqueue, backfill and rerun run under `UserLock` key `extraction:<user>`. Claims run under one shared key, `extraction-claim`, as well: the backfill admission and the claim read the same queue, and claims are rare enough that one queue costs nothing. Completion is one batch guarded on an unset result and a still-valid grant, file and session.
 
-### Chat (Phase 6; moves to the `wildhearts-chat` Worker and D1)
+### Chat (Phase 6; superseded by one Durable Object per conversation)
 
-| Site | Pattern |
-| --- | --- |
-| `chat/queue.ts` and `chat-web/authority.ts` claim (lines 76–110): coordinator row `FOR UPDATE` (rate window), run `FOR UPDATE SKIP LOCKED` | **Q** for the run. The coordinator's claim window becomes a **C** update (`claim_count < ?` in the `WHERE`) |
-| `authority.ts` reap and disable (291–340): coordinator and run row locks | **C** per run, guarded on `status` and `lease_expires_at` |
-| `authority.ts`, `browser-http.ts` `chat_lock_session_v2` (session lock function) | **N**: the `ChatSessionLock` Durable Object from the plan |
-| `chat/store.ts` per-user advisory lock (line 322) and `browser-http.ts` (line 80) | **L**: `UserLock` in the chat Worker, since starting a run checks several rows |
-| `chat/store.ts` `FOR UPDATE` on conversation or run (sequence allocation at 85, 328, 546, 673, 798, 1052, 1174) | **C**. Sequence allocation becomes `UPDATE chat_conversation SET next_message_sequence = next_message_sequence + 1 WHERE … RETURNING next_message_sequence - 1`, then the insert in the same batch using a subquery. The ~45 other `asUser` sites in `chat/store.ts` and `chat/gateway.ts` are **R** or single statements, reviewed function by function in Phase 6 |
+On Cloudflare each conversation's content lives in its own `ChatConversation` Durable Object, whose SQLite storage has real transactions (`transactionSync`). So the Postgres patterns below don't carry over call by call:
+
+- Sequence allocation, run state, tool-call records and events: one transaction in the object.
+- Claims, leases, reaping and the coordinator's rate window: gone (no VPS coordinator on Cloudflare).
+- `chat_lock_session_v2`: the `sessionFence` RPC before every step and read (see the chat security spec, "Cloudflare topology").
+- The per-user advisory lock around starting a run: the object serializes its own conversation, and question limits are counted before the run is recorded.
+- What stays in `CHAT_DB` (the conversation index, saved summaries and evidence) is written by single guarded statements (**C**) or batches (**B**).
 
 ### Demo (Phase 6)
 

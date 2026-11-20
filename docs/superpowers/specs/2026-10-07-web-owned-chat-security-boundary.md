@@ -4,7 +4,7 @@ Date: October 7, 2026
 
 Status: Implemented on `codex/web-owned-chat` with independent Sol review. Production rollout remains pending; follow the October 8 rollout guide. This supersedes the direct-Neon VPS topology in the October 4 plan and the existing chat deployment instructions.
 
-Update, November 16, 2026: **"Cloudflare topology"** below restates items 6 and 7 and the deployment changes for the move to Cloudflare Workers and D1 (`docs/superpowers/plans/2026-10-30-cloudflare-migration.md`). It's a proposal awaiting owner review; the chat port starts only once it's accepted. Everything else here stands unchanged.
+Update, November 20, 2026: **"Cloudflare topology"** below is the design for the move to Cloudflare Workers and D1 (`docs/superpowers/plans/2026-10-30-cloudflare-migration.md`), decided by the owner: one Durable Object per conversation, running the Pi agent itself. On Cloudflare it replaces the VPS coordinator and grants. Until the cutover, Vercel production keeps the design above.
 
 ## Decision
 
@@ -45,45 +45,66 @@ Test a valid run for user A against user B's record, note, conversation, summary
 
 Inspect built worker/service images and Compose configuration to verify absence of database, encryption, and grant-minting secrets. Repeat Iggy's real Docker isolation acceptance. Review failure responses and logs for credential or health-data disclosure. Run the repository's required delivery checks and a synthetic end-to-end account test against the web API boundary before enabling production.
 
-## Cloudflare topology (proposed, November 16, 2026)
+## Cloudflare topology (decided November 20, 2026)
 
-The VPS contract doesn't change: same paths (`/api/chat/ticket`, `/api/chat/v1/*`, `/api/chat/worker/v1/*`), same grants, same coordinator credential, reached through the web Worker at the same origin. What changes is how the web side is split and what replaces Postgres's roles, RLS and session lock.
+Owner decisions: **each conversation gets its own Durable Object, and that object runs the Pi agent durably.** The agent loop moves off the VPS. The VPS keeps only what needs a GPU or the research corpus. On Cloudflare this replaces requirement items 2–5 and 8 (coordinator, claims, execution and control grants, the private gateway); items 1, 6 and 7 are restated below. Vercel production keeps the current design until the cutover.
 
-### Workers and bindings
+Feasibility was checked on November 20: `@earendil-works/pi-agent-core` and `pi-ai` 1.0.0 (the versions `services/chat` pins) bundle for workerd with `nodejs_compat`. Inside a Durable Object, an agent called a tool, wrote to the object's SQLite storage and finished an answer against an OpenAI-compatible endpoint. Pi's Node-only code (OAuth, its CLI) isn't used.
 
-- **`wildhearts-chat` Worker** serves the three chat path groups and the reaper (Cron Trigger every minute, replacing Inngest `reap-chat-runs`; status reads keep the opportunistic reap). The web Worker routes `/api/chat/*` to it over a second service binding (`CHAT`); like the API Worker it has no public URL.
-- **`CHAT_DB`** (its own D1 database: `wildhearts-chat-prod`, `-preview`, local `local-chat`) holds only the chat tables: conversations, messages, runs, coordinators, tool calls, events, summaries and evidence. The chat Worker has no binding to the main D1 and no R2.
-- **Records through a narrow RPC.** The API Worker exports a `ChatRecords` `WorkerEntrypoint`; the chat Worker binds it (`RECORDS`). Its methods are the reads chat makes today, by purpose, each taking a `userId` and running through `forUser` on the API side:
-  - `sessionFence(sessionId, userId)`: the `chat_lock_session_v2` rules (verified owner, unexpired session; for a demo workspace, its parent login too; a workspace identity without a parent is refused), answering the effective expiry or null.
-  - `dataKey(userId)`: the person's sealed data key row, created if missing (today's `INSERT` grant on `user_data_key`). Sealed, as stored.
-  - Record reads for the tools: data coverage (category counts and sources), candidates for `find_records` (current rows by category, date range and limit), rows by id for `read_records` and `calculate_lab_trend`, one attachment for `read_stored_note`, and the existence checks behind summary evidence (records, notes, sources by id). Rows come back sealed; the chat Worker opens them with the person's data key, as today.
+### Pieces
 
-  Not exposed: anything else in the main database (`session.token`, accounts, verification, Epic connections and tokens, profiles, documents, extraction), any write except creating a data key, generic SQL or a generic table read. This is the D1 equivalent of today's column grants, enforced by what the methods do rather than by the database. `role-preflight.ts` is replaced by a test over the entrypoint's method list (a new method fails CI until it's listed and reviewed) and by the bindings themselves.
+- **`wildhearts-chat` Worker** serves `/api/chat/v1/*` (the browser's chat API, same protocol) behind the web Worker's `CHAT` service binding, with no public URL. `/api/chat/ticket` and `/api/chat/worker/v1/*` are retired on Cloudflare: nothing outside Cloudflare runs the agent any more.
+- **`ChatConversation` Durable Object**, one per conversation (`idFromName(conversationId)`), with SQLite storage holding that conversation's messages, runs, tool calls and events, sealed with the person's data key as today. It serializes everything that happens to the conversation and gives real transactions (`transactionSync`) for sequence numbers and run state. One run at a time per conversation.
+- **`CHAT_DB`** (D1) holds what spans conversations: the per-person conversation index (id, owner, sealed title, timestamps) for the list, saved summaries and their evidence. The conversation object updates its index row; the list reads only the index.
+- **`ChatRecords` RPC** on the API Worker (a `WorkerEntrypoint` the chat Worker binds as `RECORDS`), by purpose, each taking a `userId` and running through `forUser`:
+  - `identify(cookie)`: who a browser request is (the API's `applicationSession`: login, selected demo workspace, or guest demo), as `{ userId, sessionId, expiresAt }`. Never the session token.
+  - `sessionFence(sessionId, userId)`: the `chat_lock_session_v2` rules (verified owner, unexpired session; a demo workspace's parent login too; a guest's own session), answering the expiry or null.
+  - `dataKey(userId)`: the person's sealed data key row, created if missing.
+  - Record reads for the tools: data coverage, `find_records` candidates, rows by id (`read_records`, `calculate_lab_trend`), one attachment (`read_stored_note`), and existence checks for summary evidence. Rows come back sealed; the conversation object opens them.
+  - Nothing else in the main database is reachable: not `session.token`, accounts, verification, Epic connections or tokens, profiles, documents or extraction, and no writes except creating a data key. A test lists the entrypoint's methods and fails on an unreviewed one; another checks no method's answer includes those tables' columns. `role-preflight.ts` has no successor beyond these.
 
-- **Secrets.** The chat Worker holds `RECORDS_ENCRYPTION_KEY` (as the chat roles' process does today, to open records and seal chat content), `CHAT_GRANT_DERIVATION_KEY`, `CHAT_RESEARCH_GATEWAY_TOKEN_HASH` and the coordinator credential hash. `CHAT_DATABASE_URL` and `CHAT_QUEUE_DATABASE_URL` go away. The VPS's configuration is unchanged.
+### The run, durably
 
-### Item 6 on D1: separate stores instead of restricted roles
+1. The browser posts a question (`POST /api/chat/v1/conversations/:id/runs`, with an idempotency key). The chat Worker identifies the person, checks they own the conversation (index row), checks the rate limits, and hands the question to the conversation's object, which records the run and the user message in one transaction and answers at once. The initiating session id is stored with the run.
+2. The object runs Pi from an **alarm**, not from the browser's request, so closing the tab changes nothing. Pi gets the system prompt, the conversation's earlier messages (as untrusted context, as today), the allowlisted tools and the configured model.
+3. **Checkpoints.** After every completed step (a model response, a tool result) the agent's messages, the tool-call record and the progress events are written in one transaction. If the object is evicted, restarted or deployed over, the next alarm reloads the checkpoint and continues with `Agent.continue()`. A model call that was in flight is made again (its output was never recorded). A tool call recorded as completed is never run twice: its stored result is replayed, as the recorded tool calls work today.
+4. **Bounds.** At most `CHAT_MAX_TOOL_CALLS` tool calls, a turn limit, an output budget and a deadline per run, plus a limit on resumes. Past any of them the run ends as `interrupted`, with what it had, and isn't retried.
+5. **Model calls** go to the VPS's existing restricted inference relay (OpenAI-compatible, configured models only) with a chat-Worker-only credential, `CHAT_INFERENCE_TOKEN`. The relay sees the selected health context, as inference does today. A busy relay (429/503) makes the object back off with its alarm, inside the deadline.
+6. **Tools** are fixed functions in the object: records through `RECORDS`, summaries in `CHAT_DB`, research through the VPS research endpoint with `CHAT_RESEARCH_GATEWAY_TOKEN`. The person is the conversation's owner, never an argument; the strict tool schemas (`src/lib/chat/tools.ts`) stay as they are, with no identity fields.
+7. **Events** are persisted in the object with sequence numbers; the browser polls `GET …/events?after=` as today. A WebSocket from the object (hibernation API) can come later without changing storage.
+8. **Cancel** (`DELETE …/runs/:id`) sets a flag the run checks before every step; the next step ends it as `cancelled`.
 
-Today the two restricted Neon roles keep a chat bug from reading tokens, accounts or profiles. On Cloudflare the same guarantee comes from bindings: the chat Worker can't name the main database, and the only way into it is the RPC above. Within `CHAT_DB`, rows are scoped by an explicit owner condition on every query (the `forUser` pattern from the API, applied to the chat tables), with per-user encryption as the second layer. The queue role's narrower column set (claims and leases only) becomes a separate module of the chat Worker that touches only `chat_run` and `chat_coordinator`, checked by the same kind of method-list test.
+### Sign-out and expiry (item 7)
 
-### Item 7 and the session lock: fence, read, fence again
+Before each model call, before each tool's reads, and before answering any browser read, the object calls `sessionFence` for the run's initiating session (or the requester's session, for reads). If it fails, a run stops as `interrupted` and the read is refused. The object serializes the conversation, but sign-out doesn't pass through it, so the fence is what orders the two. An answer is sent only if the session was still live after its data was read. A run started before a sign-out makes at most the step in progress; the fence refuses the next one.
 
-`chat_lock_session_v2` today takes `FOR SHARE` on the initiating session (and the demo parent) inside the request's transaction, so a sign-out waits until in-flight chat operations finish, and nothing reads records after a sign-out commits. D1 has no cross-request locks, and here the session lives in another database.
+### Isolation (item 6)
 
-Proposal: every operation that reads records or chat content calls `sessionFence` **before** its reads and **again after its reads, before it answers**, and fails closed (`run_not_active` or 401) if either check fails. An answer is therefore only sent if the session was live after the data was read: the operation is ordered before any sign-out that the second check didn't see, which is the same ordering the shared lock gives. Writes into `CHAT_DB` go in one batch guarded on the run's grant and lease (compare-and-set, audit pattern C), with the session checked first. A write can land in the moments between a sign-out and the next check. It stays in the person's own chat history and gives the VPS nothing.
+- The chat Worker can't name the main database; the RPC above is its only way in. A chat bug can't read tokens, accounts or profiles.
+- Each conversation's content lives in its own object's storage, and the cross-conversation tables in `CHAT_DB` are reached only with an owner condition (the API's `forUser` pattern). Per-user encryption stays as the second layer.
+- Tool code is fixed and the model can't run code. That replaces the disposable containers, which guarded against a compromised worker on the VPS. On Cloudflare the agent runs in the chat Worker itself, so Pi and its dependencies are part of the trusted code there. Pin them exactly, review updates, and keep the chat Worker free of other packages.
 
-This replaces the `ChatSessionLock` Durable Object the migration plan sketched. A Durable Object can't stop Better Auth deleting the session row, because sign-out doesn't pass through it, so it would add a hop without adding the guarantee. If review prefers a lock anyway, sign-out would have to go through it too (a Better Auth hook calling the object), which is a larger change to auth.
+### Limits
 
-Other Postgres locks in chat map to D1 as the transaction audit records: sequence allocation by `UPDATE … RETURNING` then insert in one batch (C); claims and reaping by guarded single statements (Q, C); the per-user advisory lock around starting a run by a `UserLock` queue keyed `chat:<user>` (L).
+Every question can cost GPU time, so asking is strictly limited (`api/src/limits.ts`, with the chat port): per person (signed in: 30 questions an hour; guest demo: 10), per network (60 an hour across guests), and new conversations per person (20 an hour). Each run is bounded as in step 4. Guests can use live chat on their fictional chart within those limits; they can't upload files.
+
+### Secrets
+
+The chat Worker holds `RECORDS_ENCRYPTION_KEY` (to open records and seal chat content), `CHAT_INFERENCE_TOKEN` and `CHAT_RESEARCH_GATEWAY_TOKEN`. Gone on Cloudflare: `CHAT_DATABASE_URL`, `CHAT_QUEUE_DATABASE_URL`, `CHAT_GRANT_DERIVATION_KEY`, the coordinator credential and its hash, `CHAT_RESEARCH_GATEWAY_TOKEN_HASH` and the browser ticket key. The VPS needs only the inference relay's and research endpoint's own configuration, and the tokens they accept.
 
 ### Verification on Cloudflare
 
-Everything under "Verification required before rollout" is repeated against the chat Worker on workerd (the Phase 1 test pool, with both D1 databases), plus:
+Repeat the cross-tenant and revocation cases from "Verification required before rollout" against the chat Worker on workerd, with both D1 databases, the RPC and the conversation objects. Add:
 
-- The fence: sign out during a long tool read (a test hook between the reads and the second check) and see the read refused; a demo workspace whose parent login ends, the same.
-- The RPC: a test that lists `ChatRecords`' methods and fails on any unreviewed one; each method called with user A's id never returns user B's rows; no method returns `session.token` or any column of `account`, `verification`, `epic_connection` or `profile`.
-- The chat Worker's bundle and bindings contain no main-database binding (checked from `wrangler.chat.jsonc` in CI).
+- **Durability:** abort the object mid-run (between a tool result and the next model call, and during a model call), then see the alarm resume from the checkpoint. A completed tool call isn't repeated, and the answer arrives once.
+- **The fence:** sign out during a run and see the next step refused; the same when a demo workspace's parent login ends, and when a guest demo expires.
+- **The RPC:** the method-list test; user A's id never returns user B's rows; no answer carries `session.token` or any column of `account`, `verification`, `epic_connection` or `profile`.
+- **Limits:** questions past each limit are refused with 429 before anything is recorded or any model is called.
+- **Configuration:** the chat Worker's configuration binds no main database and no R2 (checked from `wrangler.chat.jsonc` in CI).
 
 ## Remaining exposure
+
+On Cloudflare: a compromised chat Worker (including a compromised Pi dependency) can ask the RPC for any person's records and holds the key to open them, as a compromised chat-role process on Vercel can today. The inference relay sees the context sent to the model. The VPS no longer holds any grant that reaches records.
+
 
 This reduces the VPS compromise impact; it does not make plaintext processing secret-free. A compromised worker can expose context legitimately granted to its run, and a compromised VPS coordinator/relay can observe jobs and selected context passing through it. A compromised coordinator may claim pending authorized jobs until its credential is revoked. A compromised web backend or inference host remains a serious threat. Do not describe the new deployment as providing absolute tenant isolation against every host compromise.
