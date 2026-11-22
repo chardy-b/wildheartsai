@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { isDemoUser } from "@/lib/demo/access";
 import { getSession, getRealSession } from "@/lib/session";
-import { SignInForm } from "../sign-in/SignInForm";
+import { SignInForm } from "../../sign-in/SignInForm";
 import { enterDemo } from "./actions";
 
 export const metadata: Metadata = {
@@ -25,7 +25,7 @@ export default async function DemoEntryPage() {
       {session?.user.emailVerified ? <>
         <p className="form-notice">You’re signed in. Your demo has its own fictional chart and chat history, separate from your personal records.</p>
         <form action={enterDemo} className="auth-form"><button className="btn btn-lg" type="submit">Open guided demo</button></form>
-      </> : <SignInForm destination="/demo" submitLabel="Sign in to open demo" notice="Use your usual Wild Hearts account. No separate demo login is needed." />}
+      </> : <SignInForm destination="/demo/guided" submitLabel="Sign in to open demo" notice="Use your usual Wild Hearts account. No separate demo login is needed." />}
       <p className="auth-links">
         {!session?.user.emailVerified && <Link href="/forgot-password">Forgot your password?</Link>}
         <Link href="/app">Back to your account</Link>

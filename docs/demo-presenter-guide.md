@@ -1,24 +1,24 @@
 # Guided fictional patient demo
 
-Any verified, signed-in Wild Hearts account can open `/demo`. No separate demo email or password is required. The first visit offers **Open guided demo**, which creates a private fictional workspace for that account. Later visits go directly to the guide while demo mode is selected. **Return to my account** exits demo mode without signing out.
+Any verified, signed-in Wild Hearts account can open `/demo/guided` (the public `/demo` redirects to the signed-out homepage preview at `/#demo`). No separate demo email or password is required. The first visit offers **Open guided demo**, which creates a private fictional workspace for that account. Later visits go directly to the guide while demo mode is selected. **Return to my account** exits demo mode without signing out.
 
 Alex Morgan is an entirely invented 34-year-old with biopsy-confirmed eosinophilic esophagitis, persistent bloating, fatigue and an unresolved flushing evaluation. No real patient or clinician is represented. MCAS is explicitly unconfirmed.
 
 ## Present on wildheartsai.com
 
 1. Sign in to your normal account at **https://www.wildheartsai.com**.
-2. Open **https://www.wildheartsai.com/demo**, or select **Demo** in the app navigation.
+2. Open **https://www.wildheartsai.com/demo/guided**, or select **Demo** in the app navigation.
 3. Click **Open guided demo**. The fictional chart is created automatically; no local server or separate demo password is needed.
 4. Follow the six chapters below. **Reset demo** prepares your fictional chart for another presentation.
 5. Select **Return to my account** to resume your personal record without signing out.
 
-If `/demo` returns 404, the deployment does not include the demo or the server's `DEMO_ENABLED` flag is off. The hosted setup below is for the operator who deploys the site.
+If `/demo/guided` returns 404, the deployment does not include the demo or the server's `DEMO_ENABLED` flag is off. The hosted setup below is for the operator who deploys the site.
 
 ## Start locally (development only)
 
 1. Use the existing local `.env.local`, local database and encryption keys.
 2. Set `DEMO_ENABLED=1` and run `npm run db:migrate` (including migration 0019).
-3. Start `npm run dev`, sign in with your normal account and open **http://localhost:3000/demo**. Use `npm run db:seed` for the ordinary local test account if needed.
+3. Start `npm run dev`, sign in with your normal account and open **http://localhost:3000/demo/guided**. Use `npm run db:seed` for the ordinary local test account if needed.
 4. Click **Open guided demo**. The fictional chart is populated automatically in a separate workspace.
 
 `npm run demo:seed` remains available for the older dedicated presenter account, but it is no longer required for normal demo access. Its existing credentials are preserved for compatibility.
@@ -28,7 +28,7 @@ If `/demo` returns 404, the deployment does not include the demo or the server's
 Deploy migration 0019 and set `DEMO_ENABLED=1`. The migration adds a nullable parent-session reference and extends the existing chat session fence; it is backward compatible with ordinary sessions and the previous deployment. No separate demo credentials, account-seeding command, new encryption keys, or Medplum credentials are needed.
 
 1. Sign in to your normal account at **https://www.wildheartsai.com**.
-2. Open **https://www.wildheartsai.com/demo**, or select **Demo** in the app navigation.
+2. Open **https://www.wildheartsai.com/demo/guided**, or select **Demo** in the app navigation.
 3. Click **Open guided demo**. Use the six chapters; **Reset demo** prepares your fictional chart for another presentation.
 4. Select **Return to my account** to resume your personal record. The original login cookie remains unchanged.
 
