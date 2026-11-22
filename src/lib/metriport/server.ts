@@ -5,7 +5,7 @@ import { asUser } from "@/lib/db/rls";
 import { env } from "@/lib/env";
 import { recordsKey } from "@/lib/records-keys";
 import type { JobEnv } from "@/lib/sync/job";
-import { tokenKey } from "@/lib/epic/server";
+import { tokenKey, tokenKeys } from "@/lib/epic/server";
 import { createMetriportClient, externalIdFor, findOrCreatePatient, type MetriportClient } from "./client";
 import { findPersonaConnection, getMetriportConnectionForSource, saveMetriportConnection } from "./connections";
 import { metriportJob, waitForRecords } from "./job";
@@ -29,7 +29,7 @@ export async function connectSandboxPersona(userId: string, persona: Persona): P
   const existing = await asUser(db, userId, (tx) => findPersonaConnection(tx, key, userId, persona));
   const facilityId = existing?.facilityId ?? (await metriport.facilityId());
   const patientId = existing?.patientId ?? (await findOrCreatePatient(metriport, persona, facilityId, externalIdFor(userId, persona))).id;
-  return asUser(db, userId, (tx) => saveMetriportConnection(tx, key, { userId, persona, patientId, facilityId }, new Date()));
+  return asUser(db, userId, (tx) => saveMetriportConnection(tx, tokenKeys(), { userId, persona, patientId, facilityId }, new Date()));
 }
 
 export const loadMetriportSyncJob: JobEnv["load"] = async ({ runId, userId, sourceId }) => {
