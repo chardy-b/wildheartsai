@@ -8,6 +8,7 @@ import {
   briefFor, briefText, fmt, refillText, visitOf, type Src, type VisitId,
 } from "./demo-data";
 import { choicesFor, hasTurn, initialState, keyOf, labelOf, nextPrep, pendingTurn, reducer, type Choice, type DemoState, type Kind, type Turn } from "./demo-state";
+import { AllergyVisual, AudiogramVisual, FerritinVisual, MriVisual, PathologyVisual } from "./result-visuals";
 import "./holo-demo.css";
 
 const reduced = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -257,6 +258,7 @@ function FinderWidget({ state, go, hRef }: WidgetProps) {
           <li key={r.id} style={stagger(i)}>
             <button type="button" className="hd-pick" data-result={r.id} onClick={() => go({ kind: "result", arg: r.id })}>
               <span>
+                <span className="hd-result-type">{r.modality}</span>
                 <strong>{r.title}</strong>
                 <small>{r.sub}</small>
               </span>
@@ -269,24 +271,20 @@ function FinderWidget({ state, go, hRef }: WidgetProps) {
   );
 }
 
-function ResultWidget({ id, state, go, hRef }: WidgetProps & { id: string }) {
+function ResultWidget({ id, state, go, hRef, mriImageSrc }: WidgetProps & { id: string; mriImageSrc: string }) {
   const h = hRef(`result:${id}`);
   if (id === "biopsy")
     return (
       <Widget id="r-biopsy" kicker="Pathology · Cedar Digestive Health" title="Biopsy trend" badge="Chart" hRef={h}>
-        <div className="hd-compare">
-          <div><small>27 Jun 2026</small><p className="hd-metric">42<span> eos/hpf</span></p></div>
-          <span aria-hidden="true" className="hd-arrow">→</span>
-          <div><small>27 Oct 2026</small><p className="hd-metric">8<span> eos/hpf</span></p></div>
-        </div>
+        <PathologyVisual />
         <p>The peak count was lower at the repeat biopsy, and the GI note describes improved swallowing. This is not a claim of cure.</p>
         <Sources items={[SRC.path, SRC.gi]} label="Dated sources" />
       </Widget>
     );
   if (id === "ferritin")
     return (
-      <Widget id="r-ferritin" kicker="Juniper Primary Care · 25 May 2026" title="Ferritin, earlier result" badge="Chart" hRef={h}>
-        <p className="hd-metric">22<span> ng/mL · range 15–150</span></p>
+      <Widget id="r-ferritin" kicker="Juniper Primary Care · 25 May 2026" title={state.docAdded ? "Ferritin comparison" : "Ferritin, earlier result"} badge="Chart" hRef={h}>
+        <FerritinVisual confirmed={state.docAdded} />
         <p>Primary care later requested a repeat CBC and ferritin because fatigue persisted.</p>
         <div className="hd-actions">
           {state.docAdded ? (
@@ -295,22 +293,29 @@ function ResultWidget({ id, state, go, hRef }: WidgetProps & { id: string }) {
             <button type="button" className="hd-btn" data-flow="doc" onClick={() => go({ kind: "doc" })}>Review outside report</button>
           )}
         </div>
-        <Sources items={[SRC.ferritinOld, SRC.pcp]} label="Dated sources" />
+        <Sources items={[SRC.ferritinOld, SRC.pcp, ...(state.docAdded ? [SRC.outside] : [])]} label="Dated sources" />
       </Widget>
     );
   if (id === "outside")
     return (
       <Widget id="r-outside" kicker="Outside report · 18 Nov 2026 · page 1" title="Ferritin, outside report" badge="Added" hRef={h}>
-        <p className="hd-metric">14<span> ng/mL · printed range 15–150</span></p>
+        <FerritinVisual confirmed={state.docAdded} />
         <p>Compared with 22 ng/mL on 25 May 2026. It is now listed in this brief for your visits, for the care team to review with the fatigue follow-up.</p>
         <Sources items={[SRC.outside, SRC.ferritinOld]} label="Dated sources" />
       </Widget>
     );
+  if (id === "allergy") return (
+    <Widget id="r-allergy" kicker="Environmental allergens · 26 Aug 2026" title="Skin-prick panel" badge="Synthetic" hRef={h}>
+      <AllergyVisual />
+      <Sources items={[{ who: "Synthetic environmental allergy panel", when: "26 Aug 2026", what: "Invented wheal measurements at 15 minutes, including histamine and saline controls. Separate from the 23 Aug flushing note; not event-timed mediator testing." }]} label="Source" />
+    </Widget>
+  );
   const mri = id === "mri";
   return (
     <Widget id={`r-${id}`} kicker={mri ? "Imaging · 10 Nov 2026" : "Audiology · 12 Nov 2026"} title={mri ? "Brain MRI" : "Audiology"} badge="Sample report" hRef={h}>
+      {mri ? <MriVisual src={mriImageSrc} /> : <AudiogramVisual />}
+      <p className="hd-kicker">Alex’s sample report · excerpt</p>
       <blockquote className="hd-quote">“{mri ? MRI_TEXT : AUDIOLOGY_TEXT}”</blockquote>
-      <p className="hd-muted">Report text only, no images.</p>
       <Sources items={[{ who: mri ? "Imaging report" : "Audiology report", when: mri ? "10 Nov 2026" : "12 Nov 2026", what: "Sample report text." }]} label="Source" />
     </Widget>
   );
@@ -403,7 +408,7 @@ const HOLO_LINE: Record<Kind, (t: Turn) => string> = {
 
 const READY: Record<Kind, string> = { prep: "Visit brief", meds: "Medicine list", connect: "Connect MyChart UCSF", finder: "Find a result", result: "Result", doc: "Outside report", summary: "Chart summary" };
 
-function DemoRun({ avatarSrc, focusStart }: { avatarSrc: string; focusStart: boolean }) {
+function DemoRun({ avatarSrc, mriImageSrc, focusStart }: { avatarSrc: string; mriImageSrc: string; focusStart: boolean }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [live, setLive] = useState("");
   const root = useRef<HTMLDivElement>(null);
@@ -482,7 +487,7 @@ function DemoRun({ avatarSrc, focusStart }: { avatarSrc: string; focusStart: boo
       case "meds": return <MedsWidget state={state} dispatch={dispatch} hRef={hRef} />;
       case "connect": return <ConnectWidget state={state} hRef={hRef} onImport={() => { heads.current.connect?.focus({ preventScroll: true }); dispatch({ type: "startImport" }); setLive("Importing sample records."); }} />;
       case "finder": return <FinderWidget {...props} />;
-      case "result": return <ResultWidget {...props} id={t.arg ?? "biopsy"} />;
+      case "result": return <ResultWidget {...props} id={t.arg ?? "biopsy"} mriImageSrc={mriImageSrc} />;
       case "doc": return <DocWidget {...props} dispatch={(a) => { heads.current.doc?.focus({ preventScroll: true }); dispatch(a); setLive("Added to results and visit briefs."); }} />;
       case "summary": return <SummaryWidget {...props} />;
     }
@@ -533,7 +538,7 @@ function DemoRun({ avatarSrc, focusStart }: { avatarSrc: string; focusStart: boo
   );
 }
 
-export function HoloDemo({ avatarSrc = "/holo-demo.webp" }: { avatarSrc?: string }) {
+export function HoloDemo({ avatarSrc = "/holo-demo.webp", mriImageSrc = "/demo/mri-phantom.webp" }: { avatarSrc?: string; mriImageSrc?: string }) {
   const [run, setRun] = useState(0);
   return (
     <div className="hd">
@@ -549,7 +554,7 @@ export function HoloDemo({ avatarSrc = "/holo-demo.webp" }: { avatarSrc?: string
         <button type="button" className="hd-top-btn" onClick={() => setRun((n) => n + 1)}>Restart</button>
         <a className="hd-top-link" href="/sign-up">Sign up</a>
       </header>
-      <DemoRun key={run} avatarSrc={avatarSrc} focusStart={run > 0} />
+      <DemoRun key={run} avatarSrc={avatarSrc} mriImageSrc={mriImageSrc} focusStart={run > 0} />
     </div>
   );
 }

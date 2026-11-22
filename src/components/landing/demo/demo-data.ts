@@ -1,7 +1,7 @@
 // Bundled, invented sample content for the public /demo page (Alex Morgan's chart). Not real people, clinics or records.
 
 export type VisitId = "gi" | "allergy" | "dietitian";
-export type ResultId = "biopsy" | "ferritin" | "mri" | "audiology" | "outside";
+export type ResultId = "biopsy" | "ferritin" | "mri" | "audiology" | "allergy" | "outside";
 
 export type Src = { who: string; when: string; what: string };
 export type Line = { text: string; source: string };
@@ -52,13 +52,32 @@ export const MEDS = [
 export const refillText = (m: (typeof MEDS)[number]) =>
   `Hello, I’d like to ask about a refill of ${m.name} ${m.dose.replace(" · ", ", ")} (charted ${m.src.when}). Please let me know what you need from me.`;
 
-export const RESULTS: { id: ResultId; title: string; sub: string }[] = [
-  { id: "biopsy", title: "Esophageal biopsies", sub: "Cedar Digestive Health · 27 Jun & 27 Oct 2026" },
-  { id: "ferritin", title: "Ferritin · earlier result", sub: "Juniper Primary Care · 25 May 2026" },
-  { id: "mri", title: "Brain MRI · report", sub: "Sample report · 10 Nov 2026" },
-  { id: "audiology", title: "Audiology · report", sub: "Sample report · 12 Nov 2026" },
+export const RESULTS: { id: ResultId; title: string; sub: string; modality: string }[] = [
+  { id: "biopsy", title: "Esophageal biopsies", sub: "Cedar Digestive Health · 27 Jun & 27 Oct 2026", modality: "Pathology" },
+  { id: "ferritin", title: "Ferritin · earlier result", sub: "Juniper Primary Care · 25 May 2026", modality: "Blood test" },
+  { id: "mri", title: "Brain MRI · report", sub: "Sample report · 10 Nov 2026", modality: "Imaging" },
+  { id: "audiology", title: "Audiology · report", sub: "Sample report · 12 Nov 2026", modality: "Audiogram" },
+  { id: "allergy", title: "Environmental allergy panel", sub: "Synthetic sample · 26 Aug 2026", modality: "Skin prick" },
 ];
-export const OUTSIDE_RESULT = { id: "outside" as const, title: "Ferritin · outside report", sub: "Outside report · 18 Nov 2026 · page 1" };
+export const OUTSIDE_RESULT = { id: "outside" as const, title: "Ferritin · outside report", sub: "Outside report · 18 Nov 2026 · page 1", modality: "Blood test" };
+
+export const PATHOLOGY = [{ date: "27 Jun 2026", value: 42 }, { date: "27 Oct 2026", value: 8 }];
+export const ferritinSamples = (confirmed: boolean) => [
+  { date: "25 May 2026", value: 22 },
+  ...(confirmed ? [{ date: "18 Nov 2026", value: 14 }] : []),
+];
+export const AUDIOGRAM = [
+  { hz: 250, right: 10, left: 15 }, { hz: 500, right: 5, left: 10 },
+  { hz: 1000, right: 5, left: 10 }, { hz: 2000, right: 10, left: 5 },
+  { hz: 4000, right: 15, left: 10 }, { hz: 8000, right: 10, left: 15 },
+];
+export const ALLERGY_PANEL = [
+  { name: "Dust mite (D. pteronyssinus)", type: "Environmental allergen", mm: 5 },
+  { name: "Timothy grass", type: "Environmental allergen", mm: 4 },
+  { name: "Cat dander", type: "Environmental allergen", mm: 0 },
+  { name: "Histamine", type: "Positive control", mm: 6 },
+  { name: "Saline", type: "Negative control", mm: 0 },
+];
 
 export const MRI_TEXT = "No acute intracranial abnormality.";
 export const AUDIOLOGY_TEXT = "Hearing thresholds described as within expected range.";

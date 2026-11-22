@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { RESULTS, VISITS, briefFor } from "./demo-data";
-import { choicesFor, initialState, keyOf, pendingTurn, reducer, type DemoState, type Kind } from "./demo-state";
+import { RESULTS, VISITS, briefFor, ferritinSamples } from "./demo-data";
+import { choicesFor, initialState, keyOf, labelOf, pendingTurn, reducer, type DemoState, type Kind } from "./demo-state";
 
 function open(state: DemoState, kind: Kind, arg?: string) {
   const selected = reducer(state, { type: "choose", kind, arg });
@@ -40,11 +40,19 @@ describe("the full-screen demo", () => {
     const outside = { type: "choose", kind: "result", arg: "outside" } as const;
     const review = open(initialState, "doc");
     expect(reducer(review, outside)).toBe(review);
+    expect(ferritinSamples(review.docAdded)).toEqual([{ date: "25 May 2026", value: 22 }]);
     const added = reducer(review, { type: "confirmDoc" });
+    expect(ferritinSamples(added.docAdded)).toEqual([{ date: "25 May 2026", value: 22 }, { date: "18 Nov 2026", value: 14 }]);
     expect(choicesFor(added)).toContainEqual({ kind: "result", arg: "outside" });
     expect(reducer(added, { type: "confirmDoc" })).toBe(added);
     expect(briefFor("gi", { added: added.docAdded, imported: false }).bring.map((line) => line.text).join()).toContain("14 ng/mL");
     expect(open(added, "result", "outside").turns.at(-1)?.key).toBe("result:outside");
+  });
+
+  it("offers the environmental panel as a choice with its own label", () => {
+    expect(RESULTS.find((r) => r.id === "allergy")?.modality).toBe("Skin prick");
+    expect(labelOf({ kind: "result", arg: "allergy" })).toBe("Environmental allergy panel");
+    expect(open(initialState, "result", "allergy").turns.at(-1)?.key).toBe("result:allergy");
   });
 
   it("returns to an untouched starting state after an import, a draft and a message read", () => {

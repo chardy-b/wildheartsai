@@ -48,7 +48,7 @@ export function labelOf(c: Choice): string {
     case "meds": return "Review meds";
     case "connect": return "Connect MyChart UCSF";
     case "finder": return c.arg === "again" ? "Find another result" : "Find a result";
-    case "result": return c.arg === "outside" ? "Ferritin from outside report" : c.arg === "ferritin" ? "Earlier ferritin" : c.arg === "biopsy" ? "Biopsy trend" : c.arg === "mri" ? "Brain MRI" : "Audiology";
+    case "result": return c.arg === "outside" ? "Ferritin from outside report" : c.arg === "ferritin" ? "Earlier ferritin" : c.arg === "biopsy" ? "Biopsy trend" : c.arg === "mri" ? "Brain MRI" : c.arg === "allergy" ? "Environmental allergy panel" : "Audiology";
     case "doc": return "Review outside report";
     case "summary": return "Chart summary";
     case "browse": return "All options";
