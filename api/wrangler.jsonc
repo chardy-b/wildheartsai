@@ -51,7 +51,14 @@
     },
     "production": {
       "name": "wildhearts-api-production",
-      "vars": { "APP_ENV": "production" },
+      // Public addresses, not secrets: the same values as Vercel production. EPIC_REDIRECT_URI must
+      // match a redirect URI registered on the Epic app exactly (confirmed 2026-11-22).
+      "vars": {
+        "APP_ENV": "production",
+        "BETTER_AUTH_URL": "https://www.wildheartsai.com",
+        "EPIC_REDIRECT_URI": "https://www.wildheartsai.com/api/epic/callback",
+        "EMAIL_FROM": "Wild Hearts Health <no-reply@wildheartsai.com>"
+      },
       // Cloudflare Email Sending: verification and password-reset links (src/auth/email.ts). The
       // sender's domain must be onboarded first (`npx wrangler email sending enable <domain>`).
       "send_email": [{ "name": "EMAIL" }],
