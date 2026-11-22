@@ -7,7 +7,7 @@ import { authErrorMessage } from "@/lib/auth-errors";
 
 export function SignInForm({ notice, destination = "/app", submitLabel = "Sign in" }: {
   notice?: string;
-  destination?: "/app" | "/demo";
+  destination?: "/app" | "/demo/guided";
   submitLabel?: string;
 }) {
   const router = useRouter();

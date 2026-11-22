@@ -14,7 +14,7 @@ export async function enterDemo() {
   assertWritable();
   if (process.env.DEMO_ENABLED !== "1") notFound();
   const identity = await getRealSession();
-  if (!identity?.user.emailVerified) redirect("/demo");
+  if (!identity?.user.emailVerified) redirect("/demo/guided");
   if (!isDemoUser(identity.user.id)) {
     try { await ensureDemoWorkspace(db, recordsKey(), identity); }
     catch { throw new Error("The demo could not open. Please try again."); }

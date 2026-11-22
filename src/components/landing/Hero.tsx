@@ -22,9 +22,15 @@ export function Hero({ signedIn = false }: { signedIn?: boolean }) {
           <Link className="btn btn-lg" href={signedIn ? "/app" : "/sign-up"}>
             {signedIn ? "Go to dashboard" : "Get started"}
           </Link>
-          <a className="btn btn-lg btn-ghost" href="#how-it-works">
-            How it works
-          </a>
+          {signedIn ? (
+            <a className="btn btn-lg btn-ghost" href="#how-it-works">
+              How it works
+            </a>
+          ) : (
+            <Link className="btn btn-lg btn-ghost" href="/demo" prefetch={false}>
+              Try the demo
+            </Link>
+          )}
         </div>
         <dl className="proof">
           <div>

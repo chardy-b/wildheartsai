@@ -21,6 +21,6 @@ export type Session = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 
 export async function requireSession(): Promise<Session> {
   const session = await getSession();
-  if (!session) redirect(await getRealSession() ? "/demo" : "/sign-in");
+  if (!session) redirect(await getRealSession() ? "/demo/guided" : "/sign-in");
   return session;
 }
