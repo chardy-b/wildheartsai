@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ALLERGY_PANEL, AUDIOGRAM, ferritinSamples, PATHOLOGY } from "./demo-data";
+import { A1C_SAMPLES, ALLERGY_PANEL, AUDIOGRAM, ferritinSamples, PATHOLOGY } from "./demo-data";
 
 // Bundled generative illustration; no human subject or report-derived imaging.
 export const MRI_VISUAL_SOURCE: { label: string; href?: string } = {
@@ -41,6 +41,31 @@ function ComparisonChart({ label, samples, unit, ceiling, floor }: {
       </svg>
       <figcaption className="hd-chart-receipt">
         {samples.map((sample) => <span key={sample.date}><span>{sample.date}</span><strong>{sample.value} {unit}</strong></span>)}
+      </figcaption>
+    </figure>
+  );
+}
+
+export function A1cVisual() {
+  const x = (i: number) => 70 + i * 110;
+  const y = (value: string) => 152 - (Number(value) / 7) * 116;
+  return (
+    <figure className="hd-result-figure">
+      <div className="hd-plot-heading"><strong>A1C over three checks</strong><span>Synthetic · %</span></div>
+      <svg className="hd-plot" viewBox="0 0 360 195" aria-hidden="true" focusable="false">
+        {[0, 3.5, 7].map((value) => <g key={value}>
+          <line x1="42" x2="330" y1={y(String(value))} y2={y(String(value))} className="hd-gridline" />
+          <text x="32" y={y(String(value)) + 4} textAnchor="end">{value}</text>
+        </g>)}
+        <polyline points={A1C_SAMPLES.map((s, i) => `${x(i)},${y(s.value)}`).join(" ")} fill="none" stroke="#b8245a" strokeWidth="2" />
+        {A1C_SAMPLES.map((s, i) => <g key={s.date}>
+          <circle cx={x(i)} cy={y(s.value)} r="5" fill="#b8245a" />
+          <text x={x(i)} y={y(s.value) - 12} textAnchor="middle" className="hd-value-label">{s.value}%</text>
+          <text x={x(i)} y="177" textAnchor="middle">{s.date}</text>
+        </g>)}
+      </svg>
+      <figcaption className="hd-chart-receipt">
+        {A1C_SAMPLES.map((s) => <span key={s.date}><span>{s.type} · {s.date}</span><strong>{s.value}%</strong></span>)}
       </figcaption>
     </figure>
   );

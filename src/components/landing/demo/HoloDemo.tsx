@@ -4,11 +4,11 @@ import { useCallback, useEffect, useReducer, useRef, useState, type CSSPropertie
 
 import { HEART_PATH } from "../marks";
 import {
-  AUDIOLOGY_TEXT, DATELINE, DOC, FOLLOW_UP, IMPORTED_RECORDS, IMPORT_STAGES, MEDS, MRI_TEXT, OUTSIDE_RESULT, RECONNECT, RESULTS, SRC, SUMMARY, VISITS,
+  A1C_SAMPLES, AUDIOLOGY_TEXT, DATELINE, DOC, FOLLOW_UP, IMPORTED_RECORDS, IMPORT_STAGES, MEDS, MRI_TEXT, NEXT_VISIT, OUTSIDE_RESULT, RECONNECT, RESULTS, SRC, SUMMARY, VISITS,
   briefFor, briefText, fmt, refillText, visitOf, type Src, type VisitId,
 } from "./demo-data";
 import { choicesFor, hasTurn, initialState, keyOf, labelOf, nextPrep, pendingTurn, reducer, type Choice, type DemoState, type Kind, type Turn } from "./demo-state";
-import { AllergyVisual, AudiogramVisual, FerritinVisual, MriVisual, PathologyVisual } from "./result-visuals";
+import { A1cVisual, AllergyVisual, AudiogramVisual, FerritinVisual, MriVisual, PathologyVisual } from "./result-visuals";
 import "./holo-demo.css";
 
 const reduced = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -149,9 +149,9 @@ function ConnectStrip({ state, go }: Pick<WidgetProps, "state" | "go">) {
   );
 }
 
-function BriefWidget({ id, state, go, hRef }: WidgetProps & { id: VisitId }) {
+export function BriefWidget({ id, state, go, hRef }: WidgetProps & { id: VisitId }) {
   const [status, setStatus] = useState("");
-  const brief = briefFor(id, { added: state.docAdded, imported: state.importStage === "imported" });
+  const brief = briefFor(id, { added: state.docAdded, imported: state.importStage === "imported", a1cQuestionAdded: state.a1cQuestionAdded });
   const text = briefText(brief);
   const groups: [string, typeof brief.say][] = [["What to say", brief.say], ["What to ask", brief.ask], ["What to bring", brief.bring]];
   const isNew = (source: string) => source.startsWith("Outside") || source.startsWith("Sample import");
@@ -271,8 +271,22 @@ function FinderWidget({ state, go, hRef }: WidgetProps) {
   );
 }
 
-function ResultWidget({ id, state, go, hRef, mriImageSrc }: WidgetProps & { id: string; mriImageSrc: string }) {
+export function ResultWidget({ id, state, go, hRef, mriImageSrc, onAddA1cQuestion }: WidgetProps & { id: string; mriImageSrc: string; onAddA1cQuestion: () => void }) {
   const h = hRef(`result:${id}`);
+  if (id === "a1c") return (
+    <Widget id="r-a1c" kicker="Two clinics · Mar 2024–Jun 2025" title="A1C trend" badge="Synthetic" hRef={h}>
+      <p>It’s gone up a little at each check, across two clinics: 5.9%, 6.0%, 6.1%.</p>
+      <A1cVisual />
+      <p>Want to raise this at your next visit, on {NEXT_VISIT.date}? I can add it to your questions.</p>
+      <p className="hd-visual-note">Fictional sample results, not a diagnosis. These checks do not show a current A1C.</p>
+      <div className="hd-actions">
+        <button type="button" className="hd-btn" data-variant="solid" data-flow="add-a1c-question" aria-pressed={state.a1cQuestionAdded} onClick={onAddA1cQuestion}>{state.a1cQuestionAdded ? "Added to questions" : "Add to questions"}</button>
+        {state.a1cQuestionAdded && <button type="button" className="hd-btn" data-flow="a1c-brief" onClick={() => go({ kind: "prep", arg: NEXT_VISIT.id })}>Open {NEXT_VISIT.short} brief · {NEXT_VISIT.date}</button>}
+      </div>
+      <p className="hd-status" role="status">{state.a1cQuestionAdded ? `Added to your ${NEXT_VISIT.date} ${NEXT_VISIT.short} visit questions.` : ""}</p>
+      <Sources items={A1C_SAMPLES.map((s) => s.source)} label="Open sources" />
+    </Widget>
+  );
   if (id === "biopsy")
     return (
       <Widget id="r-biopsy" kicker="Pathology · Cedar Digestive Health" title="Biopsy trend" badge="Chart" hRef={h}>
@@ -487,7 +501,7 @@ function DemoRun({ avatarSrc, mriImageSrc, focusStart }: { avatarSrc: string; mr
       case "meds": return <MedsWidget state={state} dispatch={dispatch} hRef={hRef} />;
       case "connect": return <ConnectWidget state={state} hRef={hRef} onImport={() => { heads.current.connect?.focus({ preventScroll: true }); dispatch({ type: "startImport" }); setLive("Importing sample records."); }} />;
       case "finder": return <FinderWidget {...props} />;
-      case "result": return <ResultWidget {...props} id={t.arg ?? "biopsy"} mriImageSrc={mriImageSrc} />;
+      case "result": return <ResultWidget {...props} id={t.arg ?? "biopsy"} mriImageSrc={mriImageSrc} onAddA1cQuestion={() => dispatch({ type: "addA1cQuestion" })} />;
       case "doc": return <DocWidget {...props} dispatch={(a) => { heads.current.doc?.focus({ preventScroll: true }); dispatch(a); setLive("Added to results and visit briefs."); }} />;
       case "summary": return <SummaryWidget {...props} />;
     }
@@ -525,7 +539,7 @@ function DemoRun({ avatarSrc, mriImageSrc, focusStart }: { avatarSrc: string; mr
       <nav className="hd-bar" aria-label="What next">
         <div className="hd-bar-inner">
           {choices.map((c) => (
-            <button key={keyOf(c) + (c.arg ?? "")} type="button" className="hd-choice" data-choice={c.kind} data-variant={c.kind === "browse" ? "back" : undefined} onClick={() => go(c)}>
+            <button key={keyOf(c) + (c.arg ?? "")} type="button" className="hd-choice" data-choice={c.kind} data-arg={c.arg} data-variant={c.kind === "browse" ? "back" : undefined} onClick={() => go(c)}>
               {c.kind === "browse" && <span aria-hidden="true">← </span>}
               {labelOf(c)}
             </button>
