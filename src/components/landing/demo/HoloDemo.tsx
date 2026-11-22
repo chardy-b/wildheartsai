@@ -538,7 +538,8 @@ export function HoloDemo({ avatarSrc = "/holo-demo.webp" }: { avatarSrc?: string
   return (
     <div className="hd">
       <header className="hd-top">
-        {/* Plain anchors: the demo makes no background requests. */}
+        {/* The same plain link also works in the offline review build, without a Next router or prefetch. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a className="hd-brand" href="/" aria-label="Wild Hearts Health home">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d={HEART_PATH} /></svg>
           <span>Wild Hearts Health</span>
