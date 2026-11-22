@@ -11,3 +11,7 @@ export const syncRequested = eventType("records/sync.requested", { schema: stati
 // Imports Epic's health system directory now instead of waiting for the daily run: send it from
 // the Inngest dashboard after the first deploy, or whenever the directory looks stale.
 export const directoryRefreshRequested = eventType("epic/directory.refresh-requested");
+
+// Re-seals every connection's credentials under TOKEN_ENCRYPTION_KEY_NEXT (src/lib/epic/token-roll.ts).
+// Send it from the Inngest dashboard once that key is set in production; it's safe to send again.
+export const tokenResealRequested = eventType("connections/tokens.reseal-requested");

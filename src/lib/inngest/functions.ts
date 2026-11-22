@@ -5,7 +5,11 @@ import { runSyncJob } from "@/lib/sync/job";
 import { failRun } from "@/lib/sync/run";
 import { queueScheduledRefreshes, sourcesDueForRefresh } from "@/lib/sync/scheduled";
 import { loadSyncJob, prepareSyncJob, sendSyncRequest, startSyncJob } from "@/lib/sync/server";
-import { directoryRefreshRequested, inngest, syncRequested } from "./client";
+import { directoryRefreshRequested, inngest, syncRequested, tokenResealRequested } from "./client";
+import { NonRetriableError } from "inngest";
+import { keyFromBase64 } from "@/lib/crypto/seal";
+import { env } from "@/lib/env";
+import { resealConnectionTokens } from "@/lib/epic/token-roll";
 import { chatEnabled, webChatRuntime } from "@/lib/chat-web/runtime";
 import { beginSchedule, failSchedule, finishSchedule } from "@/lib/sync/schedule-history";
 
@@ -89,4 +93,15 @@ export const reapChatRuns = inngest.createFunction(
   },
 );
 
-export const functions = [syncSource, refreshSources, refreshEpicDirectory, reapChatRuns];
+// The backfill of a token key roll. One step; it returns counts only.
+export const resealConnectionTokensJob = inngest.createFunction(
+  { id: "reseal-connection-tokens", triggers: [tokenResealRequested], concurrency: { limit: 1 }, retries: 1 },
+  async ({ step }) =>
+    step.run("reseal credentials", async () => {
+      const config = env();
+      if (!config.TOKEN_ENCRYPTION_KEY_NEXT) throw new NonRetriableError("TOKEN_ENCRYPTION_KEY_NEXT isn't set");
+      return resealConnectionTokens(db, keyFromBase64(config.TOKEN_ENCRYPTION_KEY), keyFromBase64(config.TOKEN_ENCRYPTION_KEY_NEXT));
+    }),
+);
+
+export const functions = [syncSource, refreshSources, refreshEpicDirectory, reapChatRuns, resealConnectionTokensJob];

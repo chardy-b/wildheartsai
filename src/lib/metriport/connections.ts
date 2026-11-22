@@ -2,7 +2,8 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { recordAudit } from "@/lib/audit";
-import { seal, unseal } from "@/lib/crypto/seal";
+import { unseal } from "@/lib/crypto/seal";
+import { sealUnder, type TokenKeys } from "@/lib/crypto/token-keys";
 import { healthSource, metriportConnection } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import { personaOrganizationName, personaSourceUrl, type Persona } from "./personas";
@@ -41,13 +42,14 @@ function secretsOf(row: typeof metriportConnection.$inferSelect, key: Buffer, or
 // persona again reuses the same source and its records.
 export async function saveMetriportConnection(
   db: Db,
-  key: Buffer,
+  keys: TokenKeys,
   input: { userId: string; persona: Persona; patientId: string; facilityId: string },
   now: Date,
 ): Promise<{ sourceId: string }> {
   const organizationName = personaOrganizationName(input.persona);
   const fhirBaseUrl = personaSourceUrl(input.persona);
-  const link = { sealedPatientId: seal(input.patientId, key), facilityId: input.facilityId, updatedAt: now };
+  const patient = sealUnder(input.patientId, keys);
+  const link = { sealedPatientId: patient.sealed, sealedPatientIdNext: patient.next, facilityId: input.facilityId, updatedAt: now };
   return db.transaction(async (tx) => {
     const [existing] = await tx
       .select({ id: healthSource.id })

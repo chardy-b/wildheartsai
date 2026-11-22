@@ -49,6 +49,11 @@ const schema = z
     TOKEN_ENCRYPTION_KEY: z
       .string()
       .refine((value) => Buffer.from(value, "base64").length === 32, "TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded"),
+    // During a token key roll only (src/lib/crypto/token-keys.ts): credentials are also sealed under it.
+    TOKEN_ENCRYPTION_KEY_NEXT: z
+      .string()
+      .refine((value) => Buffer.from(value, "base64").length === 32, "TOKEN_ENCRYPTION_KEY_NEXT must be 32 bytes, base64-encoded")
+      .optional(),
     // Key-encryption key for stored health records (src/lib/crypto/user-keys.ts). Must differ from TOKEN_ENCRYPTION_KEY.
     RECORDS_ENCRYPTION_KEY: z
       .string()
@@ -60,6 +65,9 @@ const schema = z
       for (const key of r2Keys) {
         if (!value[key]) ctx.addIssue({ code: "custom", path: [key], message: "Set all four R2 storage variables together" });
       }
+    }
+    if (value.TOKEN_ENCRYPTION_KEY_NEXT && [value.TOKEN_ENCRYPTION_KEY, value.RECORDS_ENCRYPTION_KEY].includes(value.TOKEN_ENCRYPTION_KEY_NEXT)) {
+      ctx.addIssue({ code: "custom", path: ["TOKEN_ENCRYPTION_KEY_NEXT"], message: "TOKEN_ENCRYPTION_KEY_NEXT must be a new key, unlike TOKEN_ENCRYPTION_KEY and RECORDS_ENCRYPTION_KEY" });
     }
     if (value.RECORDS_ENCRYPTION_KEY === value.TOKEN_ENCRYPTION_KEY) {
       ctx.addIssue({ code: "custom", path: ["RECORDS_ENCRYPTION_KEY"], message: "RECORDS_ENCRYPTION_KEY must differ from TOKEN_ENCRYPTION_KEY" });

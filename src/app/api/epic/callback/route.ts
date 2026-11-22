@@ -6,7 +6,7 @@ import { asUser } from "@/lib/db/rls";
 import { completeAuthorization } from "@/lib/epic/callback";
 import { saveConnection } from "@/lib/epic/connections";
 import { FLOW_COOKIE } from "@/lib/epic/flow";
-import { clientAssertionFor, credentialsForOrganization, tokenKey } from "@/lib/epic/server";
+import { clientAssertionFor, credentialsForOrganization, tokenKey, tokenKeys } from "@/lib/epic/server";
 import { exchangeCode } from "@/lib/epic/tokens";
 import { env } from "@/lib/env";
 import { onboardingStep } from "@/lib/onboarding";
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     },
     save: async (flow, tokens) => {
       const input = { userId, fhirBaseUrl: flow.fhirBaseUrl, organizationName: flow.organizationName, tokenEndpoint: flow.tokenEndpoint, tokens };
-      ({ sourceId } = await asUser(db, userId, (tx) => saveConnection(tx, key, input, new Date())));
+      ({ sourceId } = await asUser(db, userId, (tx) => saveConnection(tx, tokenKeys(), input, new Date())));
     },
   });
 
