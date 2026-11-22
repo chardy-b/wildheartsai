@@ -19,6 +19,7 @@ export type DemoState = {
   /** the sample document's ferritin has been confirmed and added */
   docAdded: boolean;
   followUpRead: boolean;
+  a1cQuestionAdded: boolean;
 };
 
 export type DemoAction =
@@ -29,7 +30,8 @@ export type DemoAction =
   | { type: "finishImport" }
   | { type: "draftRefill"; id: string | null }
   | { type: "confirmDoc" }
-  | { type: "markRead" };
+  | { type: "markRead" }
+  | { type: "addA1cQuestion" };
 
 export const initialState: DemoState = {
   turns: [],
@@ -38,6 +40,7 @@ export const initialState: DemoState = {
   refill: null,
   docAdded: false,
   followUpRead: false,
+  a1cQuestionAdded: false,
 };
 
 export const keyOf = (c: { kind: string; arg?: string }) => (c.arg && c.kind !== "finder" ? `${c.kind}:${c.arg}` : c.kind);
@@ -48,7 +51,7 @@ export function labelOf(c: Choice): string {
     case "meds": return "Review meds";
     case "connect": return "Connect MyChart UCSF";
     case "finder": return c.arg === "again" ? "Find another result" : "Find a result";
-    case "result": return c.arg === "outside" ? "Ferritin from outside report" : c.arg === "ferritin" ? "Earlier ferritin" : c.arg === "biopsy" ? "Biopsy trend" : c.arg === "mri" ? "Brain MRI" : c.arg === "allergy" ? "Environmental allergy panel" : "Audiology";
+    case "result": return c.arg === "a1c" ? "Is my A1C getting worse?" : c.arg === "outside" ? "Ferritin from outside report" : c.arg === "ferritin" ? "Earlier ferritin" : c.arg === "biopsy" ? "Biopsy trend" : c.arg === "mri" ? "Brain MRI" : c.arg === "allergy" ? "Environmental allergy panel" : "Audiology";
     case "doc": return "Review outside report";
     case "summary": return "Chart summary";
     case "browse": return "All options";
@@ -65,7 +68,7 @@ export function nextPrep(state: DemoState): Choice {
   return { kind: "prep", arg: next?.id ?? done[done.length - 1] ?? "gi" };
 }
 
-const ROOT = (s: DemoState): Choice[] => [nextPrep(s), { kind: "meds" }, { kind: "finder" }, { kind: "connect" }, { kind: "summary" }];
+const ROOT = (s: DemoState): Choice[] => [nextPrep(s), { kind: "result", arg: "a1c" }, { kind: "meds" }, { kind: "finder" }, { kind: "connect" }, { kind: "summary" }];
 
 /** Choices on offer: all starting choices, or only ones relevant to the last widget plus a way back. */
 export function choicesFor(state: DemoState): Choice[] {
@@ -109,5 +112,7 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       return state.docAdded ? state : { ...state, docAdded: true };
     case "markRead":
       return state.followUpRead ? state : { ...state, followUpRead: true };
+    case "addA1cQuestion":
+      return state.a1cQuestionAdded ? state : { ...state, a1cQuestionAdded: true };
   }
 }

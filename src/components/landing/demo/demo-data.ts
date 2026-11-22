@@ -1,7 +1,7 @@
 // Bundled, invented sample content for the public /demo page (Alex Morgan's chart). Not real people, clinics or records.
 
 export type VisitId = "gi" | "allergy" | "dietitian";
-export type ResultId = "biopsy" | "ferritin" | "mri" | "audiology" | "allergy" | "outside";
+export type ResultId = "biopsy" | "ferritin" | "mri" | "audiology" | "allergy" | "outside" | "a1c";
 
 export type Src = { who: string; when: string; what: string };
 export type Line = { text: string; source: string };
@@ -29,6 +29,17 @@ export const VISITS: { id: VisitId; month: string; day: string; name: string; sh
 
 export const visitOf = (id: string) => VISITS.find((v) => v.id === id) ?? VISITS[0];
 
+// Named fixture target: opening other briefs must not move this question to a later visit.
+export const NEXT_VISIT = visitOf("gi");
+
+export const A1C_SAMPLES = [
+  { date: "Mar 2024", value: "5.9", type: "Primary care", source: { who: "Juniper Primary Care", when: "Mar 2024", what: "Fictional primary care lab record: A1C 5.9%." } },
+  { date: "Oct 2024", value: "6.0", type: "Endocrinology", source: { who: "Maple Endocrinology", when: "Oct 2024", what: "Fictional endocrinology lab record: A1C 6.0%." } },
+  { date: "Jun 2025", value: "6.1", type: "Primary care", source: { who: "Juniper Primary Care", when: "Jun 2025", what: "Fictional primary care lab record: A1C 6.1%." } },
+];
+
+export const A1C_QUESTION = "My A1C went from 5.9% to 6.0% to 6.1% across two clinics. What does this trend mean, and which team should follow up?";
+
 export const FOLLOW_UP = {
   from: "Juniper Primary Care · care team",
   received: "20 Nov 2026",
@@ -53,6 +64,7 @@ export const refillText = (m: (typeof MEDS)[number]) =>
   `Hello, I’d like to ask about a refill of ${m.name} ${m.dose.replace(" · ", ", ")} (charted ${m.src.when}). Please let me know what you need from me.`;
 
 export const RESULTS: { id: ResultId; title: string; sub: string; modality: string }[] = [
+  { id: "a1c", title: "A1C trend", sub: "Synthetic sample · Mar 2024–Jun 2025 · two clinics", modality: "Blood test" },
   { id: "biopsy", title: "Esophageal biopsies", sub: "Cedar Digestive Health · 27 Jun & 27 Oct 2026", modality: "Pathology" },
   { id: "ferritin", title: "Ferritin · earlier result", sub: "Juniper Primary Care · 25 May 2026", modality: "Blood test" },
   { id: "mri", title: "Brain MRI · report", sub: "Sample report · 10 Nov 2026", modality: "Imaging" },
@@ -111,10 +123,10 @@ export const SUMMARY = {
 
 export type Brief = { title: string; when: string; sub: string; say: Line[]; ask: Line[]; bring: Line[]; sources: Src[] };
 
-type Ctx = { added: boolean; imported: boolean };
+type Ctx = { added: boolean; imported: boolean; a1cQuestionAdded?: boolean };
 
 /** The visit brief for one appointment, rebuilt from session state so confirmed documents and imports show up. */
-export function briefFor(id: VisitId, { added, imported }: Ctx): Brief {
+export function briefFor(id: VisitId, { added, imported, a1cQuestionAdded = false }: Ctx): Brief {
   const v = visitOf(id);
   const ci = (s: Src) => fmt(s);
   let say: Line[];
@@ -164,6 +176,10 @@ export function briefFor(id: VisitId, { added, imported }: Ctx): Brief {
   if (imported) {
     bring.push({ text: "After-visit summary from the sample import.", source: ci(SRC.imported) });
     sources = [...sources, SRC.imported];
+  }
+  if (a1cQuestionAdded && id === NEXT_VISIT.id) {
+    ask.push({ text: A1C_QUESTION, source: A1C_SAMPLES.map((s) => fmt(s.source)).join("; ") });
+    sources = [...sources, ...A1C_SAMPLES.map((s) => s.source)];
   }
   return { title: `${v.name} brief`, when: v.date, sub: `${v.person} · ${v.clinic}`, say, ask, bring, sources };
 }

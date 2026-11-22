@@ -23,6 +23,9 @@ export function Nav({ signedIn = false }: { signedIn?: boolean }) {
             Sign in
           </Link>
         )}
+        <Link className="btn btn-ghost" href="/demo" prefetch={false}>
+          Demo
+        </Link>
         <Link className="btn" href={signedIn ? "/app" : "/sign-up"}>
           {signedIn ? "Dashboard" : "Get started"}
         </Link>

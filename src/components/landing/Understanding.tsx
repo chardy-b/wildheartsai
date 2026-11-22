@@ -45,9 +45,6 @@ export function Understanding() {
             <span className="reply reply-alt">Open sources</span>
           </div>
         </div>
-        <figcaption className="note">
-          Concept mockup — not a working feature or medical advice.
-        </figcaption>
       </figure>
     </section>
   );
