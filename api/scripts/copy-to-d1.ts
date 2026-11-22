@@ -35,6 +35,14 @@ import * as schema from "../src/db/schema";
 // session: production on Cloudflare gets a new BETTER_AUTH_SECRET (owner decision, 2026-11-22), so
 // cookies signed with the old one can't be used; copying their tokens would only move dead credentials.
 const SKIP = new Set(["epic_directory_entry", "epic_directory_import", "rate_limit", "session"]);
+// The token key roll (src/lib/crypto/token-keys.ts, on main): Vercel's TOKEN_ENCRYPTION_KEY can't
+// be read back, so connection credentials are also sealed under a new key in `_next` columns, and
+// D1 takes those. Cloudflare's TOKEN_ENCRYPTION_KEY is the new key. A connection not yet fully
+// re-sealed stops the export: run the reseal job on Vercel first.
+const ROLLED: Record<string, Record<string, string>> = {
+  epic_connection: { sealed_patient_id: "sealed_patient_id_next", sealed_access_token: "sealed_access_token_next", sealed_refresh_token: "sealed_refresh_token_next" },
+  metriport_connection: { sealed_patient_id: "sealed_patient_id_next" },
+};
 const STATEMENT_LIMIT = 90_000;
 const PIECE = 40_000;
 const FILE_LIMIT = 4 * 1024 * 1024;
@@ -127,6 +135,15 @@ async function exportNeon(out: string) {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   await client.query("begin isolation level repeatable read read only");
+  // Before writing anything: every connection must be re-sealed under the new token key.
+  const { rows: [pending] } = await client.query(`SELECT
+    (SELECT count(*) FROM epic_connection WHERE sealed_patient_id_next IS NULL OR sealed_access_token_next IS NULL OR (sealed_refresh_token IS NOT NULL AND sealed_refresh_token_next IS NULL))
+    + (SELECT count(*) FROM metriport_connection WHERE sealed_patient_id_next IS NULL) AS n`);
+  if (Number(pending.n) > 0) {
+    await client.query("rollback");
+    await client.end();
+    throw new Error(`${pending.n} connection(s) aren't re-sealed under the new token key. Send connections/tokens.reseal-requested on Vercel, check it reports incomplete: 0, and export again.`);
+  }
   mkdirSync(out, { recursive: true });
   const manifest: Manifest = { createdAt: new Date().toISOString(), tables: {}, files: [] };
   let file: string[] = [], size = 0;
@@ -144,6 +161,7 @@ async function exportNeon(out: string) {
     size += line.length + 1;
   };
   const demoSources = new Set<string>();
+  let unrolled = 0;
   try {
     for (const table of tables()) {
       const names = table.columns.map((c) => c.name);
@@ -153,7 +171,9 @@ async function exportNeon(out: string) {
       let last: unknown[] | null = null;
       for (;;) {
         const after = last ? `WHERE (${order}) > (${last.map((_, i) => `$${i + 1}`).join(", ")})` : "";
-        const { rows } = await client.query(`SELECT ${names.map(quoted).join(", ")} FROM ${quoted(table.name)} ${after} ORDER BY ${order} LIMIT ${PAGE}`, last ?? []);
+        const rolled = ROLLED[table.name] ?? {};
+        const extra = Object.values(rolled);
+        const { rows } = await client.query(`SELECT ${[...names, ...extra].map(quoted).join(", ")} FROM ${quoted(table.name)} ${after} ORDER BY ${order} LIMIT ${PAGE}`, last ?? []);
         for (const row of rows as Record<string, unknown>[]) {
           // Demo identities aren't copied (see the header).
           const owner = (row.user_id ?? (table.name === "user" ? row.id : undefined)) as string | undefined;
@@ -162,6 +182,14 @@ async function exportNeon(out: string) {
             continue;
           }
           if (table.name === "sync_cursor" && demoSources.has(row.source_id as string)) continue;
+          // Credentials under the new key, never the old: a missing one stops the export.
+          for (const [column, next] of Object.entries(rolled)) {
+            if (row[column] !== null && row[next] === null) {
+              unrolled++;
+              continue;
+            }
+            row[column] = row[next];
+          }
           const values = table.columns.map((c) => convert(c, row[c.name]));
           hashes.push(rowHash(values));
           for (const s of statements(table, values)) {
@@ -177,6 +205,7 @@ async function exportNeon(out: string) {
       manifest.tables[table.name] = { rows: hashes.length, checksum: tableChecksum(hashes) };
       console.log(`${table.name}: ${hashes.length}`);
     }
+    if (unrolled) throw new Error(`${unrolled} connection credential(s) aren't sealed under the new token key yet. Send connections/tokens.reseal-requested on Vercel, check it reports incomplete: 0, and export again.`);
     flush();
   } finally {
     await client.query("rollback").catch(() => undefined);

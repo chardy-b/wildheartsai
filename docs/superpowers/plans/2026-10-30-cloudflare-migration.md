@@ -326,7 +326,8 @@ Step by step in `2026-11-20-cutover-runbook.md`.
 - [x] Local rehearsal: the seeded local Postgres, plus a 250 KB value and a demo identity, exported, imported into a fresh local D1 and verified; a deliberately altered row is caught; signing in on the local Cloudflare stack shows the copied account's connections, records (with the amended lab) and export
 - [x] Read-only mode for Vercel (`MAINTENANCE_READ_ONLY=1`): refuses changes in `src/proxy.ts` (API writes, server actions except reading a note, Epic's Connect GETs) and inside the server actions, with a notice on every page; sign-in, sign-out and viewing still work. Tests cover both layers
 - [x] A rehearsal environment in `api/wrangler.jsonc` (a D1 database no Worker serves) for rehearsing with production data
-- [ ] Read-only mode to `main` and deployed on Vercel (a small pull request), before the cutover day
+- [x] Read-only mode to `main` and deployed on Vercel ([chardy-b/wildheartsai#86](https://github.com/chardy-b/wildheartsai/pull/86))
+- [ ] Token key roll ([chardy-b/wildheartsai#87](https://github.com/chardy-b/wildheartsai/pull/87)): Vercel's `TOKEN_ENCRYPTION_KEY` can't be read back, so credentials are re-sealed under a new key on Vercel, and the copy takes those (`ROLLED` in `api/scripts/copy-to-d1.ts`). Rehearsed locally end to end. Owner steps in the runbook
 - [ ] Owner setup in the runbook's section 1 (accounts, databases, secrets copied exactly from Vercel, DNS zone, Epic sandbox redirect, the VPS edge service), and the email provider
 - [ ] Two timed rehearsals with production data (runbook section 2), then the cutover (section 4)
 

@@ -25,7 +25,13 @@ describe("D1 schema parity with Postgres", () => {
   // Chat isn't copied: it never ran in production, and on Cloudflare its content lives in one
   // Durable Object per conversation (api/src/db/chat/schema.ts has what spans conversations).
   const CHAT = ["chat_conversation", "chat_coordinator", "chat_event", "chat_message", "chat_run", "chat_tool_call", "summary_evidence", "user_summary"];
-  const pg = Object.fromEntries(Object.entries(allPg).filter(([table]) => !CHAT.includes(table)));
+  // Postgres-only columns: the token key roll's `_next` copies (on main). The copy writes them
+  // into D1's own credential columns (api/scripts/copy-to-d1.ts, ROLLED), so D1 has no `_next`.
+  const PG_ONLY: Record<string, string[]> = {
+    epic_connection: ["sealed_access_token_next", "sealed_patient_id_next", "sealed_refresh_token_next"],
+    metriport_connection: ["sealed_patient_id_next"],
+  };
+  const pg = Object.fromEntries(Object.entries(allPg).filter(([table]) => !CHAT.includes(table)).map(([table, columns]) => [table, columns.filter((c) => !PG_ONLY[table]?.includes(c))]));
   const d1 = columnsByTable(main, (v): v is SQLiteTable => is(v, SQLiteTable), sqliteTableConfig);
 
   it("has every Postgres table but chat's in the main database, and nothing else", () => {

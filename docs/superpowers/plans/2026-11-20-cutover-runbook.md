@@ -23,7 +23,7 @@ Not ready, and blocking the cutover:
 2. **R2:** ~~confirm the bucket names~~ Done 2026-11-20: `api/wrangler.jsonc` binds `wildheartsai-wildcards-preview` and `wildheartsai-wildcards-production`, the buckets Vercel's `R2_BUCKET_NAME` names in each scope. Documents already live there, so nothing is copied.
 3. **Secrets, production** (`npx wrangler secret put <NAME> --env production -c api/wrangler.jsonc`, from `api/`):
    - **New, not copied (owner decision, 2026-11-22): `BETTER_AUTH_SECRET`.** Vercel stores it as sensitive, so it can't be read back. A new one means everyone signs in again once at the switch, and the copy leaves sessions out (their cookies wouldn't verify). Password-reset links still work: they're looked up in the database, not signed. Email verification links sent before the switch don't; people request a new one.
-   - **Copy these from Vercel production exactly** (otherwise data won't open). Vercel won't show sensitive values, so they come from Bitwarden or the owner's records: `RECORDS_ENCRYPTION_KEY` (the owner has it), `TOKEN_ENCRYPTION_KEY` (without it, Epic and Metriport connections need reconnecting), `EPIC_PRIVATE_JWK` and `EPIC_PRODUCTION_PRIVATE_JWK` (plus the retiring public JWKs, if set), `EPIC_CLIENT_ID`, `EPIC_PRODUCTION_CLIENT_ID`, `METRIPORT_API_KEY`, `EXTRACTION_GRANT_KEY`, `EXTRACTION_COORDINATOR_TOKEN_HASH`.
+   - **Copy these from Vercel production exactly** (otherwise data won't open). Vercel won't show sensitive values, so they come from Bitwarden or the owner's records: `RECORDS_ENCRYPTION_KEY` (the owner has it), `TOKEN_ENCRYPTION_KEY`: **the new key from the token key roll below, not Vercel's** (Vercel's can't be read back and no copy exists), `EPIC_PRIVATE_JWK` and `EPIC_PRODUCTION_PRIVATE_JWK` (plus the retiring public JWKs, if set), `EPIC_CLIENT_ID`, `EPIC_PRODUCTION_CLIENT_ID`, `METRIPORT_API_KEY`, `EXTRACTION_GRANT_KEY`, `EXTRACTION_COORDINATOR_TOKEN_HASH`.
    - **Set on Cloudflare** (as vars or secrets): `BETTER_AUTH_URL=https://www.wildheartsai.com`, `EPIC_REDIRECT_URI=https://www.wildheartsai.com/api/epic/callback`, `EPIC_ENVIRONMENT`, `EPIC_PRODUCTION_ACCESS_ENABLED`, `EPIC_EXPANDED_SCOPES`, `SIGNUPS_ENABLED`, `SIGNUP_INVITE_CODE`, `EMAIL_FROM`, `EXTRACTION_ENABLED`, `EXTRACTION_METHODS`. Email needs no key: the `EMAIL` binding sends it.
    - **Chat Worker:** `CHAT_EDGE_TOKEN` (new; its SHA-256 goes on the VPS as `CHAT_EDGE_TOKEN_HASH`), and `CHAT_EDGE_URL` in `api/wrangler.chat.jsonc`'s production vars.
 4. **Repeat step 3 for preview**, with preview's own values from Bitwarden/Keyholder: never production's. Set `EMAIL_LOG_LINKS=true` on preview.
@@ -31,6 +31,18 @@ Not ready, and blocking the cutover:
 6. **DNS:** move the `wildheartsai.com` zone's nameservers to Cloudflare, keeping every record pointing at Vercel and set to DNS-only (not proxied). Nothing changes for visitors.
 7. **Epic:** add the staging callback (`https://<staging host>/api/epic/callback`) to the **sandbox** client only.
 8. **VPS:** run the edge service (`CHAT_SERVICE_MODE=edge`, see `services/chat/README.md`), reachable by the chat Worker through a Cloudflare Tunnel or an HTTPS address. The extraction workers keep their URL (`/api/extraction/worker/v1/*` on the same origin).
+
+### Token key roll (before any rehearsal with production data)
+
+Vercel's `TOKEN_ENCRYPTION_KEY` is stored as sensitive, so it can't be read back, and no copy exists. Without it, every Epic and Metriport connection copied to Cloudflare would need reconnecting. So the key is rolled on Vercel, which still holds it (pull request chardy-b/wildheartsai#87):
+
+1. Merge #87. Its migration only adds the `_next` columns.
+2. Generate the new key (`openssl rand -base64 32`) and save it in Bitwarden as production's token key for Cloudflare.
+3. Vercel → Production: add `TOKEN_ENCRYPTION_KEY_NEXT` (sensitive) with that value, and redeploy. New and refreshed credentials are now sealed under both keys.
+4. In the Inngest dashboard, send `connections/tokens.reseal-requested` (data `{}`). The run must report `failed: 0` and `incomplete: 0`.
+5. Keep `TOKEN_ENCRYPTION_KEY_NEXT` set until the cutover. The export takes the `_next` values, and refuses to start while any connection isn't re-sealed. The Cloudflare API Worker's `TOKEN_ENCRYPTION_KEY` is the new key, and `verify` opens the sample of Epic tokens with it.
+
+Rehearsed locally (2026-11-22): before the backfill the export refused and wrote nothing; after it, the copied Epic token opened with the new key and not with the old one.
 
 ## 2. Staging (weeks before; both stacks running)
 
