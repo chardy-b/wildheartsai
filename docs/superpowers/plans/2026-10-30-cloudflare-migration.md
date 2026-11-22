@@ -265,7 +265,7 @@ Until Phase 7, production keeps running on Vercel. Phases 1–6 deploy only to C
 - [x] Email: development prints links; preview prints them only with `EMAIL_LOG_LINKS=true` (set in `api/wrangler.jsonc`'s preview vars); production never sends or prints until a provider is chosen. Better Auth logs a failed email and still answers 200 (as on Vercel today), so the account stays unverified
 - [x] Email provider: Cloudflare Email Sending (owner, 2026-11-20); Google Workspace keeps the inboxes. Production's API Worker binds `EMAIL` (`src/auth/email.ts`); preview logs links
 - [ ] Onboard the sender's domain for Email Sending (owner)
-- [ ] At cutover, give the Workers the same `BETTER_AUTH_SECRET` as Vercel production, so copied sessions and cookies stay valid
+- [x] Decided (owner, 2026-11-22): production on Cloudflare gets a **new** `BETTER_AUTH_SECRET` (Vercel's is stored as sensitive and can't be read back). Everyone signs in again once; the copy leaves sessions out
 
 ### Phase 3: Epic and records
 

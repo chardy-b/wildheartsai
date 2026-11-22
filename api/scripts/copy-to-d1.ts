@@ -17,8 +17,9 @@
 //   superseded_by, session parent_session_id) is filled in by UPDATEs after the table's rows.
 // - D1 takes at most 100 KB per statement, so larger values go in as appends of 40 KB pieces.
 // - Not copied: the Epic directory (public, rebuilt by its import job after the cutover), Better
-//   Auth's rate-limit counters, chat (it never ran in production), and every demo identity's rows
-//   (the demo chart is written fresh on Cloudflare, and has no login there).
+//   Auth's rate-limit counters and sessions (everyone signs in again: see SKIP), chat (it never ran
+//   in production), and every demo identity's rows (the demo chart is written fresh on Cloudflare,
+//   and has no login there).
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -31,7 +32,9 @@ import { keysFrom, unsealField } from "../src/crypto/fields";
 import { unseal } from "../src/crypto/seal";
 import * as schema from "../src/db/schema";
 
-const SKIP = new Set(["epic_directory_entry", "epic_directory_import", "rate_limit"]);
+// session: production on Cloudflare gets a new BETTER_AUTH_SECRET (owner decision, 2026-11-22), so
+// cookies signed with the old one can't be used; copying their tokens would only move dead credentials.
+const SKIP = new Set(["epic_directory_entry", "epic_directory_import", "rate_limit", "session"]);
 const STATEMENT_LIMIT = 90_000;
 const PIECE = 40_000;
 const FILE_LIMIT = 4 * 1024 * 1024;
