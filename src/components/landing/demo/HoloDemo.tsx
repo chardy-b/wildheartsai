@@ -3,413 +3,552 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { HEART_PATH } from "../marks";
-import { BRIEF, COMPARE_ROWS, FOLLOW_UP, IMPORTED_SAMPLE, IMPORT_STAGES, LAB_SAMPLE, MEDS, NEXT_VISIT, SOURCES } from "./demo-data";
-import { FLOW_LABEL, choicesFor, initialState, pendingEntry, progressFor, reducer, type DemoState, type Flow } from "./demo-state";
+import {
+  AUDIOLOGY_TEXT, DATELINE, DOC, FOLLOW_UP, IMPORTED_RECORDS, IMPORT_STAGES, MEDS, MRI_TEXT, OUTSIDE_RESULT, RECONNECT, RESULTS, SRC, SUMMARY, VISITS,
+  briefFor, briefText, fmt, refillText, visitOf, type Src, type VisitId,
+} from "./demo-data";
+import { choicesFor, hasTurn, initialState, keyOf, labelOf, nextPrep, pendingTurn, reducer, type Choice, type DemoState, type Kind, type Turn } from "./demo-state";
 import "./holo-demo.css";
 
 const reduced = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const BEAT_MS = 520;
-const IMPORT_MS = 1100;
+const BEAT_MS = 380;
+const IMPORT_MS = 1300;
 
-const HOLO_LINE: Record<Flow, string> = {
-  prepare: "Here is a brief built from the follow-up and two clinic records. Every line shows where it came from.",
-  connect: "You can preview how connecting a health system would look. This is a simulation with sample records.",
-  meds: "These are the medications listed across both clinics. You can try drafting a refill note without sending it.",
-  compare: "Here are the two clinic records side by side.",
-  lab: "The outside lab report is already loaded as a sample. Check it and confirm it looks right.",
-};
+type Go = (c: Choice) => void;
+type HRef = (key: string) => (el: HTMLHeadingElement | null) => void;
+type WidgetProps = { state: DemoState; go: Go; hRef: HRef };
 
-function HoloFace({ small = false }: { small?: boolean }) {
+const stagger = (i: number) => ({ "--i": i }) as CSSProperties;
+
+function HoloLine({ avatarSrc, children, typing = false }: { avatarSrc: string; children?: ReactNode; typing?: boolean }) {
   return (
-    <svg className={small ? "holo-face holo-face-sm" : "holo-face"} viewBox="0 0 48 40" aria-hidden="true">
-      <ellipse cx="22" cy="22" rx="20" ry="16" className="holo-face-bg" />
-      <g className="holo-eyes">
-        <ellipse cx="14" cy="21" rx="3.3" ry="3.9" />
-        <ellipse cx="30" cy="21" rx="3.3" ry="3.9" />
-        <circle cx="15.1" cy="19.6" r="1.1" className="holo-glint" />
-        <circle cx="31.1" cy="19.6" r="1.1" className="holo-glint" />
-      </g>
-      <path d="M17 28.5q5 3.2 10 0" className="holo-smile" />
-      <g transform="translate(34 2) scale(0.55)">
-        <path d={HEART_PATH} className="holo-heart" />
-      </g>
-    </svg>
-  );
-}
-
-function Holo({ children }: { children: ReactNode }) {
-  return (
-    <div className="hd-row hd-row-holo">
-      <HoloFace small />
-      <div className="hd-bubble hd-bubble-holo">{children}</div>
+    <div className="hd-row">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="hd-avatar" src={avatarSrc} alt="" width={40} height={40} decoding="async" />
+      {typing ? (
+        <div className="hd-bubble hd-dots" aria-hidden="true"><i /><i /><i /></div>
+      ) : (
+        <div className="hd-bubble">{children}</div>
+      )}
     </div>
   );
 }
 
-function Widget({ flow, title, children, headingRef }: { flow: string; title: string; children: ReactNode; headingRef: (el: HTMLHeadingElement | null) => void }) {
+function Widget({ id, kicker, title, badge, children, hRef }: { id: string; kicker?: string; title: string; badge?: string; children: ReactNode; hRef: (el: HTMLHeadingElement | null) => void }) {
   return (
-    <section className="hd-widget" data-flow={flow} aria-labelledby={`hd-w-${flow}`}>
-      <h4 id={`hd-w-${flow}`} tabIndex={-1} ref={headingRef}>{title}</h4>
-      {children}
+    <section className="hd-widget" aria-labelledby={`hd-h-${id}`}>
+      <header className="hd-widget-head">
+        <div>
+          {kicker && <p className="hd-kicker">{kicker}</p>}
+          <h2 id={`hd-h-${id}`} tabIndex={-1} ref={hRef}>{title}</h2>
+        </div>
+        {badge && <span className="hd-badge">{badge}</span>}
+      </header>
+      <div className="hd-widget-body">{children}</div>
     </section>
   );
 }
 
-function Receipt({ children }: { children: ReactNode }) {
-  return <span className="hd-receipt">{children}</span>;
+function Sources({ items, label = "Sources" }: { items: Src[]; label?: string }) {
+  return (
+    <details className="hd-details">
+      <summary>{label}</summary>
+      <ul>
+        {items.map((s) => (
+          <li key={fmt(s)}>
+            <strong>{fmt(s)}</strong>
+            {s.what && <> — {s.what}</>}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
 }
 
-function BriefWidget({ state, headingRef }: { state: DemoState; headingRef: (el: HTMLHeadingElement | null) => void }) {
-  const imported = state.importStage === "imported";
-  const groups: [string, typeof BRIEF.say][] = [["What to say", BRIEF.say], ["What to ask", BRIEF.ask], ["What to bring", BRIEF.bring]];
+async function copy(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function AppointmentsCard({ state, go }: Pick<WidgetProps, "state" | "go">) {
   return (
-    <Widget flow="prepare" title={`Your visit brief · ${NEXT_VISIT.date}`} headingRef={headingRef}>
-      <ul className="hd-sources" aria-label="Sources used">
-        {SOURCES.map((s, i) => (
-          <li key={s.id} style={{ "--i": i } as CSSProperties}>
-            <span className="hd-src-dot" aria-hidden="true" />
-            <strong>{s.name}</strong> · {s.from} · {s.date}
-          </li>
-        ))}
-        {imported && (
-          <li style={{ "--i": 3 } as CSSProperties}>
-            <span className="hd-src-dot" aria-hidden="true" />
-            <strong>Sample import</strong> · fictional records · not from UCSF
-          </li>
-        )}
+    <section className="hd-card hd-appts" aria-labelledby="hd-appts-title">
+      <header className="hd-card-head">
+        <h2 id="hd-appts-title">Upcoming appointments</h2>
+        {state.importStage === "imported" && <span className="hd-badge" data-tone="soft">Sample import added</span>}
+      </header>
+      <ul>
+        {VISITS.map((v, i) => {
+          const opened = hasTurn(state, { kind: "prep", arg: v.id });
+          return (
+            <li key={v.id} className="hd-visit" data-next={i === 0} style={stagger(i)}>
+              <span className="hd-date" aria-hidden="true">{v.month}<strong>{v.day}</strong></span>
+              <span className="hd-visit-text">
+                <strong>{v.name}</strong>
+                <span>{v.person} · {v.about}</span>
+                <span className="hd-muted">{v.clinic} · {v.date}</span>
+              </span>
+              <button type="button" className="hd-btn" data-variant={i === 0 ? "solid" : undefined} data-visit={v.id} aria-label={`${opened ? "Open brief for" : "Prepare for"} ${v.name}, ${v.date}`} onClick={() => go({ kind: "prep", arg: v.id })}>
+                {opened ? "Brief" : "Prep"}
+              </button>
+            </li>
+          );
+        })}
       </ul>
+    </section>
+  );
+}
+
+function FollowUpCard({ state, go, dispatch }: Pick<WidgetProps, "state" | "go"> & { dispatch: (a: { type: "markRead" }) => void }) {
+  return (
+    <details className="hd-card hd-followup" data-read={state.followUpRead} onToggle={(e) => { if (e.currentTarget.open) dispatch({ type: "markRead" }); }}>
+      <summary aria-label={`Message from the care team: ${FOLLOW_UP.subject}. ${state.followUpRead ? "Read" : "Unread"}`}>
+        <span className="hd-dot" aria-hidden="true" />
+        <span className="hd-sum-text">
+          <strong>{FOLLOW_UP.subject}</strong>
+          <span className="hd-muted">{FOLLOW_UP.from} · {FOLLOW_UP.received}</span>
+        </span>
+        <span className="hd-badge" data-tone={state.followUpRead ? undefined : "new"}>{state.followUpRead ? "Read" : "New"}</span>
+      </summary>
+      <div className="hd-followup-body">
+        <p>{FOLLOW_UP.body}</p>
+        <div className="hd-actions">
+          <button type="button" className="hd-btn" data-variant="solid" onClick={() => go({ kind: "prep", arg: "dietitian" })}>Prepare for dietitian visit</button>
+          <button type="button" className="hd-btn" onClick={() => go({ kind: "doc" })}>Review outside report</button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function ConnectStrip({ state, go }: Pick<WidgetProps, "state" | "go">) {
+  const opened = hasTurn(state, { kind: "connect" });
+  const imported = state.importStage === "imported";
+  return (
+    <section className="hd-card hd-strip" aria-label={RECONNECT.name}>
+      <span className="hd-strip-text">
+        <strong>{RECONNECT.name}</strong>
+        <span className="hd-muted">{imported ? `${IMPORTED_RECORDS.length} sample records brought in` : RECONNECT.text}</span>
+      </span>
+      <button type="button" className="hd-btn" data-flow="connect" onClick={() => go({ kind: "connect" })}>{opened ? "View" : "Connect"}</button>
+    </section>
+  );
+}
+
+function BriefWidget({ id, state, go, hRef }: WidgetProps & { id: VisitId }) {
+  const [status, setStatus] = useState("");
+  const brief = briefFor(id, { added: state.docAdded, imported: state.importStage === "imported" });
+  const text = briefText(brief);
+  const groups: [string, typeof brief.say][] = [["What to say", brief.say], ["What to ask", brief.ask], ["What to bring", brief.bring]];
+  const isNew = (source: string) => source.startsWith("Outside") || source.startsWith("Sample import");
+  return (
+    <Widget id={`prep-${id}`} kicker={`${brief.when} · ${brief.sub}`} title={`Your ${brief.title}`} badge="Visit brief" hRef={hRef(`prep:${id}`)}>
       <div className="hd-brief">
-        {groups.map(([label, items], g) => (
-          <div key={label} className="hd-brief-group" style={{ "--g": g } as CSSProperties}>
-            <h5>{label}</h5>
+        {groups.map(([label, lines], g) => (
+          <section key={label} className="hd-group" style={stagger(g)}>
+            <h3>{label}</h3>
             <ul>
-              {items.map((item) => (
-                <li key={item.text}>
-                  {item.text} <Receipt>{item.source}</Receipt>
+              {lines.map((l) => (
+                <li key={l.text} data-new={isNew(l.source)}>
+                  {l.text}
+                  <span className="hd-src">{l.source}</span>
                 </li>
               ))}
-              {label === "What to bring" && imported && (
-                <li>
-                  The sample after-visit summary shown above. <Receipt>Sample import · fictional</Receipt>
-                </li>
-              )}
             </ul>
-          </div>
+          </section>
         ))}
       </div>
-      <p className="hd-fine">Sample text for illustration. It is not medical advice and does not suggest changing any medicine.</p>
+      <Sources items={brief.sources} label="Source receipt" />
+      <div className="hd-actions">
+        <button type="button" className="hd-btn" data-variant="solid" onClick={async () => setStatus((await copy(text)) ? "Brief copied." : "Copy isn’t available here. Try Download.")}>Copy brief</button>
+        <button type="button" className="hd-btn" onClick={() => { download(`alex-${id}-visit-brief.txt`, text); setStatus("Download started."); }}>Download .txt</button>
+        {!state.docAdded && <button type="button" className="hd-btn" data-flow="doc" onClick={() => go({ kind: "doc" })}>Review outside report</button>}
+      </div>
+      <p className="hd-status" role="status">{status}</p>
     </Widget>
   );
 }
 
-function ConnectWidget({ state, onImport, headingRef }: { state: DemoState; onImport: () => void; headingRef: (el: HTMLHeadingElement | null) => void }) {
+function ConnectWidget({ state, onImport, hRef }: { state: DemoState; onImport: () => void; hRef: HRef }) {
   const stage = state.importStage === "ready" ? 0 : state.importStage === "importing" ? 1 : 2;
   return (
-    <Widget flow="connect" title="Connect MyChart UCSF" headingRef={headingRef}>
-      <p className="hd-note">Simulation only. No MyChart portal was opened and nothing was imported from UCSF. The records below are fictional.</p>
+    <Widget id="connect" kicker="Patient portal" title={RECONNECT.name} badge="Sample import" hRef={hRef("connect")}>
       <ol className="hd-stages" aria-label="Import progress">
         {IMPORT_STAGES.map((label, i) => (
-          <li key={label} data-state={i < stage ? "done" : i === stage ? "current" : "todo"} aria-current={i === stage ? "step" : undefined}>
+          <li key={label} data-state={i < stage || stage === 2 ? "done" : i === stage ? "current" : "todo"} aria-current={i === stage ? "step" : undefined}>
             <span aria-hidden="true">{i < stage || stage === 2 ? "✓" : i + 1}</span>
             {label}
           </li>
         ))}
       </ol>
+      {stage === 1 && <div className="hd-bar-track" aria-hidden="true"><i /></div>}
       {stage === 0 && (
-        <button type="button" className="hd-btn" onClick={onImport}>
-          Preview sample import
-        </button>
-      )}
-      {stage === 1 && <p className="hd-fine" aria-hidden="true">Importing sample records…</p>}
-      {stage === 2 && (
-        <div className="hd-imported">
-          <h5>Example of what would appear</h5>
-          <ul>
-            {IMPORTED_SAMPLE.map((r, i) => (
-              <li key={r.name} style={{ "--i": i } as CSSProperties}>
-                <span>{r.name}</span>
-                <span className="hd-muted">{r.date}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="hd-fine">Example data added to this conversation only. Signing up is separate and connects nothing automatically.</p>
+        <div className="hd-actions">
+          <button type="button" className="hd-btn" data-variant="solid" data-flow="import" onClick={onImport}>Preview sample import</button>
         </div>
+      )}
+      {stage === 2 && (
+        <ul className="hd-imported" aria-label="Records brought in">
+          {IMPORTED_RECORDS.map((r, i) => (
+            <li key={r.name} style={stagger(i)}>
+              <strong>{r.name}</strong>
+              <span className="hd-muted">{r.detail}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </Widget>
   );
 }
 
-function MedsWidget({ state, dispatch, headingRef }: { state: DemoState; dispatch: (a: { type: "draftRefill"; id: string | null }) => void; headingRef: (el: HTMLHeadingElement | null) => void }) {
-  const picked = MEDS.find((m) => m.id === state.refillDraft);
+function MedsWidget({ state, dispatch, hRef }: { state: DemoState; dispatch: (a: { type: "draftRefill"; id: string | null }) => void; hRef: HRef }) {
+  const [status, setStatus] = useState("");
+  const picked = MEDS.find((m) => m.id === state.refill);
   return (
-    <Widget flow="meds" title="Medication list" headingRef={headingRef}>
+    <Widget id="meds" kicker="Charted medicines" title="Your medicine list" badge="From the chart" hRef={hRef("meds")}>
       <ul className="hd-meds">
-        {MEDS.map((m) => (
-          <li key={m.id}>
+        {MEDS.map((m, i) => (
+          <li key={m.id} style={stagger(i)}>
             <div>
-              <strong>{m.name}</strong>
-              <span className="hd-muted">{m.note}</span>
+              <strong>{m.name}</strong> <span className="hd-dose">{m.dose}</span>
+              <p>{m.note}</p>
+              <span className="hd-src">{fmt(m.src)}</span>
             </div>
-            <button type="button" className="hd-btn hd-btn-ghost" aria-pressed={state.refillDraft === m.id} onClick={() => dispatch({ type: "draftRefill", id: state.refillDraft === m.id ? null : m.id })}>
-              {state.refillDraft === m.id ? "Selected" : "Draft refill"}
+            <button type="button" className="hd-btn" aria-pressed={state.refill === m.id} data-refill={m.id} onClick={() => { setStatus(""); dispatch({ type: "draftRefill", id: state.refill === m.id ? null : m.id }); }}>
+              {state.refill === m.id ? "Drafted" : "Draft refill"}
             </button>
           </li>
         ))}
       </ul>
-      <div className="hd-draft" aria-live="polite">
-        {picked ? (
-          <>
-            <h5>Refill draft · {picked.name}</h5>
-            <p>“Hello, I’d like to ask about a refill of {picked.name}.”</p>
-            <p className="hd-flag"><strong>Draft only. No request was sent.</strong></p>
-          </>
-        ) : (
-          <p className="hd-muted">Select a medication to see a simulated refill draft. Nothing is ever sent from this demo.</p>
-        )}
+      {picked && (
+        <div className="hd-paper" aria-live="polite">
+          <p className="hd-kicker">Refill draft · {picked.name}</p>
+          <p>{refillText(picked)}</p>
+          <div className="hd-actions">
+            <button type="button" className="hd-btn" onClick={async () => setStatus((await copy(refillText(picked))) ? "Draft copied." : "Copy isn’t available here.")}>Copy draft</button>
+          </div>
+        </div>
+      )}
+      <p className="hd-status" role="status">{status}</p>
+      <Sources items={[SRC.gi, SRC.allergy]} />
+    </Widget>
+  );
+}
+
+function FinderWidget({ state, go, hRef }: WidgetProps) {
+  const items = [...RESULTS, ...(state.docAdded ? [OUTSIDE_RESULT] : [])];
+  return (
+    <Widget id="finder" kicker="Alex’s results" title="Find a result" badge="Chart" hRef={hRef("finder")}>
+      <ul className="hd-finder">
+        {items.map((r, i) => (
+          <li key={r.id} style={stagger(i)}>
+            <button type="button" className="hd-pick" data-result={r.id} onClick={() => go({ kind: "result", arg: r.id })}>
+              <span>
+                <strong>{r.title}</strong>
+                <small>{r.sub}</small>
+              </span>
+              {r.id === "outside" ? <span className="hd-badge" data-tone="new">New</span> : <span aria-hidden="true" className="hd-chev">›</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Widget>
+  );
+}
+
+function ResultWidget({ id, state, go, hRef }: WidgetProps & { id: string }) {
+  const h = hRef(`result:${id}`);
+  if (id === "biopsy")
+    return (
+      <Widget id="r-biopsy" kicker="Pathology · Cedar Digestive Health" title="Biopsy trend" badge="Chart" hRef={h}>
+        <div className="hd-compare">
+          <div><small>27 Jun 2026</small><p className="hd-metric">42<span> eos/hpf</span></p></div>
+          <span aria-hidden="true" className="hd-arrow">→</span>
+          <div><small>27 Oct 2026</small><p className="hd-metric">8<span> eos/hpf</span></p></div>
+        </div>
+        <p>The peak count was lower at the repeat biopsy, and the GI note describes improved swallowing. This is not a claim of cure.</p>
+        <Sources items={[SRC.path, SRC.gi]} label="Dated sources" />
+      </Widget>
+    );
+  if (id === "ferritin")
+    return (
+      <Widget id="r-ferritin" kicker="Juniper Primary Care · 25 May 2026" title="Ferritin, earlier result" badge="Chart" hRef={h}>
+        <p className="hd-metric">22<span> ng/mL · range 15–150</span></p>
+        <p>Primary care later requested a repeat CBC and ferritin because fatigue persisted.</p>
+        <div className="hd-actions">
+          {state.docAdded ? (
+            <button type="button" className="hd-btn" data-variant="solid" onClick={() => go({ kind: "result", arg: "outside" })}>See the more recent result</button>
+          ) : (
+            <button type="button" className="hd-btn" data-flow="doc" onClick={() => go({ kind: "doc" })}>Review outside report</button>
+          )}
+        </div>
+        <Sources items={[SRC.ferritinOld, SRC.pcp]} label="Dated sources" />
+      </Widget>
+    );
+  if (id === "outside")
+    return (
+      <Widget id="r-outside" kicker="Outside report · 18 Nov 2026 · page 1" title="Ferritin, outside report" badge="Added" hRef={h}>
+        <p className="hd-metric">14<span> ng/mL · printed range 15–150</span></p>
+        <p>Compared with 22 ng/mL on 25 May 2026. It is now listed in this brief for your visits, for the care team to review with the fatigue follow-up.</p>
+        <Sources items={[SRC.outside, SRC.ferritinOld]} label="Dated sources" />
+      </Widget>
+    );
+  const mri = id === "mri";
+  return (
+    <Widget id={`r-${id}`} kicker={mri ? "Imaging · 10 Nov 2026" : "Audiology · 12 Nov 2026"} title={mri ? "Brain MRI" : "Audiology"} badge="Sample report" hRef={h}>
+      <blockquote className="hd-quote">“{mri ? MRI_TEXT : AUDIOLOGY_TEXT}”</blockquote>
+      <p className="hd-muted">Report text only, no images.</p>
+      <Sources items={[{ who: mri ? "Imaging report" : "Audiology report", when: mri ? "10 Nov 2026" : "12 Nov 2026", what: "Sample report text." }]} label="Source" />
+    </Widget>
+  );
+}
+
+function DocWidget({ state, go, dispatch, hRef }: WidgetProps & { dispatch: (a: { type: "confirmDoc" }) => void }) {
+  const f = DOC.finding;
+  return (
+    <Widget id="doc" kicker={DOC.file} title="Review outside report" badge="Sample document" hRef={hRef("doc")}>
+      <div className="hd-doc">
+        <div className="hd-page" role="img" aria-label={`Page 1 of the report: ${DOC.title}. Ferritin 14 ng/mL, printed range 15–150 ng/mL.`}>
+          <p className="hd-kicker">Page 1 of 1</p>
+          <h3>{DOC.title}</h3>
+          <p>{DOC.patient}</p>
+          <dl>
+            {DOC.rows.map(([k, v]) => (
+              <div key={k} className={k === "Ferritin" ? "hd-hit" : undefined}><dt>{k}</dt><dd>{v}</dd></div>
+            ))}
+          </dl>
+          <p>{DOC.footer}</p>
+        </div>
+        <div className="hd-extract">
+          <h3>Finding from page 1</h3>
+          <table>
+            <tbody>
+              <tr><th scope="row">Test</th><td>{f.test}</td></tr>
+              <tr><th scope="row">Value</th><td><strong>{f.value}</strong></td></tr>
+              <tr><th scope="row">Printed range</th><td>{f.range}</td></tr>
+              <tr><th scope="row">Date</th><td>{f.date}</td></tr>
+              <tr><th scope="row">Source</th><td>{f.page}</td></tr>
+            </tbody>
+          </table>
+          {state.docAdded ? (
+            <>
+              <p className="hd-done" role="status"><span aria-hidden="true">✓</span> Added to results and visit briefs</p>
+              <div className="hd-actions">
+                <button type="button" className="hd-btn" data-variant="solid" onClick={() => go({ kind: "result", arg: "outside" })}>Open result</button>
+                <button type="button" className="hd-btn" onClick={() => go(nextPrep(state))}>Open brief</button>
+              </div>
+            </>
+          ) : (
+            <div className="hd-actions">
+              <button type="button" className="hd-btn" data-variant="solid" data-flow="confirm" onClick={() => dispatch({ type: "confirmDoc" })}>Confirm &amp; add</button>
+            </div>
+          )}
+        </div>
       </div>
     </Widget>
   );
 }
 
-function CompareWidget({ headingRef }: { headingRef: (el: HTMLHeadingElement | null) => void }) {
+function SummaryWidget({ go, hRef }: WidgetProps) {
+  type Row = { text: string; go: { kind: string; arg: string; label: string } };
+  const cols: [string, string, readonly Row[]][] = [
+    ["Established", "established", SUMMARY.established],
+    ["Improving", "improving", SUMMARY.improving],
+    ["Uncertain", "uncertain", SUMMARY.uncertain],
+  ];
   return (
-    <Widget flow="compare" title="Two records, side by side" headingRef={headingRef}>
-      <table className="hd-table">
-        <thead>
-          <tr>
-            <th scope="col">Topic</th>
-            <th scope="col">Riverside<br />Oct 14</th>
-            <th scope="col">Lakeside<br />Nov 3</th>
-          </tr>
-        </thead>
-        <tbody>
-          {COMPARE_ROWS.map((r) => (
-            <tr key={r.topic} className={r.a !== r.b ? "hd-diff" : undefined}>
-              <th scope="row">{r.topic}</th>
-              <td>{r.a}</td>
-              <td>{r.b}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="hd-fine">Highlighted rows differ between the two notes. Fictional sample records.</p>
-    </Widget>
-  );
-}
-
-function LabWidget({ state, dispatch, headingRef }: { state: DemoState; dispatch: (a: { type: "confirmLab" }) => void; headingRef: (el: HTMLHeadingElement | null) => void }) {
-  return (
-    <Widget flow="lab" title={LAB_SAMPLE.name} headingRef={headingRef}>
-      <p className="hd-muted">Collected {LAB_SAMPLE.collected} · preloaded sample, nothing was uploaded.</p>
-      <ul className="hd-meds">
-        {LAB_SAMPLE.rows.map((r) => (
-          <li key={r.test}>
-            <strong>{r.test}</strong>
-            <span>{r.value}</span>
-          </li>
+    <Widget id="summary" kicker="From the notes" title="Chart summary" badge="Chart" hRef={hRef("summary")}>
+      <div className="hd-summary">
+        {cols.map(([label, tone, rows], i) => (
+          <section key={label} data-tone={tone} style={stagger(i)}>
+            <h3>{label}</h3>
+            <ul>
+              {rows.map((r) => (
+                <li key={r.text}>
+                  {r.text}
+                  <button type="button" className="hd-link" onClick={() => go({ kind: r.go.kind as Kind, arg: r.go.arg })}>{r.go.label} ↗</button>
+                </li>
+              ))}
+            </ul>
+          </section>
         ))}
-      </ul>
-      {state.labConfirmed ? (
-        <p className="hd-flag" role="status"><strong>Confirmed.</strong> Marked as reviewed in this demo only.</p>
-      ) : (
-        <button type="button" className="hd-btn" onClick={() => dispatch({ type: "confirmLab" })}>
-          Looks right, confirm
-        </button>
-      )}
+      </div>
+      <Sources items={[...SUMMARY.sources]} label="Source notes" />
     </Widget>
   );
 }
 
-function DemoRun({ focusStart, signedIn }: { focusStart: boolean; signedIn: boolean }) {
+const HOLO_LINE: Record<Kind, (t: Turn) => string> = {
+  prep: (t) => `Here’s a short brief for ${visitOf(t.arg ?? "gi").person}. Each line shows where it came from.`,
+  meds: () => "This is what the chart lists, not a check of what you take today.",
+  connect: () => "Here’s how records would arrive in this chat.",
+  finder: () => "Which result would you like to see?",
+  result: (t) => (t.arg === "biopsy" ? "Both pathology results, side by side." : "Here’s the result and its source."),
+  doc: () => "Here’s the page next to what I found on it. Confirm it to add it.",
+  summary: () => "Here’s where the chart stands.",
+};
+
+const READY: Record<Kind, string> = { prep: "Visit brief", meds: "Medicine list", connect: "Connect MyChart UCSF", finder: "Find a result", result: "Result", doc: "Outside report", summary: "Chart summary" };
+
+function DemoRun({ avatarSrc, focusStart }: { avatarSrc: string; focusStart: boolean }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [live, setLive] = useState("");
-  const thread = useRef<HTMLDivElement>(null);
-  const choicesRef = useRef<HTMLDivElement>(null);
-  const headings = useRef<Partial<Record<Flow, HTMLElement | null>>>({});
-  const focused = useRef<Flow | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const heads = useRef<Record<string, HTMLHeadingElement | null>>({});
+  const shown = useRef<string | null>(null);
 
-  const pending = pendingEntry(state);
+  const pending = pendingTurn(state);
   const choices = choicesFor(state);
 
   useEffect(() => {
-    if (focusStart) choicesRef.current?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+    if (!focusStart) return;
+    window.scrollTo({ top: 0, behavior: "auto" });
+    root.current?.querySelector<HTMLElement>(".hd-bar button")?.focus({ preventScroll: true });
   }, [focusStart]);
 
-  // The beat: after a choice, Holo pauses briefly, then the widget appears.
-  const pendingFlow = pending?.flow;
+  // The beat: after a choice, Holo pauses briefly, then the widget arrives.
+  const pendingKey = pending?.key;
+  const pendingKind = pending?.kind;
   useEffect(() => {
-    if (!pendingFlow) return;
+    if (!pendingKey || !pendingKind) return;
     const t = window.setTimeout(() => {
-      dispatch({ type: "reveal", flow: pendingFlow });
-      setLive(`${FLOW_LABEL[pendingFlow]} is ready.`);
+      dispatch({ type: "reveal", key: pendingKey });
+      setLive(`${READY[pendingKind]} is ready.`);
     }, reduced() ? 0 : BEAT_MS);
     return () => window.clearTimeout(t);
-  }, [pendingFlow]);
+  }, [pendingKey, pendingKind]);
 
   const importing = state.importStage === "importing";
   useEffect(() => {
     if (!importing) return;
     const t = window.setTimeout(() => {
       dispatch({ type: "finishImport" });
-      setLive("Sample records imported. Fictional example data only; nothing came from UCSF.");
+      setLive("Sample records imported.");
     }, reduced() ? 0 : IMPORT_MS);
     return () => window.clearTimeout(t);
   }, [importing]);
 
-  // Bring a newly revealed widget into view inside the thread only (never the page) and move focus to it.
-  const lastRevealed = [...state.entries].reverse().find((e) => e.revealed)?.flow;
-  useEffect(() => {
-    if (!lastRevealed || focused.current === lastRevealed) return;
-    focused.current = lastRevealed;
-    const box = thread.current;
-    const heading = headings.current[lastRevealed];
-    const widget = heading?.closest<HTMLElement>(".hd-widget");
-    if (box && widget) {
-      const top = widget.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 12;
-      box.scrollTo({ top, behavior: reduced() ? "auto" : "smooth" });
-    }
-    heading?.focus({ preventScroll: true });
-  }, [lastRevealed]);
-
-  const choose = useCallback((flow: Flow) => {
-    dispatch({ type: "choose", flow });
-    setLive(`You chose: ${FLOW_LABEL[flow]}. Holo is preparing it.`);
-    // Keep focus inside the demo while the clicked button leaves the list.
-    choicesRef.current?.focus({ preventScroll: true });
+  const show = useCallback((key: string) => {
+    const turn = root.current?.querySelector<HTMLElement>(`[data-turn="${key}"]`);
+    turn?.scrollIntoView({ block: "start", behavior: reduced() ? "auto" : "smooth" });
+    heads.current[key]?.focus({ preventScroll: true });
   }, []);
 
-  const setHeading = (flow: Flow) => (el: HTMLHeadingElement | null) => {
-    headings.current[flow] = el;
+  // Bring each newly revealed widget into view and move focus to its heading.
+  const lastRevealed = [...state.turns].reverse().find((t) => t.revealed)?.key;
+  useEffect(() => {
+    if (!lastRevealed || shown.current === lastRevealed) return;
+    shown.current = lastRevealed;
+    show(lastRevealed);
+  }, [lastRevealed, show]);
+
+  const go: Go = (c) => {
+    if (c.kind === "browse") {
+      dispatch({ type: "browse" });
+      setLive("Showing all options.");
+      return;
+    }
+    const key = keyOf(c);
+    if (state.turns.some((t) => t.key === key)) {
+      if (state.turns.find((t) => t.key === key)?.revealed) show(key);
+      return;
+    }
+    if (pending) return;
+    dispatch({ type: "choose", kind: c.kind, arg: c.arg });
+    setLive(`${labelOf(c)}.`);
   };
 
-  const progress = progressFor(state);
-  const doneCount = progress.filter((p) => p.done).length;
-  const briefDone = progress[0].done;
+  const hRef: HRef = (key) => (el) => {
+    heads.current[key] = el;
+  };
+  const props: WidgetProps = { state, go, hRef };
+
+  const body = (t: Turn) => {
+    switch (t.kind) {
+      case "prep": return <BriefWidget {...props} id={(t.arg as VisitId) ?? "gi"} />;
+      case "meds": return <MedsWidget state={state} dispatch={dispatch} hRef={hRef} />;
+      case "connect": return <ConnectWidget state={state} hRef={hRef} onImport={() => { heads.current.connect?.focus({ preventScroll: true }); dispatch({ type: "startImport" }); setLive("Importing sample records."); }} />;
+      case "finder": return <FinderWidget {...props} />;
+      case "result": return <ResultWidget {...props} id={t.arg ?? "biopsy"} />;
+      case "doc": return <DocWidget {...props} dispatch={(a) => { heads.current.doc?.focus({ preventScroll: true }); dispatch(a); setLive("Added to results and visit briefs."); }} />;
+      case "summary": return <SummaryWidget {...props} />;
+    }
+  };
 
   return (
-    <>
-      <div className="hd-progress" role="group" aria-label={`Progress: ${doneCount} of ${progress.length} steps shown`}>
-        {progress.map((p) => (
-          <span key={p.id} className="hd-chip" data-done={p.done}>
-            <span aria-hidden="true">{p.done ? "✓" : "○"}</span> {p.label}
-            <span className="hd-sr">{p.done ? " done" : " not yet"}</span>
-          </span>
-        ))}
-      </div>
-
-      <div className="hd-thread" ref={thread} tabIndex={0} role="region" aria-label="Demo conversation">
-        <Holo>
-          Hi, I’m Holo. Alex has a visit coming up and a new message from the care team.
-        </Holo>
-        <section className="hd-card hd-appts" aria-label="Upcoming appointment">
-          <h3>Upcoming appointment</h3>
-          <ul>
-            <li>
-              <span className="hd-when">{NEXT_VISIT.date}<br />{NEXT_VISIT.time}</span>
-              <span>{NEXT_VISIT.what}</span>
-              <span className="hd-muted">{NEXT_VISIT.where}</span>
-            </li>
-          </ul>
-        </section>
-        <details className="hd-card hd-followup" onToggle={(event) => {
-          if (event.currentTarget.open) dispatch({ type: "markRead" });
-        }}>
-          <summary aria-label={`Message from the care team: ${FOLLOW_UP.subject}`}>
-            <span>
-              <strong>{FOLLOW_UP.subject}</strong>
-              <span className="hd-muted">{FOLLOW_UP.from}</span>
-            </span>
-            <span className="hd-badge" data-read={state.followUpRead}>{state.followUpRead ? "Read" : "New"}</span>
-          </summary>
-          <p className="hd-muted hd-received">{FOLLOW_UP.received}</p>
-          <p>{FOLLOW_UP.body}</p>
-        </details>
-
-        {state.entries.map((entry) => (
-          <div key={entry.flow} className="hd-entry" data-entry={entry.flow}>
-            <div className="hd-row hd-row-you">
-              <div className="hd-bubble hd-bubble-you">{FLOW_LABEL[entry.flow]}</div>
-            </div>
-            {entry.revealed ? (
-              <>
-                <Holo>{HOLO_LINE[entry.flow]}</Holo>
-                {entry.flow === "prepare" && <BriefWidget state={state} headingRef={setHeading("prepare")} />}
-                {entry.flow === "connect" && (
-                  <ConnectWidget
-                    state={state}
-                    onImport={() => {
-                      headings.current.connect?.focus({ preventScroll: true });
-                      dispatch({ type: "startImport" });
-                      setLive("Importing sample records.");
-                    }}
-                    headingRef={setHeading("connect")}
-                  />
-                )}
-                {entry.flow === "meds" && <MedsWidget state={state} dispatch={dispatch} headingRef={setHeading("meds")} />}
-                {entry.flow === "compare" && <CompareWidget headingRef={setHeading("compare")} />}
-                {entry.flow === "lab" && <LabWidget state={state} dispatch={(action) => {
-                  headings.current.lab?.focus({ preventScroll: true });
-                  dispatch(action);
-                }} headingRef={setHeading("lab")} />}
-              </>
-            ) : (
-              <div className="hd-row hd-row-holo" aria-hidden="true">
-                <HoloFace small />
-                <div className="hd-bubble hd-bubble-holo hd-dots"><i /><i /><i /></div>
-              </div>
-            )}
+    <div className="hd-run" ref={root}>
+      <main className="hd-main" id="hd-conversation">
+        <h1 className="hd-sr">Conversation with Holo</h1>
+        <div className="hd-thread">
+          <p className="hd-dateline">{DATELINE}</p>
+          <div className="hd-turn hd-turn-first">
+            <HoloLine avatarSrc={avatarSrc}>Hi Alex, I’m Holo. Three visits are coming up, and there’s a new follow-up from your care team.</HoloLine>
+            <AppointmentsCard state={state} go={go} />
+            <FollowUpCard state={state} go={go} dispatch={dispatch} />
+            <ConnectStrip state={state} go={go} />
           </div>
-        ))}
-      </div>
 
-      <div className="hd-choices" ref={choicesRef} tabIndex={-1} role="group" aria-label="What would you like to do next?">
-        {choices.length > 0 ? (
-          choices.map((flow) => (
-            <button key={flow} type="button" className="hd-choice" data-flow={flow} disabled={Boolean(pending)} onClick={() => choose(flow)}>
-              {FLOW_LABEL[flow]}
+          {state.turns.map((t) => (
+            <div key={t.key} className="hd-turn" data-turn={t.key}>
+              <div className="hd-you"><p>{labelOf({ kind: t.kind, arg: t.arg })}</p></div>
+              {t.revealed ? (
+                <>
+                  <HoloLine avatarSrc={avatarSrc}>{HOLO_LINE[t.kind](t)}</HoloLine>
+                  {body(t)}
+                </>
+              ) : (
+                <HoloLine avatarSrc={avatarSrc} typing />
+              )}
+            </div>
+          ))}
+        </div>
+      </main>
+
+      <nav className="hd-bar" aria-label="What next">
+        <div className="hd-bar-inner">
+          {choices.map((c) => (
+            <button key={keyOf(c) + (c.arg ?? "")} type="button" className="hd-choice" data-choice={c.kind} data-variant={c.kind === "browse" ? "back" : undefined} onClick={() => go(c)}>
+              {c.kind === "browse" && <span aria-hidden="true">← </span>}
+              {labelOf(c)}
             </button>
-          ))
-        ) : (
-          <p className="hd-muted">That’s everything in this preview.</p>
-        )}
-      </div>
-
-      <div className="hd-footer">
-        <p>{briefDone ? "Your visit brief is ready." : "Want to try it with your own records?"}</p>
-        <a className="hd-btn hd-btn-cta" href={signedIn ? "/app" : "/sign-up"}>
-          {signedIn ? "Go to dashboard" : "Get early access"}
-        </a>
-      </div>
+          ))}
+        </div>
+      </nav>
 
       <p className="hd-sr" role="status" aria-live="polite">{live}</p>
-    </>
+    </div>
   );
 }
 
-export function HoloDemo({ signedIn }: { signedIn: boolean }) {
+export function HoloDemo({ avatarSrc = "/holo-demo.webp" }: { avatarSrc?: string }) {
   const [run, setRun] = useState(0);
   return (
-    <section className="wrap section hd" id="demo" tabIndex={-1} aria-labelledby="demo-title">
-      <div className="hd-intro">
-        <p className="eyebrow">Try the demo</p>
-        <h2 id="demo-title">Meet Holo, before your next visit.</h2>
-        <p className="hd-lede">
-          Tap a choice to see how Holo can turn scattered notes into a short brief with sources. No sign-in, no uploads, nothing is saved or sent.
-        </p>
-      </div>
-      <div className="hd-panel">
-        <header className="hd-head">
-          <HoloFace />
-          <div>
-            <strong>Holo</strong>
-            <p className="hd-disclosure">Fictional records and simulated actions. Some workflows shown are previews.</p>
-          </div>
-          <button type="button" className="hd-btn hd-btn-ghost hd-restart" onClick={() => setRun((n) => n + 1)}>
-            Restart demo
-          </button>
-        </header>
-        <DemoRun key={run} focusStart={run > 0} signedIn={signedIn} />
-      </div>
-    </section>
+    <div className="hd">
+      <header className="hd-top">
+        {/* Plain anchors: the demo makes no background requests. */}
+        <a className="hd-brand" href="/" aria-label="Wild Hearts Health home">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d={HEART_PATH} /></svg>
+          <span>Wild Hearts Health</span>
+        </a>
+        <span className="hd-pill">Demo</span>
+        <span className="hd-spacer" />
+        <button type="button" className="hd-top-btn" onClick={() => setRun((n) => n + 1)}>Restart</button>
+        <a className="hd-top-link" href="/sign-up">Sign up</a>
+      </header>
+      <DemoRun key={run} avatarSrc={avatarSrc} focusStart={run > 0} />
+    </div>
   );
 }

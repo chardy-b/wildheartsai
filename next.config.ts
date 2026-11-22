@@ -17,10 +17,6 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/wildcards/pdfjs/[...asset]": ["./node_modules/pdfjs-dist/build/pdf.worker.min.mjs", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*"],
   },
-  // The public demo lives on the homepage; the signed-in guided entry is /demo/guided.
-  async redirects() {
-    return [{ source: "/demo", destination: "/#demo", permanent: false }];
-  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

@@ -1,7 +1,6 @@
 import { Closing } from "@/components/landing/Closing";
 import { Footer } from "@/components/landing/Footer";
 import { Hero } from "@/components/landing/Hero";
-import { HoloDemo } from "@/components/landing/demo/HoloDemo";
 import { HowItWorks } from "@/components/landing/HowItWorks";
 import { Nav } from "@/components/landing/Nav";
 import { Privacy } from "@/components/landing/Privacy";
@@ -22,7 +21,6 @@ export default async function Home() {
       <Nav signedIn={signedIn} />
       <main id="main-content">
         <Hero signedIn={signedIn} />
-        <HoloDemo signedIn={signedIn} />
         <HowItWorks />
         <Understanding />
         <Specialist />

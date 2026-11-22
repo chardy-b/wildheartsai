@@ -1,87 +1,112 @@
-// State for the signed-out homepage demo. Pure and local: no network, storage or server imports.
+// State for the public /demo page. Pure and local: no network, storage or server imports.
 
-export type Flow = "prepare" | "connect" | "meds" | "compare" | "lab";
+import { VISITS, visitOf } from "./demo-data";
+
+export type Kind = "prep" | "meds" | "connect" | "finder" | "result" | "doc" | "summary";
 export type ImportStage = "ready" | "importing" | "imported";
 
-export type Entry = { flow: Flow; revealed: boolean };
+/** Something the person can ask for. "browse" only changes which choices are offered. */
+export type Choice = { kind: Kind | "browse"; arg?: string };
+export type Turn = { key: string; kind: Kind; arg?: string; revealed: boolean };
 
 export type DemoState = {
-  entries: Entry[];
+  turns: Turn[];
+  /** true shows the full set of starting choices instead of ones that follow the last widget */
+  browse: boolean;
   importStage: ImportStage;
-  /** id of the medication selected for the simulated refill draft */
-  refillDraft: string | null;
-  labConfirmed: boolean;
+  /** id of the medication whose refill draft is open */
+  refill: string | null;
+  /** the sample document's ferritin has been confirmed and added */
+  docAdded: boolean;
   followUpRead: boolean;
 };
 
 export type DemoAction =
-  | { type: "choose"; flow: Flow }
-  | { type: "reveal"; flow: Flow }
+  | { type: "choose"; kind: Kind; arg?: string }
+  | { type: "reveal"; key: string }
+  | { type: "browse" }
   | { type: "startImport" }
   | { type: "finishImport" }
   | { type: "draftRefill"; id: string | null }
-  | { type: "confirmLab" }
+  | { type: "confirmDoc" }
   | { type: "markRead" };
 
 export const initialState: DemoState = {
-  entries: [],
+  turns: [],
+  browse: true,
   importStage: "ready",
-  refillDraft: null,
-  labConfirmed: false,
+  refill: null,
+  docAdded: false,
   followUpRead: false,
 };
 
-export const FLOW_LABEL: Record<Flow, string> = {
-  prepare: "Prepare for the visit",
-  connect: "Connect MyChart UCSF",
-  meds: "Review meds & refills",
-  compare: "Compare the two clinic records",
-  lab: "Review the outside lab report",
-};
+export const keyOf = (c: { kind: string; arg?: string }) => (c.arg && c.kind !== "finder" ? `${c.kind}:${c.arg}` : c.kind);
 
-export function pendingEntry(state: DemoState): Entry | undefined {
-  return state.entries.find((entry) => !entry.revealed);
+export function labelOf(c: Choice): string {
+  switch (c.kind) {
+    case "prep": return `Prepare for ${visitOf(c.arg ?? "gi").short} visit`;
+    case "meds": return "Review meds";
+    case "connect": return "Connect MyChart UCSF";
+    case "finder": return c.arg === "again" ? "Find another result" : "Find a result";
+    case "result": return c.arg === "outside" ? "Ferritin from outside report" : c.arg === "ferritin" ? "Earlier ferritin" : c.arg === "biopsy" ? "Biopsy trend" : c.arg === "mri" ? "Brain MRI" : "Audiology";
+    case "doc": return "Review outside report";
+    case "summary": return "Chart summary";
+    case "browse": return "All options";
+  }
 }
 
-export function has(state: DemoState, flow: Flow): boolean {
-  return state.entries.some((entry) => entry.flow === flow);
+export const pendingTurn = (state: DemoState) => state.turns.find((t) => !t.revealed);
+export const hasTurn = (state: DemoState, c: { kind: string; arg?: string }) => state.turns.some((t) => t.key === keyOf(c));
+
+/** Visit to prepare next: the first one not yet prepared, else the last one prepared. */
+export function nextPrep(state: DemoState): Choice {
+  const done = state.turns.filter((t) => t.kind === "prep").map((t) => t.arg);
+  const next = VISITS.find((v) => !done.includes(v.id));
+  return { kind: "prep", arg: next?.id ?? done[done.length - 1] ?? "gi" };
 }
 
-/** Choices still on offer. The three main ones stay until used; the rest follow the brief. */
-export function choicesFor(state: DemoState): Flow[] {
-  const choices: Flow[] = ["prepare", "connect", "meds"];
-  if (has(state, "prepare")) choices.push("compare", "lab");
-  return choices.filter((flow) => !has(state, flow));
-}
+const ROOT = (s: DemoState): Choice[] => [nextPrep(s), { kind: "meds" }, { kind: "finder" }, { kind: "connect" }, { kind: "summary" }];
 
-export function progressFor(state: DemoState) {
-  const revealed = (flow: Flow) => state.entries.some((entry) => entry.flow === flow && entry.revealed);
-  return [
-    { id: "brief", label: "Visit brief", done: revealed("prepare") },
-    { id: "records", label: "Sample records", done: state.importStage === "imported" },
-    { id: "meds", label: "Meds reviewed", done: revealed("meds") },
-  ];
+/** Choices on offer: all starting choices, or only ones relevant to the last widget plus a way back. */
+export function choicesFor(state: DemoState): Choice[] {
+  const last = state.turns[state.turns.length - 1];
+  if (state.browse || !last) return ROOT(state);
+  const prep = nextPrep(state);
+  const doc: Choice[] = state.docAdded ? [] : [{ kind: "doc" }];
+  let next: Choice[];
+  switch (last.kind) {
+    case "prep": next = [...doc, { kind: "meds" }, { kind: "finder" }, { kind: "summary" }]; break;
+    case "meds": next = [prep, { kind: "finder" }, { kind: "summary" }]; break;
+    case "connect": next = [prep, { kind: "meds" }]; break;
+    case "finder": next = [prep, ...doc, { kind: "summary" }]; break;
+    case "result": next = [{ kind: "finder", arg: "again" }, prep, ...doc]; break;
+    case "doc": next = state.docAdded ? [{ kind: "result", arg: "outside" }, prep] : [{ kind: "finder" }, prep]; break;
+    case "summary": next = [prep, { kind: "finder" }, { kind: "meds" }]; break;
+  }
+  return [...next, { kind: "browse" }];
 }
 
 export function reducer(state: DemoState, action: DemoAction): DemoState {
   switch (action.type) {
-    case "choose":
-      // One beat at a time, and each widget appears once.
-      if (pendingEntry(state) || has(state, action.flow)) return state;
-      return { ...state, entries: [...state.entries, { flow: action.flow, revealed: false }] };
+    case "choose": {
+      // One beat at a time, each widget appears once, and the outside result needs the confirmed document.
+      if (pendingTurn(state) || hasTurn(state, action)) return state;
+      if (action.kind === "result" && action.arg === "outside" && !state.docAdded) return state;
+      const turn: Turn = { key: keyOf(action), kind: action.kind, arg: action.arg, revealed: false };
+      return { ...state, browse: false, turns: [...state.turns, turn] };
+    }
     case "reveal":
-      return {
-        ...state,
-        entries: state.entries.map((entry) => (entry.flow === action.flow ? { ...entry, revealed: true } : entry)),
-      };
+      return { ...state, turns: state.turns.map((t) => (t.key === action.key ? { ...t, revealed: true } : t)) };
+    case "browse":
+      return state.browse ? state : { ...state, browse: true };
     case "startImport":
       return state.importStage === "ready" ? { ...state, importStage: "importing" } : state;
     case "finishImport":
       return state.importStage === "importing" ? { ...state, importStage: "imported" } : state;
     case "draftRefill":
-      return { ...state, refillDraft: action.id };
-    case "confirmLab":
-      return { ...state, labConfirmed: true };
+      return { ...state, refill: action.id };
+    case "confirmDoc":
+      return state.docAdded ? state : { ...state, docAdded: true };
     case "markRead":
       return state.followUpRead ? state : { ...state, followUpRead: true };
   }

@@ -27,9 +27,9 @@ export function Hero({ signedIn = false }: { signedIn?: boolean }) {
               How it works
             </a>
           ) : (
-            <a className="btn btn-lg btn-ghost" href="#demo">
+            <Link className="btn btn-lg btn-ghost" href="/demo" prefetch={false}>
               Try the demo
-            </a>
+            </Link>
           )}
         </div>
         <dl className="proof">
