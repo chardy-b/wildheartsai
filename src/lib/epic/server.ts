@@ -1,5 +1,6 @@
 import "server-only";
 import { keyFromBase64 } from "@/lib/crypto/seal";
+import type { TokenKeys } from "@/lib/crypto/token-keys";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { freshAccessToken, hasFreshAccessToken } from "./access";
@@ -11,6 +12,12 @@ import { refreshAccessToken } from "./tokens";
 
 export function tokenKey(): Buffer {
   return keyFromBase64(env().TOKEN_ENCRYPTION_KEY);
+}
+
+// For writing credentials: the current key, and the next one during a key roll.
+export function tokenKeys(): TokenKeys {
+  const config = env();
+  return { current: keyFromBase64(config.TOKEN_ENCRYPTION_KEY), next: config.TOKEN_ENCRYPTION_KEY_NEXT ? keyFromBase64(config.TOKEN_ENCRYPTION_KEY_NEXT) : null };
 }
 
 // The sandbox or production client, depending on which Epic system the health system is on.
@@ -64,7 +71,7 @@ export async function accessTokenFor(connection: ConnectionSecrets): Promise<str
           clientAssertion,
         });
       },
-      persist: (id, tokens) => updateTokens(tx, key, id, tokens, new Date()),
+      persist: (id, tokens) => updateTokens(tx, tokenKeys(), id, tokens, new Date()),
     });
   });
 }

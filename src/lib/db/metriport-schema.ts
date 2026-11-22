@@ -19,6 +19,8 @@ export const metriportConnection = pgTable(
     persona: text("persona"),
     // Sealed with TOKEN_ENCRYPTION_KEY, like epic_connection's patient id.
     sealedPatientId: text("sealed_patient_id").notNull(),
+    // Sealed under TOKEN_ENCRYPTION_KEY_NEXT during a key roll (src/lib/crypto/token-keys.ts).
+    sealedPatientIdNext: text("sealed_patient_id_next"),
     facilityId: text("facility_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

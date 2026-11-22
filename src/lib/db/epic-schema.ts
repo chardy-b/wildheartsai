@@ -22,6 +22,10 @@ export const epicConnection = pgTable(
     sealedPatientId: text("sealed_patient_id").notNull(),
     sealedAccessToken: text("sealed_access_token").notNull(),
     sealedRefreshToken: text("sealed_refresh_token"),
+    // The same credentials sealed under TOKEN_ENCRYPTION_KEY_NEXT during a key roll (src/lib/crypto/token-keys.ts).
+    sealedPatientIdNext: text("sealed_patient_id_next"),
+    sealedAccessTokenNext: text("sealed_access_token_next"),
+    sealedRefreshTokenNext: text("sealed_refresh_token_next"),
     accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }).notNull(),
     scope: text("scope").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -19,7 +19,7 @@ const state = vi.hoisted(() => ({
   },
 }));
 vi.mock("@/lib/db", () => ({ get db() { return state.db; } }));
-vi.mock("@/lib/epic/server", () => ({ tokenKey: () => state.key, accessTokenFor: vi.fn() }));
+vi.mock("@/lib/epic/server", () => ({ tokenKey: () => state.key, tokenKeys: () => state.key, accessTokenFor: vi.fn() }));
 vi.mock("@/lib/records-keys", () => ({ recordsKey: () => state.recordsKey }));
 vi.mock("@/lib/env", () => ({ env: () => ({ METRIPORT_API_KEY: "test-key" }) }));
 vi.mock("./client", async (importOriginal) => ({

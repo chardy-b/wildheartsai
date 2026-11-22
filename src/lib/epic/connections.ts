@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { recordAudit } from "@/lib/audit";
-import { seal, unseal } from "@/lib/crypto/seal";
+import { unseal } from "@/lib/crypto/seal";
+import { sealUnder, type TokenKeys } from "@/lib/crypto/token-keys";
 import { epicConnection, healthSource } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/types";
 import type { InitialTokenSet, TokenSet } from "./tokens";
@@ -41,16 +42,22 @@ function connectionSecretsOf(row: typeof epicConnection.$inferSelect, key: Buffe
 // organization, including after a disconnect, reuses the same source and its records.
 export async function saveConnection(
   db: Db,
-  key: Buffer,
+  keys: TokenKeys,
   input: { userId: string; fhirBaseUrl: string; organizationName: string; tokenEndpoint: string; tokens: InitialTokenSet },
   now: Date,
 ): Promise<{ sourceId: string }> {
+  const patient = sealUnder(input.tokens.patientId, keys);
+  const access = sealUnder(input.tokens.accessToken, keys);
+  const refresh = input.tokens.refreshToken ? sealUnder(input.tokens.refreshToken, keys) : null;
   const secrets = {
     organizationName: input.organizationName,
     tokenEndpoint: input.tokenEndpoint,
-    sealedPatientId: seal(input.tokens.patientId, key),
-    sealedAccessToken: seal(input.tokens.accessToken, key),
-    sealedRefreshToken: input.tokens.refreshToken ? seal(input.tokens.refreshToken, key) : null,
+    sealedPatientId: patient.sealed,
+    sealedAccessToken: access.sealed,
+    sealedRefreshToken: refresh?.sealed ?? null,
+    sealedPatientIdNext: patient.next,
+    sealedAccessTokenNext: access.next,
+    sealedRefreshTokenNext: refresh?.next ?? null,
     accessTokenExpiresAt: input.tokens.expiresAt,
     scope: input.tokens.scope,
     updatedAt: now,
@@ -127,12 +134,15 @@ export async function getConnectionSecretForUpdate(db: Db, key: Buffer, id: stri
   return row ? connectionSecretsOf(row, key) : undefined;
 }
 
-export async function updateTokens(db: Db, key: Buffer, id: string, tokens: TokenSet, now: Date): Promise<void> {
+export async function updateTokens(db: Db, keys: TokenKeys, id: string, tokens: TokenSet, now: Date): Promise<void> {
+  const access = sealUnder(tokens.accessToken, keys);
+  const refresh = tokens.refreshToken ? sealUnder(tokens.refreshToken, keys) : null;
   await db
     .update(epicConnection)
     .set({
-      sealedAccessToken: seal(tokens.accessToken, key),
-      ...(tokens.refreshToken ? { sealedRefreshToken: seal(tokens.refreshToken, key) } : {}),
+      sealedAccessToken: access.sealed,
+      sealedAccessTokenNext: access.next,
+      ...(refresh ? { sealedRefreshToken: refresh.sealed, sealedRefreshTokenNext: refresh.next } : {}),
       accessTokenExpiresAt: tokens.expiresAt,
       scope: tokens.scope,
       updatedAt: now,
